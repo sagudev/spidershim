@@ -15,7 +15,6 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Install deps
-      if: startsWith(matrix.os, 'ubuntu')
       run: |
         sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm -y
     - uses: actions-rs/toolchain@v1
@@ -25,13 +24,11 @@ jobs:
           override: true
           default: true
     - name: ccache cache files
-      if: startsWith(matrix.os, 'windows') != true
       uses: actions/cache@v1.1.0
       with:
         path: ~/.cache/ccache
         key: kk
     - name: Build POSIX
-      if: startsWith(matrix.os, 'windows') != true
       run: |
         ccache -z
         make
