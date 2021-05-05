@@ -4,7 +4,7 @@ SHELL := /usr/bin/env bash
 
 SRC_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))mozjs
 
-# Default flags 	--disable-jemalloc
+# Default flags
 CONFIGURE_FLAGS := \
 	--disable-jemalloc \
 	--disable-js-shell \
