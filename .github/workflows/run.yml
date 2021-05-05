@@ -1,0 +1,35 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+  
+env:
+  SHELL: /bin/bash
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install deps
+      run: |
+        sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm -y
+    - uses: actions-rs/toolchain@v1
+      with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          default: true
+    - name: ccache cache files
+      uses: actions/cache@v1.1.0
+      with:
+        path: ~/.cache/ccache
+        key: kk
+    - name: Build POSIX
+      run: |
+        ccache -z
+        make
+        ccache -s
