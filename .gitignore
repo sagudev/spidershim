@@ -1,9 +1,2 @@
-mozjs/python/psutil/build/
-mozjs/python/psutil/psutil/_psutil_osx.so
-mozjs/python/psutil/psutil/_psutil_posix.so
-mozjs/python/psutil/psutil/_psutil_linux.so
-mozjs/js/src/configure
-mozjs/js/src/old-configure
-
-mozjs.*
+mozjs.tar.*
 target
