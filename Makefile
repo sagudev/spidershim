@@ -1,49 +1,31 @@
-##clang
-CXX := c++
+SRC_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+OUT_DIR ?= $(SRC_DIR)target
+MOZ_OUT ?= $(OUT_DIR)/mozjs
+DEBUG ?= 1
+CCACHE ?= ccache
 
-VVFLAGS := -fuse-ld=lld -std=c++17 -pthread -Wall -Wextra -Wno-unused-parameter -fPIC -m64 -O3 -fno-omit-frame-pointer -fno-rtti -fno-exceptions -MMD -MF
+$(shell  mkdir $(OUT_DIR))
 
-# load spidershim headers
-CXXFLAGS := \
-	-I $(SRC_DIR)/include \
-	-I $(SRC_DIR)/src
+all:
 
-# SpiderMonkey 
-CXXFLAGS += \
-	-include $(MOZ_OUT)/js/src/js-confdefs.h \
-	-I $(MOZ_OUT)/dist/include \
-	-I $(MOZ_OUT)/js/src \
-	-L $(MOZ_OUT)/js/src/build \
-	-DSTATIC_JS_API \
-	-std=c++17
+.PHONY : all mozjs spidershim test clean
 
-# force color
-CXXFLAGS += -fcolor-diagnostics
+all: mozjs spidershim
 
-MOZA = -ljs_static -lm -ldl 
+mozjs:
+	$(info Building mozjs)
+	$(shell mkdir $(MOZ_OUT))
+	CCACHE=$(CCACHE) DEBUG=$(DEBUG) OUT_DIR="$(MOZ_OUT)" \
+	$(MAKE) -C $(MOZ_OUT) -f $(SRC_DIR)/spidermonkey.mk
 
-ifneq ($(PROFILE),"release")
-	CXXFLAGS += -DDEBUG
-endif
+spidershim: mozjs
+	$(info Building spidershim)
+	$(shell mkdir $(OUT_DIR)/spidershim)
+	CCACHE=$(CCACHE) DEBUG=$(DEBUG) MOZ_OUT="$(MOZ_OUT)" OUT_DIR="$(OUT_DIR)/spidershim" \
+	$(MAKE) -C "$(OUT_DIR)/spidershim" -f $(SRC_DIR)/spidershim.mk
 
-include $(dir $(abspath $(firstword $(MAKEFILE_LIST))))cc.mk
+test: spidershim
+	$(MAKE) -f test.mk
 
-.PHONY : all v8 test
-
-#mozjs:
-#	$(info SPIDERSHIM: mozjs)
-#	$(MAKE) -f spidermonkey.mk
-
-SRC := $(SRC_DIR)/src
-
-SOURCES := $(wildcard $(SRC)/*.cc)
-OBJS := $(patsubst $(SRC)/%.cc, %.o, $(SOURCES))
-
-all: v8
-
-v8: $(OBJS)
-	$(AR) crsT $@ $(OBJS)
-
-%.o: $(SRC)/%.cc
-	$(info $< | $@)
-	$(CXX) $(CXXFLAGS) $(VVFLAGS) -c -o $@ $< $(MOZA)
+clean:
+	rm -rf $(OUT_DIR)
