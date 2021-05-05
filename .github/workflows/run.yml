@@ -32,7 +32,11 @@ jobs:
       run: |
         ccache -z
         cd mozjs
+        cd js
+        cd src
         autoconf2.13
+        cd ..
+        cd ..
         cd ..
         make
         ccache -s
