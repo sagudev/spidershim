@@ -28,12 +28,11 @@ jobs:
       if: startsWith(matrix.os, 'windows') != true
       uses: actions/cache@v1.1.0
       with:
-        path: .ccache
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        path: ~/.cache/ccache
+        key: kk
     - name: Build POSIX
       if: startsWith(matrix.os, 'windows') != true
       run: |
         ccache -z
-        ccache cargo build --verbose ${{ matrix.features }}
-        ccache cargo test --verbose ${{ matrix.features }}
+        make
         ccache -s
