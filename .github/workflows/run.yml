@@ -31,5 +31,8 @@ jobs:
     - name: Build POSIX
       run: |
         ccache -z
+        cd mozjs
+        autoconf2.13
+        cd ..
         make
         ccache -s
