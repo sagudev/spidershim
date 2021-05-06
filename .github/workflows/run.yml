@@ -6,6 +6,8 @@ on:
   
 env:
   SHELL: /bin/bash
+  CXX: clang++
+  CC: clang
 
 jobs:
   build:
@@ -16,7 +18,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: Install deps
       run: |
-        sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm -y
+        sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm clang lld -y
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
