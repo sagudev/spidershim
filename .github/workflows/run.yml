@@ -29,7 +29,7 @@ jobs:
       uses: actions/cache@v1.1.0
       with:
         path: ~/.ccache
-        key: kk
+        key: ${{ runner.os }}-kk
     - name: Build POSIX
       run: |
         ccache -z
