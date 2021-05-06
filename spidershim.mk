@@ -1,6 +1,6 @@
 ##clang
 SRC_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-CXX := c++
+CXX ?= c++
 
 VVFLAGS := -std=c++17 -pthread -Wall -Wextra -Wno-unused-parameter -fPIC -m64 -O3 -fno-omit-frame-pointer -fno-rtti -fno-exceptions -MMD -MF
 
