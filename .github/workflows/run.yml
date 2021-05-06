@@ -40,5 +40,5 @@ jobs:
         cd ..
         cd ..
         cd ..
-        make || exit 0
+        make
         ccache -s
