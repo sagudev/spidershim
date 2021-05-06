@@ -40,5 +40,5 @@ jobs:
         cd ..
         cd ..
         cd ..
-        make mozjs
+        make || exit 0
         ccache -s
