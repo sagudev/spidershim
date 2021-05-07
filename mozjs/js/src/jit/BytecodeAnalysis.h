@@ -22,12 +22,8 @@ struct BytecodeInfo {
   bool initialized : 1;
   bool jumpTarget : 1;
 
-  // If true, this is a JSOp::LoopHead where we can OSR into Ion/Warp code.
-  bool loopHeadCanOsr : 1;
-
-  // See the comment above normallyReachable in BytecodeAnalysis.cpp for how
-  // this works.
-  bool jumpTargetNormallyReachable : 1;
+  // If true, this is a JSOp::LoopHead op inside a catch or finally block.
+  bool loopHeadInCatchOrFinally : 1;
 
   // True if the script has a resume offset for this bytecode op.
   bool hasResumeOffset : 1;
@@ -38,23 +34,18 @@ struct BytecodeInfo {
     initialized = true;
     stackDepth = depth;
   }
-
-  void setJumpTarget(bool normallyReachable) {
-    jumpTarget = true;
-    if (normallyReachable) {
-      jumpTargetNormallyReachable = true;
-    }
-  }
 };
 
 class BytecodeAnalysis {
   JSScript* script_;
   Vector<BytecodeInfo, 0, JitAllocPolicy> infos_;
 
+  bool hasTryFinally_;
+
  public:
   explicit BytecodeAnalysis(TempAllocator& alloc, JSScript* script);
 
-  [[nodiscard]] bool init(TempAllocator& alloc);
+  MOZ_MUST_USE bool init(TempAllocator& alloc);
 
   BytecodeInfo& info(jsbytecode* pc) {
     uint32_t pcOffset = script_->pcToOffset(pc);
@@ -70,10 +61,10 @@ class BytecodeAnalysis {
     return nullptr;
   }
 
-  void checkWarpSupport(JSOp op);
+  bool hasTryFinally() const { return hasTryFinally_; }
 };
 
-// Bytecode analysis pass necessary for WarpBuilder. The result is cached in
+// Bytecode analysis pass necessary for IonBuilder. The result is cached in
 // JitScript.
 struct IonBytecodeInfo;
 IonBytecodeInfo AnalyzeBytecodeForIon(JSContext* cx, JSScript* script);

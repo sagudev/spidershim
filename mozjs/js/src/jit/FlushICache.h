@@ -18,22 +18,18 @@ namespace jit {
 
 #if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
 
-inline void FlushICache(void* code, size_t size,
-                        bool codeIsThreadLocal = true) {
+inline void FlushICache(void* code, size_t size) {
   // No-op. Code and data caches are coherent on x86 and x64.
 }
 
 #elif (defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)) || \
     (defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64))
 
-extern void FlushICache(void* code, size_t size, bool codeIsThreadLocal = true);
+extern void FlushICache(void* code, size_t size);
 
 #elif defined(JS_CODEGEN_NONE)
 
-inline void FlushICache(void* code, size_t size,
-                        bool codeIsThreadLocal = true) {
-  MOZ_CRASH();
-}
+inline void FlushICache(void* code, size_t size) { MOZ_CRASH(); }
 
 #else
 #  error "Unknown architecture!"

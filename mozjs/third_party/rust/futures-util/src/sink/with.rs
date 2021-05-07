@@ -2,24 +2,25 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::pin::Pin;
 use futures_core::future::Future;
-use futures_core::ready;
 use futures_core::stream::Stream;
 use futures_core::task::{Context, Poll};
 use futures_sink::Sink;
-use pin_project_lite::pin_project;
+use pin_utils::{unsafe_pinned, unsafe_unpinned};
 
-pin_project! {
-    /// Sink for the [`with`](super::SinkExt::with) method.
-    #[must_use = "sinks do nothing unless polled"]
-    pub struct With<Si, Item, U, Fut, F> {
-        #[pin]
-        sink: Si,
-        f: F,
-        #[pin]
-        state: Option<Fut>,
-        _phantom: PhantomData<fn(U) -> Item>,
-    }
+/// Sink for the [`with`](super::SinkExt::with) method.
+#[must_use = "sinks do nothing unless polled"]
+pub struct With<Si, Item, U, Fut, F> {
+    sink: Si,
+    f: F,
+    state: Option<Fut>,
+    _phantom: PhantomData<fn(U) -> Item>,
 }
+
+impl<Si, Item, U, Fut, F> Unpin for With<Si, Item, U, Fut, F>
+where
+    Si: Unpin,
+    Fut: Unpin,
+{}
 
 impl<Si, Item, U, Fut, F> fmt::Debug for With<Si, Item, U, Fut, F>
 where
@@ -39,31 +40,19 @@ where Si: Sink<Item>,
       F: FnMut(U) -> Fut,
       Fut: Future,
 {
+    unsafe_pinned!(sink: Si);
+    unsafe_unpinned!(f: F);
+    unsafe_pinned!(state: Option<Fut>);
+
     pub(super) fn new<E>(sink: Si, f: F) -> Self
         where
             Fut: Future<Output = Result<Item, E>>,
             E: From<Si::Error>,
     {
-        Self {
+        With {
             state: None,
             sink,
             f,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<Si, Item, U, Fut, F> Clone for With<Si, Item, U, Fut, F>
-where
-    Si: Clone,
-    F: Clone,
-    Fut: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            state: self.state.clone(),
-            sink: self.sink.clone(),
-            f: self.f.clone(),
             _phantom: PhantomData,
         }
     }
@@ -77,7 +66,16 @@ impl<S, Item, U, Fut, F> Stream for With<S, Item, U, Fut, F>
 {
     type Item = S::Item;
 
-    delegate_stream!(sink);
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<S::Item>> {
+        self.sink().poll_next(cx)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.sink.size_hint()
+    }
 }
 
 impl<Si, Item, U, Fut, F, E> With<Si, Item, U, Fut, F>
@@ -86,21 +84,40 @@ impl<Si, Item, U, Fut, F, E> With<Si, Item, U, Fut, F>
           Fut: Future<Output = Result<Item, E>>,
           E: From<Si::Error>,
 {
-    delegate_access_inner!(sink, Si, ());
+    /// Get a shared reference to the inner sink.
+    pub fn get_ref(&self) -> &Si {
+        &self.sink
+    }
+
+    /// Get a mutable reference to the inner sink.
+    pub fn get_mut(&mut self) -> &mut Si {
+        &mut self.sink
+    }
+
+    /// Get a pinned mutable reference to the inner sink.
+    pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut Si> {
+        self.sink()
+    }
+
+    /// Consumes this combinator, returning the underlying sink.
+    ///
+    /// Note that this may discard intermediate state of this combinator, so
+    /// care should be taken to avoid losing resources when this is called.
+    pub fn into_inner(self) -> Si {
+        self.sink
+    }
 
     /// Completes the processing of previous item if any.
     fn poll(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), E>> {
-        let mut this = self.project();
-
-        let item = match this.state.as_mut().as_pin_mut() {
+        let item = match self.as_mut().state().as_pin_mut() {
             None => return Poll::Ready(Ok(())),
             Some(fut) => ready!(fut.poll(cx))?,
         };
-        this.state.set(None);
-        this.sink.start_send(item)?;
+        self.as_mut().state().set(None);
+        self.as_mut().sink().start_send(item)?;
         Poll::Ready(Ok(()))
     }
 }
@@ -118,18 +135,16 @@ impl<Si, Item, U, Fut, F, E> Sink<U> for With<Si, Item, U, Fut, F>
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         ready!(self.as_mut().poll(cx))?;
-        ready!(self.project().sink.poll_ready(cx)?);
+        ready!(self.as_mut().sink().poll_ready(cx)?);
         Poll::Ready(Ok(()))
     }
 
     fn start_send(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         item: U,
     ) -> Result<(), Self::Error> {
-        let mut this = self.project();
-
-        assert!(this.state.is_none());
-        this.state.set(Some((this.f)(item)));
+        let future = (self.as_mut().f())(item);
+        self.as_mut().state().set(Some(future));
         Ok(())
     }
 
@@ -138,7 +153,7 @@ impl<Si, Item, U, Fut, F, E> Sink<U> for With<Si, Item, U, Fut, F>
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         ready!(self.as_mut().poll(cx))?;
-        ready!(self.project().sink.poll_flush(cx)?);
+        ready!(self.as_mut().sink().poll_flush(cx))?;
         Poll::Ready(Ok(()))
     }
 
@@ -147,7 +162,7 @@ impl<Si, Item, U, Fut, F, E> Sink<U> for With<Si, Item, U, Fut, F>
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         ready!(self.as_mut().poll(cx))?;
-        ready!(self.project().sink.poll_close(cx)?);
+        ready!(self.as_mut().sink().poll_close(cx))?;
         Poll::Ready(Ok(()))
     }
 }

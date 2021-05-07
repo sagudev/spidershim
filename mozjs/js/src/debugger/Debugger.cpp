@@ -9,6 +9,7 @@
 #include "mozilla/Attributes.h"        // for MOZ_STACK_CLASS, MOZ_RAII
 #include "mozilla/DebugOnly.h"         // for DebugOnly
 #include "mozilla/DoublyLinkedList.h"  // for DoublyLinkedList<>::Iterator
+#include "mozilla/GuardObjects.h"      // for MOZ_GUARD_OBJECT_NOTIFIER_PARAM
 #include "mozilla/HashTable.h"         // for HashSet<>::Range, HashMapEntry
 #include "mozilla/Maybe.h"             // for Maybe, Nothing, Some
 #include "mozilla/ScopeExit.h"         // for MakeScopeExit, ScopeExit
@@ -25,45 +26,44 @@
 #include <string.h>    // for strlen, strcmp
 #include <utility>     // for std::move
 
-#include "jsapi.h"    // for CallArgs, CallArgsFromVp
-#include "jstypes.h"  // for JS_PUBLIC_API
+#include "jsapi.h"        // for CallArgs, CallArgsFromVp
+#include "jsfriendapi.h"  // for GetErrorMessage
+#include "jstypes.h"      // for JS_PUBLIC_API
 
-#include "builtin/Array.h"                // for NewDenseFullyAllocatedArray
-#include "debugger/DebugAPI.h"            // for ResumeMode, DebugAPI
-#include "debugger/DebuggerMemory.h"      // for DebuggerMemory
-#include "debugger/DebugScript.h"         // for DebugScript
-#include "debugger/Environment.h"         // for DebuggerEnvironment
-#include "debugger/Frame.h"               // for DebuggerFrame
-#include "debugger/NoExecute.h"           // for EnterDebuggeeNoExecute
-#include "debugger/Object.h"              // for DebuggerObject
-#include "debugger/Script.h"              // for DebuggerScript
-#include "debugger/Source.h"              // for DebuggerSource
-#include "frontend/CompilationStencil.h"  // for CompilationStencil
-#include "frontend/NameAnalysisTypes.h"   // for ParseGoal, ParseGoal::Script
-#include "frontend/ParseContext.h"        // for UsedNameTracker
-#include "frontend/Parser.h"              // for Parser
-#include "gc/FreeOp.h"                    // for JSFreeOp
-#include "gc/GC.h"                        // for IterateScripts
-#include "gc/GCMarker.h"                  // for GCMarker
-#include "gc/GCRuntime.h"                 // for GCRuntime, AutoEnterIteration
-#include "gc/HashUtil.h"                  // for DependentAddPtr
-#include "gc/Marking.h"                   // for IsMarkedUnbarriered, IsMarked
-#include "gc/PublicIterators.h"           // for RealmsIter, CompartmentsIter
-#include "gc/Rooting.h"                   // for RootedNativeObject
-#include "gc/Statistics.h"                // for Statistics::SliceData
-#include "gc/Tracer.h"                    // for TraceEdge
-#include "gc/Zone.h"                      // for Zone
-#include "gc/ZoneAllocator.h"             // for ZoneAllocPolicy
+#include "builtin/Array.h"               // for NewDenseFullyAllocatedArray
+#include "debugger/DebugAPI.h"           // for ResumeMode, DebugAPI
+#include "debugger/DebuggerMemory.h"     // for DebuggerMemory
+#include "debugger/DebugScript.h"        // for DebugScript
+#include "debugger/Environment.h"        // for DebuggerEnvironment
+#include "debugger/Frame.h"              // for DebuggerFrame
+#include "debugger/NoExecute.h"          // for EnterDebuggeeNoExecute
+#include "debugger/Object.h"             // for DebuggerObject
+#include "debugger/Script.h"             // for DebuggerScript
+#include "debugger/Source.h"             // for DebuggerSource
+#include "frontend/NameAnalysisTypes.h"  // for ParseGoal, ParseGoal::Script
+#include "frontend/ParseContext.h"       // for UsedNameTracker
+#include "frontend/Parser.h"             // for Parser
+#include "gc/Barrier.h"                  // for GCPtrNativeObject
+#include "gc/FreeOp.h"                   // for JSFreeOp
+#include "gc/GC.h"                       // for IterateLazyScripts
+#include "gc/GCMarker.h"                 // for GCMarker
+#include "gc/GCRuntime.h"                // for GCRuntime, AutoEnterIteration
+#include "gc/HashUtil.h"                 // for DependentAddPtr
+#include "gc/Marking.h"                  // for IsMarkedUnbarriered, IsMarked
+#include "gc/PublicIterators.h"          // for RealmsIter, CompartmentsIter
+#include "gc/Rooting.h"                  // for RootedNativeObject
+#include "gc/Statistics.h"               // for Statistics::SliceData
+#include "gc/Tracer.h"                   // for TraceEdge
+#include "gc/Zone.h"                     // for Zone
+#include "gc/ZoneAllocator.h"            // for ZoneAllocPolicy
 #include "jit/BaselineDebugModeOSR.h"  // for RecompileOnStackBaselineScriptsForDebugMode
 #include "jit/BaselineJIT.h"           // for FinishDiscardBaselineScript
-#include "jit/Invalidation.h"         // for RecompileInfoVector
-#include "jit/Ion.h"                  // for JitContext
-#include "jit/JitScript.h"            // for JitScript
+#include "jit/Ion.h"                   // for JitContext
+#include "jit/JitScript.h"             // for JitScript
 #include "jit/JSJitFrameIter.h"       // for InlineFrameIterator
 #include "jit/RematerializedFrame.h"  // for RematerializedFrame
 #include "js/Conversions.h"           // for ToBoolean, ToUint32
 #include "js/Debug.h"                 // for Builder::Object, Builder
-#include "js/friend/ErrorMessages.h"  // for GetErrorMessage, JSMSG_*
 #include "js/GCAPI.h"                 // for GarbageCollectionEvent
 #include "js/HeapAPI.h"               // for ExposeObjectToActiveJS
 #include "js/Promise.h"               // for AutoDebuggerJobQueueInterruption
@@ -102,6 +102,7 @@
 #include "vm/Scope.h"                 // for Scope
 #include "vm/StringType.h"            // for JSString, PropertyName
 #include "vm/TraceLogging.h"          // for TraceLoggerForCurrentThread
+#include "vm/TypeInference.h"         // for TypeZone
 #include "vm/WrapperObject.h"         // for CrossCompartmentWrapperObject
 #include "wasm/WasmDebug.h"           // for DebugState
 #include "wasm/WasmInstance.h"        // for Instance
@@ -110,9 +111,7 @@
 #include "wasm/WasmTypes.h"           // for WasmInstanceObjectVector
 
 #include "debugger/DebugAPI-inl.h"
-#include "debugger/Environment-inl.h"  // for DebuggerEnvironment::owner
-#include "debugger/Frame-inl.h"        // for DebuggerFrame::hasGeneratorInfo
-#include "debugger/Object-inl.h"   // for DebuggerObject::owner and isInstance.
+#include "debugger/Frame-inl.h"    // for DebuggerFrame::hasGenerator
 #include "debugger/Script-inl.h"   // for DebuggerScript::getReferent
 #include "gc/GC-inl.h"             // for ZoneCellIter
 #include "gc/Marking-inl.h"        // for MaybeForwarded
@@ -127,6 +126,7 @@
 #include "vm/ObjectOperations-inl.h"  // for GetProperty, HasProperty
 #include "vm/Realm-inl.h"             // for AutoRealm::AutoRealm
 #include "vm/Stack-inl.h"             // for AbstractFramePtr::script
+#include "vm/TypeInference-inl.h"     // for AutoEnterAnalysis
 
 namespace js {
 
@@ -174,41 +174,8 @@ JSScript* js::GetOrCreateFunctionScript(JSContext* cx, HandleFunction fun) {
   return JSFunction::getOrCreateScript(cx, fun);
 }
 
-ArrayObject* js::GetFunctionParameterNamesArray(JSContext* cx,
-                                                HandleFunction fun) {
-  RootedValueVector names(cx);
-
-  // The default value for each argument is |undefined|.
-  if (!names.growBy(fun->nargs())) {
-    return nullptr;
-  }
-
-  if (IsInterpretedNonSelfHostedFunction(fun) && fun->nargs() > 0) {
-    RootedScript script(cx, GetOrCreateFunctionScript(cx, fun));
-    if (!script) {
-      return nullptr;
-    }
-
-    MOZ_ASSERT(fun->nargs() == script->numArgs());
-
-    PositionalFormalParameterIter fi(script);
-    for (size_t i = 0; i < fun->nargs(); i++, fi++) {
-      MOZ_ASSERT(fi.argumentSlot() == i);
-      if (JSAtom* atom = fi.name()) {
-        // Skip any internal, non-identifier names, like for example ".args".
-        if (IsIdentifier(atom)) {
-          cx->markAtom(atom);
-          names[i].setString(atom);
-        }
-      }
-    }
-  }
-
-  return NewDenseCopiedArray(cx, names.length(), names.begin());
-}
-
 bool js::ValueToIdentifier(JSContext* cx, HandleValue v, MutableHandleId id) {
-  if (!ToPropertyKey(cx, v, id)) {
+  if (!ValueToId<CanGC>(cx, v, id)) {
     return false;
   }
   if (!JSID_IS_ATOM(id) || !IsIdentifier(JSID_TO_ATOM(id))) {
@@ -267,20 +234,20 @@ static void PropagateForcedReturn(JSContext* cx, AbstractFramePtr frame,
   frame.setReturnValue(rval);
 }
 
-[[nodiscard]] static bool AdjustGeneratorResumptionValue(JSContext* cx,
-                                                         AbstractFramePtr frame,
-                                                         ResumeMode& resumeMode,
-                                                         MutableHandleValue vp);
+static MOZ_MUST_USE bool AdjustGeneratorResumptionValue(JSContext* cx,
+                                                        AbstractFramePtr frame,
+                                                        ResumeMode& resumeMode,
+                                                        MutableHandleValue vp);
 
-[[nodiscard]] static bool ApplyFrameResumeMode(JSContext* cx,
-                                               AbstractFramePtr frame,
-                                               ResumeMode resumeMode,
-                                               HandleValue rv,
-                                               HandleSavedFrame exnStack) {
+static MOZ_MUST_USE bool ApplyFrameResumeMode(JSContext* cx,
+                                              AbstractFramePtr frame,
+                                              ResumeMode resumeMode,
+                                              HandleValue rv,
+                                              HandleSavedFrame exnStack) {
   RootedValue rval(cx, rv);
 
-  // The value passed in here is unwrapped and has no guarantees about what
-  // compartment it may be associated with, so we explicitly wrap it into the
+  // The value passed in here is unwrapped had has no guarantees about what
+  // compartment it may be associated with, so we explcitly wrap it into the
   // debuggee compartment.
   if (!cx->compartment()->wrap(cx, &rval)) {
     return false;
@@ -560,18 +527,6 @@ Debugger::Debugger(JSContext* cx, NativeObject* dbg)
   cx->runtime()->debuggerList().insertBack(this);
 }
 
-template <typename ElementAccess>
-static void RemoveDebuggerEntry(
-    mozilla::DoublyLinkedList<Debugger, ElementAccess>& list, Debugger* dbg) {
-  // The "probably" here is because there could technically be multiple lists
-  // with this type signature and theoretically the debugger could be an entry
-  // in a different one. That is not actually possible however because there
-  // is only one list the debugger could be in.
-  if (list.ElementProbablyInList(dbg)) {
-    list.remove(dbg);
-  }
-}
-
 Debugger::~Debugger() {
   MOZ_ASSERT(debuggees.empty());
   allocationsLog.clear();
@@ -584,9 +539,22 @@ Debugger::~Debugger() {
   // We don't have to worry about locking here since Debugger is not
   // background finalized.
   JSContext* cx = TlsContext.get();
-  RemoveDebuggerEntry(cx->runtime()->onNewGlobalObjectWatchers(), this);
-  RemoveDebuggerEntry(cx->runtime()->onGarbageCollectionWatchers(), this);
+  if (onNewGlobalObjectWatchersLink.mPrev ||
+      onNewGlobalObjectWatchersLink.mNext ||
+      cx->runtime()->onNewGlobalObjectWatchers().begin() ==
+          JSRuntime::WatchersList::Iterator(this)) {
+    cx->runtime()->onNewGlobalObjectWatchers().remove(this);
+  }
 }
+
+static_assert(unsigned(DebuggerFrame::OWNER_SLOT) ==
+              unsigned(DebuggerScript::OWNER_SLOT));
+static_assert(unsigned(DebuggerFrame::OWNER_SLOT) ==
+              unsigned(DebuggerSource::OWNER_SLOT));
+static_assert(unsigned(DebuggerFrame::OWNER_SLOT) ==
+              unsigned(JSSLOT_DEBUGOBJECT_OWNER));
+static_assert(unsigned(DebuggerFrame::OWNER_SLOT) ==
+              unsigned(DebuggerEnvironment::OWNER_SLOT));
 
 #ifdef DEBUG
 /* static */
@@ -598,6 +566,15 @@ bool Debugger::isChildJSObject(JSObject* obj) {
          obj->getClass() == &DebuggerEnvironment::class_;
 }
 #endif
+
+/* static */
+Debugger* Debugger::fromChildJSObject(JSObject* obj) {
+  MOZ_ASSERT(isChildJSObject(obj));
+  JSObject* dbgobj = &obj->as<NativeObject>()
+                          .getReservedSlot(JSSLOT_DEBUGOBJECT_OWNER)
+                          .toObject();
+  return fromJSObject(dbgobj);
+}
 
 bool Debugger::hasMemory() const {
   return object->getReservedSlot(JSSLOT_DEBUG_MEMORY_INSTANCE).isObject();
@@ -651,29 +628,34 @@ bool Debugger::getFrame(JSContext* cx, const FrameIter& iter,
 
   FrameMap::AddPtr p = frames.lookupForAdd(referent);
   if (!p) {
+    RootedDebuggerFrame frame(cx);
+
+    // If this is a generator frame, there may be an existing
+    // Debugger.Frame object that isn't in `frames` because the generator
+    // was suspended, popping the stack frame, and later resumed (and we
+    // were not stepping, so did not pass through slowPathOnResumeFrame).
     Rooted<AbstractGeneratorObject*> genObj(cx);
     if (referent.isGeneratorFrame()) {
-      if (referent.isFunctionFrame()) {
+      {
         AutoRealm ar(cx, referent.callee());
         genObj = GetGeneratorObjectForFrame(cx, referent);
-      } else {
-        MOZ_ASSERT(referent.isModuleFrame());
-        AutoRealm ar(cx, referent.script()->module());
-        genObj = GetGeneratorObjectForFrame(cx, referent);
       }
+      if (genObj) {
+        GeneratorWeakMap::Ptr gp = generatorFrames.lookup(genObj);
+        if (gp) {
+          frame = gp->value();
+          MOZ_ASSERT(&frame->unwrappedGenerator() == genObj);
 
-      // If this frame has a generator associated with it, but no on-stack
-      // Debugger.Frame object was found, there should not be a suspended
-      // Debugger.Frame either because otherwise slowPathOnResumeFrame would
-      // have already populated the "frames" map with a Debugger.Frame.
-      MOZ_ASSERT_IF(genObj, !generatorFrames.has(genObj));
-
-      // If the frame's generator is closed, there is no way to associate the
-      // generator with the frame successfully because there is no way to
-      // get the generator's callee script, and even if we could, having it
-      // there would in no way affect the behavior of the frame.
-      if (genObj && genObj->isClosed()) {
-        genObj = nullptr;
+          // We have found an existing Debugger.Frame object. But
+          // since it was previously popped (see comment above), it
+          // is not currently "live". We must revive it.
+          if (!frame->resume(iter)) {
+            return false;
+          }
+          if (!ensureExecutionObservabilityOfFrame(cx, referent)) {
+            return false;
+          }
+        }
       }
 
       // If no AbstractGeneratorObject exists yet, we create a Debugger.Frame
@@ -681,38 +663,28 @@ bool Debugger::getFrame(JSContext* cx, const FrameIter& iter,
       // with the AbstractGeneratorObject later when we hit JSOp::Generator.
     }
 
-    // Create and populate the Debugger.Frame object.
-    RootedObject proto(
-        cx, &object->getReservedSlot(JSSLOT_DEBUG_FRAME_PROTO).toObject());
-    RootedNativeObject debugger(cx, object);
-
-    RootedDebuggerFrame frame(
-        cx, DebuggerFrame::create(cx, proto, debugger, &iter, genObj));
     if (!frame) {
-      return false;
-    }
+      // Create and populate the Debugger.Frame object.
+      RootedObject proto(
+          cx, &object->getReservedSlot(JSSLOT_DEBUG_FRAME_PROTO).toObject());
+      RootedNativeObject debugger(cx, object);
 
-    auto terminateDebuggerFrameGuard = MakeScopeExit([&] {
-      terminateDebuggerFrame(cx->defaultFreeOp(), this, frame, referent);
-    });
+      frame = DebuggerFrame::create(cx, proto, debugger, &iter, genObj);
+      if (!frame) {
+        return false;
+      }
 
-    if (genObj) {
-      DependentAddPtr<GeneratorWeakMap> genPtr(cx, generatorFrames, genObj);
-      if (!genPtr.add(cx, generatorFrames, genObj, frame)) {
+      if (!ensureExecutionObservabilityOfFrame(cx, referent)) {
         return false;
       }
     }
 
-    if (!ensureExecutionObservabilityOfFrame(cx, referent)) {
-      return false;
-    }
-
     if (!frames.add(p, referent, frame)) {
+      frame->freeFrameIterData(cx->defaultFreeOp());
+      frame->clearGenerator(cx->runtime()->defaultFreeOp(), this);
       ReportOutOfMemory(cx);
       return false;
     }
-
-    terminateDebuggerFrameGuard.release();
   }
 
   result.set(p->value());
@@ -726,13 +698,13 @@ bool Debugger::getFrame(JSContext* cx, Handle<AbstractGeneratorObject*> genObj,
   // stack for the generator's frame, but for the moment, we only need this
   // function to handle generators we've found on promises' reaction records,
   // which should always be suspended.
-  MOZ_ASSERT(genObj->isSuspended());
+  MOZ_ASSERT(!genObj->isRunning());
 
   // Do we have an existing Debugger.Frame for this generator?
-  DependentAddPtr<GeneratorWeakMap> p(cx, generatorFrames, genObj);
-  if (p) {
-    MOZ_ASSERT(&p->value()->unwrappedGenerator() == genObj);
-    result.set(p->value());
+  GeneratorWeakMap::Ptr gp = generatorFrames.lookup(genObj);
+  if (gp) {
+    MOZ_ASSERT(&gp->value()->unwrappedGenerator() == genObj);
+    result.set(gp->value());
     return true;
   }
 
@@ -743,12 +715,6 @@ bool Debugger::getFrame(JSContext* cx, Handle<AbstractGeneratorObject*> genObj,
 
   result.set(DebuggerFrame::create(cx, proto, debugger, nullptr, genObj));
   if (!result) {
-    return false;
-  }
-
-  if (!p.add(cx, generatorFrames, genObj, result)) {
-    terminateDebuggerFrame(cx->runtime()->defaultFreeOp(), this, result,
-                           NullFramePtr());
     return false;
   }
 
@@ -920,20 +886,9 @@ bool DebugAPI::slowPathOnResumeFrame(JSContext* cx, AbstractFramePtr frame) {
       cx, GetGeneratorObjectForFrame(cx, frame));
   MOZ_ASSERT(genObj);
 
-  // If there is an OOM, we mark all of the Debugger.Frame objects terminated
-  // because we want to ensure that none of the frames are in a partially
-  // initialized state where they are in "generatorFrames" but not "frames".
-  auto terminateDebuggerFramesGuard = MakeScopeExit([&] {
-    Debugger::terminateDebuggerFrames(cx, frame);
-
-    MOZ_ASSERT(!DebugAPI::inFrameMaps(frame));
-  });
-
   // For each debugger, if there is an existing Debugger.Frame object for the
   // resumed `frame`, update it with the new frame pointer and make sure the
   // frame is observable.
-  FrameIter iter(cx);
-  MOZ_ASSERT(iter.abstractFramePtr() == frame);
   for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers()) {
     Debugger* dbg = entry.dbg;
     if (Debugger::GeneratorWeakMap::Ptr generatorEntry =
@@ -944,13 +899,17 @@ bool DebugAPI::slowPathOnResumeFrame(JSContext* cx, AbstractFramePtr frame) {
         ReportOutOfMemory(cx);
         return false;
       }
+
+      FrameIter iter(cx);
+      MOZ_ASSERT(iter.abstractFramePtr() == frame);
       if (!frameObj->resume(iter)) {
+        return false;
+      }
+      if (!Debugger::ensureExecutionObservabilityOfFrame(cx, frame)) {
         return false;
       }
     }
   }
-
-  terminateDebuggerFramesGuard.release();
 
   return slowPathOnEnterFrame(cx, frame);
 }
@@ -1104,11 +1063,8 @@ bool DebugAPI::slowPathOnLeaveFrame(JSContext* cx, AbstractFramePtr frame,
     // flag that says to leave those frames `.live`. Note that if the completion
     // is a suspension but success is false, the generator gets closed, not
     // suspended.
-    if (success && completion.get().suspending()) {
-      Debugger::suspendGeneratorDebuggerFrames(cx, frame);
-    } else {
-      Debugger::terminateDebuggerFrames(cx, frame);
-    }
+    Debugger::removeFromFrameMapsAndClearBreakpointsIn(
+        cx, frame, success && completion.get().suspending());
   });
 
   // The onPop handler and associated clean up logic should not run multiple
@@ -1149,7 +1105,7 @@ bool DebugAPI::slowPathOnLeaveFrame(JSContext* cx, AbstractFramePtr frame,
       // For each Debugger.Frame, fire its onPop handler, if any.
       for (size_t i = 0; i < frames.length(); i++) {
         HandleDebuggerFrame frameobj = frames[i];
-        Debugger* dbg = frameobj->owner();
+        Debugger* dbg = Debugger::fromChildJSObject(frameobj);
         EnterDebuggeeNoExecute nx(cx, *dbg, adjqi);
 
         // Removing a global from a Debugger's debuggee set kills all of that
@@ -1238,45 +1194,27 @@ bool DebugAPI::slowPathOnNewGenerator(JSContext* cx, AbstractFramePtr frame,
   // `frame` may already have been exposed to debugger code. The
   // AbstractGeneratorObject for this generator call, though, has just been
   // created. It must be associated with any existing Debugger.Frames.
-
-  // Initializing frames with their associated generator is critical to the
-  // functionality of the debugger, so if there is an OOM, we want to
-  // cleanly terminate all of the frames.
-  auto terminateDebuggerFramesGuard =
-      MakeScopeExit([&] { Debugger::terminateDebuggerFrames(cx, frame); });
-
   bool ok = true;
-  Debugger::forEachOnStackDebuggerFrame(
-      frame, [&](Debugger* dbg, DebuggerFrame* frameObjPtr) {
-        if (!ok) {
-          return;
-        }
+  Debugger::forEachDebuggerFrame(frame, [&](DebuggerFrame* frameObjPtr) {
+    if (!ok) {
+      return;
+    }
 
-        RootedDebuggerFrame frameObj(cx, frameObjPtr);
+    RootedDebuggerFrame frameObj(cx, frameObjPtr);
+    {
+      AutoRealm ar(cx, frameObj);
 
-        AutoRealm ar(cx, frameObj);
+      if (!frameObj->setGenerator(cx, genObj)) {
+        ReportOutOfMemory(cx);
 
-        if (!DebuggerFrame::setGeneratorInfo(cx, frameObj, genObj)) {
-          // This leaves `genObj` and `frameObj` unassociated. It's OK
-          // because we won't pause again with this generator on the stack:
-          // the caller will immediately discard `genObj` and unwind `frame`.
-          ok = false;
-          return;
-        }
-
-        DependentAddPtr<Debugger::GeneratorWeakMap> genPtr(
-            cx, dbg->generatorFrames, genObj);
-        if (!genPtr.add(cx, dbg->generatorFrames, genObj, frameObj)) {
-          ok = false;
-        }
-      });
-
-  if (!ok) {
-    return false;
-  }
-
-  terminateDebuggerFramesGuard.release();
-  return true;
+        // This leaves `genObj` and `frameObj` unassociated. It's OK
+        // because we won't pause again with this generator on the stack:
+        // the caller will immediately discard `genObj` and unwind `frame`.
+        ok = false;
+      }
+    }
+  });
+  return ok;
 }
 
 /* static */
@@ -1485,18 +1423,19 @@ bool Debugger::wrapDebuggeeObject(JSContext* cx, HandleObject obj,
   return true;
 }
 
-static DebuggerObject* ToNativeDebuggerObject(JSContext* cx,
-                                              MutableHandleObject obj) {
-  if (!obj->is<DebuggerObject>()) {
+static NativeObject* ToNativeDebuggerObject(JSContext* cx,
+                                            MutableHandleObject obj) {
+  if (obj->getClass() != &DebuggerObject::class_) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_NOT_EXPECTED_TYPE, "Debugger",
                               "Debugger.Object", obj->getClass()->name);
     return nullptr;
   }
 
-  DebuggerObject* ndobj = &obj->as<DebuggerObject>();
+  NativeObject* ndobj = &obj->as<NativeObject>();
 
-  if (!ndobj->isInstance()) {
+  Value owner = ndobj->getReservedSlot(JSSLOT_DEBUGOBJECT_OWNER);
+  if (owner.isUndefined()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_DEBUG_PROTO,
                               "Debugger.Object", "Debugger.Object");
     return nullptr;
@@ -1506,18 +1445,19 @@ static DebuggerObject* ToNativeDebuggerObject(JSContext* cx,
 }
 
 bool Debugger::unwrapDebuggeeObject(JSContext* cx, MutableHandleObject obj) {
-  DebuggerObject* ndobj = ToNativeDebuggerObject(cx, obj);
+  NativeObject* ndobj = ToNativeDebuggerObject(cx, obj);
   if (!ndobj) {
     return false;
   }
 
-  if (ndobj->owner() != Debugger::fromJSObject(object)) {
+  Value owner = ndobj->getReservedSlot(JSSLOT_DEBUGOBJECT_OWNER);
+  if (&owner.toObject() != object) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_DEBUG_WRONG_OWNER, "Debugger.Object");
     return false;
   }
 
-  obj.set(ndobj->referent());
+  obj.set(static_cast<JSObject*>(ndobj->getPrivate()));
   return true;
 }
 
@@ -1713,9 +1653,10 @@ static bool CheckResumptionValue(JSContext* cx, AbstractFramePtr frame,
 // control of the uncaughtExceptionHook, because this code assumes we won't
 // change our minds and continue execution--we must not close the generator
 // object unless we're really going to force-return.
-[[nodiscard]] static bool AdjustGeneratorResumptionValue(
-    JSContext* cx, AbstractFramePtr frame, ResumeMode& resumeMode,
-    MutableHandleValue vp) {
+static MOZ_MUST_USE bool AdjustGeneratorResumptionValue(JSContext* cx,
+                                                        AbstractFramePtr frame,
+                                                        ResumeMode& resumeMode,
+                                                        MutableHandleValue vp) {
   if (resumeMode != ResumeMode::Return && resumeMode != ResumeMode::Throw) {
     return true;
   }
@@ -2630,12 +2571,6 @@ bool DebugAPI::onSingleStep(JSContext* cx) {
           continue;
         }
 
-        // A closed generator no longer has a callee so it will not be able to
-        // compare with the trappingScript.
-        if (genObj.isClosed()) {
-          continue;
-        }
-
         // If a frame isn't live, but it has an entry in generatorFrames,
         // it had better be suspended.
         MOZ_ASSERT(genObj.isSuspended());
@@ -2674,7 +2609,7 @@ bool DebugAPI::onSingleStep(JSContext* cx) {
         continue;
       }
 
-      Debugger* dbg = frame->owner();
+      Debugger* dbg = Debugger::fromChildJSObject(frame);
       EnterDebuggeeNoExecute nx(cx, *dbg, adjqi);
 
       bool result = dbg->enterDebuggerHook(cx, [&]() -> bool {
@@ -2881,12 +2816,25 @@ bool Debugger::appendAllocationSite(JSContext* cx, HandleObject obj,
     return false;
   }
 
+  // Try to get the constructor name from the ObjectGroup's TypeNewScript.
+  // This is only relevant for native objects.
+  RootedAtom ctorName(cx);
+  if (obj->is<NativeObject>()) {
+    AutoRealm ar(cx, obj);
+    if (!JSObject::constructorDisplayAtom(cx, obj, &ctorName)) {
+      return false;
+    }
+  }
+  if (ctorName) {
+    cx->markAtom(ctorName);
+  }
+
   auto className = obj->getClass()->name;
   auto size =
       JS::ubi::Node(obj.get()).size(cx->runtime()->debuggerMallocSizeOf);
   auto inNursery = gc::IsInsideNursery(obj);
 
-  if (!allocationsLog.emplaceBack(wrappedFrame, when, className, size,
+  if (!allocationsLog.emplaceBack(wrappedFrame, when, className, ctorName, size,
                                   inNursery)) {
     ReportOutOfMemory(cx);
     return false;
@@ -2967,7 +2915,11 @@ class MOZ_RAII ExecutionObservableRealms
   HashSet<Zone*> zones_;
 
  public:
-  explicit ExecutionObservableRealms(JSContext* cx) : realms_(cx), zones_(cx) {}
+  explicit ExecutionObservableRealms(
+      JSContext* cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : realms_(cx), zones_(cx) {
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+  }
 
   bool add(Realm* realm) {
     return realms_.put(realm) && zones_.put(realm->zone());
@@ -2986,6 +2938,8 @@ class MOZ_RAII ExecutionObservableRealms
     // don't match.
     return iter.hasUsableAbstractFramePtr() && realms_.has(iter.realm());
   }
+
+  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 // Given a particular AbstractFramePtr F that has become observable, this
@@ -2997,7 +2951,11 @@ class MOZ_RAII ExecutionObservableFrame
   AbstractFramePtr frame_;
 
  public:
-  explicit ExecutionObservableFrame(AbstractFramePtr frame) : frame_(frame) {}
+  explicit ExecutionObservableFrame(
+      AbstractFramePtr frame MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : frame_(frame) {
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+  }
 
   Zone* singleZone() const override {
     // We never inline across realms, let alone across zones, so
@@ -3049,6 +3007,8 @@ class MOZ_RAII ExecutionObservableFrame
     return iter.hasUsableAbstractFramePtr() &&
            iter.abstractFramePtr() == frame_;
   }
+
+  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 class MOZ_RAII ExecutionObservableScript
@@ -3056,8 +3016,11 @@ class MOZ_RAII ExecutionObservableScript
   RootedScript script_;
 
  public:
-  ExecutionObservableScript(JSContext* cx, JSScript* script)
-      : script_(cx, script) {}
+  ExecutionObservableScript(JSContext* cx,
+                            JSScript* script MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : script_(cx, script) {
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+  }
 
   Zone* singleZone() const override { return script_->zone(); }
   JSScript* singleScriptForZoneInvalidation() const override { return script_; }
@@ -3080,6 +3043,8 @@ class MOZ_RAII ExecutionObservableScript
     return iter.hasUsableAbstractFramePtr() && !iter.isWasm() &&
            iter.abstractFramePtr().script() == script_;
   }
+
+  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 /* static */
@@ -3137,14 +3102,13 @@ static inline void MarkJitScriptActiveIfObservable(
 
 static bool AppendAndInvalidateScript(JSContext* cx, Zone* zone,
                                       JSScript* script,
-                                      jit::RecompileInfoVector& invalid,
                                       Vector<JSScript*>& scripts) {
-  // Enter the script's realm as AddPendingInvalidation attempts to
+  // Enter the script's realm as addPendingRecompile attempts to
   // cancel off-thread compilations, whose books are kept on the
   // script's realm.
   MOZ_ASSERT(script->zone() == zone);
   AutoRealm ar(cx, script);
-  AddPendingInvalidation(invalid, script);
+  zone->types.addPendingRecompile(cx, script);
   return scripts.append(script);
 }
 
@@ -3162,10 +3126,10 @@ static bool UpdateExecutionObservabilityOfScriptsInZone(
   // Iterate through observable scripts, invalidating their Ion scripts and
   // appending them to a vector for discarding their baseline scripts later.
   {
-    RecompileInfoVector invalid;
+    AutoEnterAnalysis enter(fop, zone);
     if (JSScript* script = obs.singleScriptForZoneInvalidation()) {
       if (obs.shouldRecompileOrInvalidate(script)) {
-        if (!AppendAndInvalidateScript(cx, zone, script, invalid, scripts)) {
+        if (!AppendAndInvalidateScript(cx, zone, script, scripts)) {
           return false;
         }
       }
@@ -3177,13 +3141,12 @@ static bool UpdateExecutionObservabilityOfScriptsInZone(
         }
         JSScript* script = base->asJSScript();
         if (obs.shouldRecompileOrInvalidate(script)) {
-          if (!AppendAndInvalidateScript(cx, zone, script, invalid, scripts)) {
+          if (!AppendAndInvalidateScript(cx, zone, script, scripts)) {
             return false;
           }
         }
       }
     }
-    Invalidate(cx, invalid);
   }
 
   // Code below this point must be infallible to ensure the active bit of
@@ -3262,37 +3225,11 @@ bool Debugger::updateExecutionObservabilityOfScripts(
 
 template <typename FrameFn>
 /* static */
-void Debugger::forEachOnStackDebuggerFrame(AbstractFramePtr frame, FrameFn fn) {
+void Debugger::forEachDebuggerFrame(AbstractFramePtr frame, FrameFn fn) {
   for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers()) {
     Debugger* dbg = entry.dbg;
     if (FrameMap::Ptr frameEntry = dbg->frames.lookup(frame)) {
-      fn(dbg, frameEntry->value());
-    }
-  }
-}
-
-template <typename FrameFn>
-/* static */
-void Debugger::forEachOnStackOrSuspendedDebuggerFrame(JSContext* cx,
-                                                      AbstractFramePtr frame,
-                                                      FrameFn fn) {
-  Rooted<AbstractGeneratorObject*> genObj(
-      cx, frame.isGeneratorFrame() ? GetGeneratorObjectForFrame(cx, frame)
-                                   : nullptr);
-
-  for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers()) {
-    Debugger* dbg = entry.dbg;
-
-    DebuggerFrame* frameObj = nullptr;
-    if (FrameMap::Ptr frameEntry = dbg->frames.lookup(frame)) {
-      frameObj = frameEntry->value();
-    } else if (GeneratorWeakMap::Ptr frameEntry =
-                   dbg->generatorFrames.lookup(genObj)) {
-      frameObj = frameEntry->value();
-    }
-
-    if (frameObj) {
-      fn(dbg, frameObj);
+      fn(frameEntry->value());
     }
   }
 }
@@ -3301,7 +3238,7 @@ void Debugger::forEachOnStackOrSuspendedDebuggerFrame(JSContext* cx,
 bool Debugger::getDebuggerFrames(AbstractFramePtr frame,
                                  MutableHandle<DebuggerFrameVector> frames) {
   bool hadOOM = false;
-  forEachOnStackDebuggerFrame(frame, [&](Debugger*, DebuggerFrame* frameobj) {
+  forEachDebuggerFrame(frame, [&](DebuggerFrame* frameobj) {
     if (!hadOOM && !frames.append(frameobj)) {
       hadOOM = true;
     }
@@ -3642,8 +3579,6 @@ void Debugger::traceCrossCompartmentEdges(JSTracer* trc) {
  */
 /* static */
 void DebugAPI::traceCrossCompartmentEdges(JSTracer* trc) {
-  MOZ_ASSERT(JS::RuntimeHeapIsMajorCollecting());
-
   JSRuntime* rt = trc->runtime();
   gc::State state = rt->gc.state();
 
@@ -3673,14 +3608,14 @@ bool DebugAPI::edgeIsInDebuggerWeakmap(JSRuntime* rt, JSObject* src,
     return false;
   }
 
-  if (src->is<DebuggerFrame>()) {
-    DebuggerFrame* frame = &src->as<DebuggerFrame>();
-    Debugger* dbg = frame->owner();
-    MOZ_ASSERT(RuntimeHasDebugger(rt, dbg));
+  Debugger* dbg = Debugger::fromChildJSObject(src);
+  MOZ_ASSERT(RuntimeHasDebugger(rt, dbg));
 
+  if (src->is<DebuggerFrame>()) {
     if (dst.is<BaseScript>()) {
       // The generatorFrames map is not keyed on the associated JSScript. Get
       // the key from the source object and check everything matches.
+      DebuggerFrame* frame = &src->as<DebuggerFrame>();
       AbstractGeneratorObject* genObj = &frame->unwrappedGenerator();
       return frame->generatorScript() == &dst.as<BaseScript>() &&
              dbg->generatorFrames.hasEntry(genObj, src);
@@ -3691,21 +3626,14 @@ bool DebugAPI::edgeIsInDebuggerWeakmap(JSRuntime* rt, JSObject* src,
                &dst.as<JSObject>().as<AbstractGeneratorObject>(), src);
   }
   if (src->is<DebuggerObject>()) {
-    Debugger* dbg = src->as<DebuggerObject>().owner();
-    MOZ_ASSERT(RuntimeHasDebugger(rt, dbg));
     return dst.is<JSObject>() &&
            dbg->objects.hasEntry(&dst.as<JSObject>(), src);
   }
   if (src->is<DebuggerEnvironment>()) {
-    Debugger* dbg = src->as<DebuggerEnvironment>().owner();
-    MOZ_ASSERT(RuntimeHasDebugger(rt, dbg));
     return dst.is<JSObject>() &&
            dbg->environments.hasEntry(&dst.as<JSObject>(), src);
   }
   if (src->is<DebuggerScript>()) {
-    Debugger* dbg = src->as<DebuggerScript>().owner();
-    MOZ_ASSERT(RuntimeHasDebugger(rt, dbg));
-
     return src->as<DebuggerScript>().getReferent().match(
         [=](BaseScript* script) {
           return dst.is<BaseScript>() && script == &dst.as<BaseScript>() &&
@@ -3717,9 +3645,6 @@ bool DebugAPI::edgeIsInDebuggerWeakmap(JSRuntime* rt, JSObject* src,
         });
   }
   if (src->is<DebuggerSource>()) {
-    Debugger* dbg = src->as<DebuggerSource>().owner();
-    MOZ_ASSERT(RuntimeHasDebugger(rt, dbg));
-
     return src->as<DebuggerSource>().getReferent().match(
         [=](ScriptSourceObject* sso) {
           return dst.is<JSObject>() && sso == &dst.as<JSObject>() &&
@@ -3765,9 +3690,9 @@ void DebugAPI::slowPathTraceGeneratorFrame(JSTracer* tracer,
                                            AbstractGeneratorObject* generator) {
   MOZ_ASSERT(generator->realm()->isDebuggee());
 
-  // Ignore generic tracers.
+  // Ignore callback tracers.
   //
-  // There are two kinds of generic tracers we need to bar: MovingTracers used
+  // There are two kinds of callback tracers we need to bar: MovingTracers used
   // by compacting GC; and CompartmentCheckTracers.
   //
   // MovingTracers are used by the compacting GC to update pointers to objects
@@ -3804,10 +3729,10 @@ void DebugAPI::slowPathTraceGeneratorFrame(JSTracer* tracer,
   // safely hide the edges from CompartmentCheckTracers.
   //
   // We can't quite recognize MovingTracers and CompartmentCheckTracers
-  // precisely, but they're both generic tracers, so we just show them all the
+  // precisely, but they're both callback tracers, so we just show them all the
   // door. This means the generator -> Debugger.Frame edge is going to be
   // invisible to some traversals. We'll cope with that when it's a problem.
-  if (tracer->isGenericTracer()) {
+  if (tracer->isCallbackTracer()) {
     return;
   }
 
@@ -3908,16 +3833,7 @@ void DebugAPI::sweepAll(JSFreeOp* fop) {
            e.popFront()) {
         DebuggerFrame* frameObj = e.front().value();
         if (IsAboutToBeFinalizedUnbarriered(&frameObj)) {
-          // If the DebuggerFrame is being finalized, that means either:
-          //  1) It is not present in "frames".
-          //  2) The Debugger itself is also being finalized.
-          //
-          // In the first case, passing the frame is not necessary because there
-          // isn't a frame entry to clear, and in the second case,
-          // removeDebuggeeGlobal below will iterate and remove the entries
-          // anyway, so things will be cleaned up properly.
-          Debugger::terminateDebuggerFrame(fop, dbg, frameObj, NullFramePtr(),
-                                           nullptr, &e);
+          frameObj->clearGenerator(fop, dbg, &e);
         }
       }
     }
@@ -3940,6 +3856,17 @@ void DebugAPI::sweepAll(JSFreeOp* fop) {
     }
 
     dbg = next;
+  }
+}
+
+/* static */
+void Debugger::detachAllDebuggersFromGlobal(JSFreeOp* fop,
+                                            GlobalObject* global) {
+  const Realm::DebuggerVector& debuggers = global->getDebuggers();
+  MOZ_ASSERT(!debuggers.empty());
+  while (!debuggers.empty()) {
+    debuggers.back().dbg->removeDebuggeeGlobal(fop, global, nullptr,
+                                               Debugger::FromSweep::No);
   }
 }
 
@@ -3991,8 +3918,7 @@ bool DebuggerWeakMap<UnbarrieredKey, Wrapper,
     }
   }
 
-  // Add in edges for delegates, if relevant for the key type.
-  return Base::findSweepGroupEdges();
+  return true;
 }
 
 const JSClassOps DebuggerInstanceObject::classOps_ = {
@@ -4153,38 +4079,6 @@ bool Debugger::setHookImpl(JSContext* cx, const CallArgs& args, Debugger& dbg,
   }
 
   args.rval().setUndefined();
-  return true;
-}
-
-/* static */
-bool Debugger::getGarbageCollectionHook(JSContext* cx, const CallArgs& args,
-                                        Debugger& dbg) {
-  return getHookImpl(cx, args, dbg, OnGarbageCollection);
-}
-
-/* static */
-bool Debugger::setGarbageCollectionHook(JSContext* cx, const CallArgs& args,
-                                        Debugger& dbg) {
-  Rooted<JSObject*> oldHook(cx, dbg.getHook(OnGarbageCollection));
-
-  if (!setHookImpl(cx, args, dbg, OnGarbageCollection)) {
-    // We want to maintain the invariant that the hook is always set when the
-    // Debugger is in the runtime's list, and vice-versa, so if we return early
-    // and don't adjust the watcher list below, we need to be sure that the
-    // hook didn't change.
-    MOZ_ASSERT(dbg.getHook(OnGarbageCollection) == oldHook);
-    return false;
-  }
-
-  // Add or remove ourselves from the runtime's list of Debuggers that care
-  // about garbage collection.
-  JSObject* newHook = dbg.getHook(OnGarbageCollection);
-  if (!oldHook && newHook) {
-    cx->runtime()->onGarbageCollectionWatchers().pushBack(&dbg);
-  } else if (oldHook && !newHook) {
-    cx->runtime()->onGarbageCollectionWatchers().remove(&dbg);
-  }
-
   return true;
 }
 
@@ -4525,7 +4419,7 @@ bool Debugger::CallData::getDebuggees() {
   if (!arrobj) {
     return false;
   }
-  arrobj->ensureDenseInitializedLength(0, count);
+  arrobj->ensureDenseInitializedLength(cx, 0, count);
   for (i = 0; i < count; i++) {
     RootedValue v(cx, debuggees[i]);
     if (!dbg->wrapDebuggeeValue(cx, &v)) {
@@ -4561,15 +4455,11 @@ bool Debugger::CallData::getNewestFrame() {
 }
 
 bool Debugger::CallData::clearAllBreakpoints() {
-  JSFreeOp* fop = cx->defaultFreeOp();
-  Breakpoint* nextbp;
-  for (Breakpoint* bp = dbg->firstBreakpoint(); bp; bp = nextbp) {
-    nextbp = bp->nextInDebugger();
-
-    bp->remove(fop);
+  for (WeakGlobalObjectSet::Range r = dbg->debuggees.all(); !r.empty();
+       r.popFront()) {
+    DebugScript::clearBreakpointsIn(cx->runtime()->defaultFreeOp(),
+                                    r.front()->realm(), dbg, nullptr);
   }
-  MOZ_ASSERT(!dbg->firstBreakpoint());
-
   return true;
 }
 
@@ -4808,6 +4698,23 @@ void Debugger::removeDebuggeeGlobal(JSFreeOp* fop, GlobalObject* global,
   MOZ_ASSERT(debuggeeZones.has(global->zone()));
   MOZ_ASSERT_IF(debugEnum, debugEnum->front().unbarrieredGet() == global);
 
+  // FIXME Debugger::slowPathOnLeaveFrame needs to kill all Debugger.Frame
+  // objects referring to a particular JS stack frame. This is hard if
+  // Debugger objects that are no longer debugging the relevant global might
+  // have live Frame objects. So we take the easy way out and kill them here.
+  // This is a bug, since it's observable and contrary to the spec. One
+  // possible fix would be to put such objects into a compartment-wide bag
+  // which slowPathOnLeaveFrame would have to examine.
+  for (FrameMap::Enum e(frames); !e.empty(); e.popFront()) {
+    AbstractFramePtr frame = e.front().key();
+    DebuggerFrame* frameobj = e.front().value();
+    if (frame.hasGlobal(global)) {
+      frameobj->freeFrameIterData(fop);
+      frameobj->maybeDecrementStepperCounter(fop, frame);
+      e.removeFront();
+    }
+  }
+
   // Clear this global's generators from generatorFrames as well.
   //
   // This method can be called either from script (dbg.removeDebuggee) or during
@@ -4823,17 +4730,10 @@ void Debugger::removeDebuggeeGlobal(JSFreeOp* fop, GlobalObject* global,
   if (fromSweep == FromSweep::No) {
     for (GeneratorWeakMap::Enum e(generatorFrames); !e.empty(); e.popFront()) {
       AbstractGeneratorObject& genObj = *e.front().key();
-      if (&genObj.global() == global) {
-        terminateDebuggerFrame(fop, this, e.front().value(), NullFramePtr(),
-                               nullptr, &e);
+      DebuggerFrame& frameObj = *e.front().value();
+      if (genObj.isClosed() || &genObj.callee().global() == global) {
+        frameObj.clearGenerator(fop, this, &e);
       }
-    }
-  }
-
-  for (FrameMap::Enum e(frames); !e.empty(); e.popFront()) {
-    AbstractFramePtr frame = e.front().key();
-    if (frame.hasGlobal(global)) {
-      terminateDebuggerFrame(fop, this, e.front().value(), frame, &e);
     }
   }
 
@@ -4891,7 +4791,8 @@ class MOZ_STACK_CLASS Debugger::QueryBase {
       : cx(cx),
         debugger(dbg),
         iterMarker(&cx->runtime()->gc),
-        realms(cx->zone()) {}
+        realms(cx->zone()),
+        oom(false) {}
 
   // The context in which we should do our work.
   JSContext* cx;
@@ -4908,7 +4809,7 @@ class MOZ_STACK_CLASS Debugger::QueryBase {
   RealmSet realms;
 
   // Indicates whether OOM has occurred while matching.
-  bool oom = false;
+  bool oom;
 
   bool addRealm(Realm* realm) { return realms.put(realm); }
 
@@ -4949,9 +4850,13 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
       : QueryBase(cx, dbg),
         url(cx),
         displayURLString(cx),
+        hasSource(false),
         source(cx, AsVariant(static_cast<ScriptSourceObject*>(nullptr))),
+        hasLine(false),
+        line(0),
+        innermost(false),
+        innermostForRealm(cx, cx->zone()),
         scriptVector(cx, BaseScriptVector(cx)),
-        partialMatchVector(cx, BaseScriptVector(cx)),
         wasmInstanceVector(cx, WasmInstanceObjectVector(cx)) {}
 
   /*
@@ -5010,13 +4915,14 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
         return false;
       }
 
-      DebuggerSource& debuggerSourceObj =
-          debuggerSource.toObject().as<DebuggerSource>();
+      Value owner =
+          debuggerSource.toObject().as<DebuggerSource>().getReservedSlot(
+              DebuggerSource::OWNER_SLOT);
 
       // The given source must have an owner. Otherwise, it's a
       // Debugger.Source.prototype, which would match no scripts, and is
       // probably a mistake.
-      if (!debuggerSourceObj.isInstance()) {
+      if (!owner.isObject()) {
         JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                   JSMSG_DEBUG_PROTO, "Debugger.Source",
                                   "Debugger.Source");
@@ -5026,14 +4932,14 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
       // If it does have an owner, it should match the Debugger we're
       // calling findScripts on. It would work fine even if it didn't,
       // but mixing Debugger.Sources is probably a sign of confusion.
-      if (debuggerSourceObj.owner() != debugger) {
+      if (&owner.toObject() != debugger->object) {
         JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                   JSMSG_DEBUG_WRONG_OWNER, "Debugger.Source");
         return false;
       }
 
       hasSource = true;
-      source = debuggerSourceObj.getReferent();
+      source = debuggerSource.toObject().as<DebuggerSource>().getReferent();
     }
 
     // Check for a 'displayURL' property.
@@ -5070,14 +4976,13 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
         return false;
       }
       double doubleLine = lineProperty.toNumber();
-      uint32_t uintLine = (uint32_t)doubleLine;
-      if (doubleLine <= 0 || uintLine != doubleLine) {
+      if (doubleLine <= 0 || (unsigned int)doubleLine != doubleLine) {
         JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                   JSMSG_DEBUG_BAD_LINE);
         return false;
       }
       hasLine = true;
-      line = uintLine;
+      line = doubleLine;
     } else {
       JS_ReportErrorNumberASCII(
           cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
@@ -5123,6 +5028,14 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
       return false;
     }
 
+    bool delazified = false;
+    if (needsDelazifyBeforeQuery()) {
+      if (!delazifyScripts()) {
+        return false;
+      }
+      delazified = true;
+    }
+
     Realm* singletonRealm = nullptr;
     if (realms.count() == 1) {
       singletonRealm = realms.all().front();
@@ -5130,119 +5043,25 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
 
     // Search each realm for debuggee scripts.
     MOZ_ASSERT(scriptVector.empty());
-    MOZ_ASSERT(partialMatchVector.empty());
     oom = false;
     IterateScripts(cx, singletonRealm, this, considerScript);
+    if (!delazified) {
+      IterateLazyScripts(cx, singletonRealm, this, considerLazyScript);
+    }
     if (oom) {
       ReportOutOfMemory(cx);
       return false;
     }
 
-    // If we are filtering by line number, the lazy BaseScripts were not checked
-    // yet since they do not implement `GetScriptLineExtent`. Instead we revisit
-    // each result script and delazify its children and add any matching ones to
-    // the results list.
-    MOZ_ASSERT(hasLine || partialMatchVector.empty());
-    Rooted<BaseScript*> script(cx);
-    RootedFunction fun(cx);
-    while (!partialMatchVector.empty()) {
-      script = partialMatchVector.popCopy();
-
-      // As a performance optimization, we can skip scripts that are definitely
-      // out-of-bounds for the target line. This was checked before adding to
-      // the partialMatchVector, but the bound may have improved since then.
-      if (script->extent().sourceEnd <= sourceOffsetLowerBound) {
-        continue;
-      }
-
-      MOZ_ASSERT(script->isFunction());
-      MOZ_ASSERT(script->isReadyForDelazification());
-
-      fun = script->function();
-
-      // Delazify script.
-      JSScript* compiledScript = GetOrCreateFunctionScript(cx, fun);
-      if (!compiledScript) {
-        return false;
-      }
-
-      // If target line isn't in script, we are done with it.
-      if (!scriptIsLineMatch(compiledScript)) {
-        continue;
-      }
-
-      // Add script to results now that we've completed checks.
-      if (!scriptVector.append(compiledScript)) {
-        return false;
-      }
-
-      // If script was a leaf we are done with it. This is an optional
-      // optimization to avoid inspecting the `gcthings` list below.
-      if (!script->hasInnerFunctions()) {
-        continue;
-      }
-
-      // Now add inner scripts to `partialMatchVector` work list to determine if
-      // they are matches. Note that out IterateScripts callback ignored them
-      // already since they did not have a compiled parent at the time.
-      for (const JS::GCCellPtr& thing : script->gcthings()) {
-        if (!thing.is<JSObject>() || !thing.as<JSObject>().is<JSFunction>()) {
-          continue;
-        }
-        if (!thing.as<JSObject>().as<JSFunction>().hasBaseScript()) {
-          continue;
-        }
-        BaseScript* inner = thing.as<JSObject>().as<JSFunction>().baseScript();
-
-        if (!scriptIsPartialLineMatch(inner)) {
-          continue;
-        }
-
-        // Add the matching inner script to the back of the results queue
-        // where it will be processed recursively.
-        if (!partialMatchVector.append(inner)) {
-          return false;
-        }
-      }
-    }
-
-    // If this is an 'innermost' query, we want to filter the results again to
-    // only return the innermost script for each realm. To do this we build a
-    // hashmap to track innermost and then recreate the `scriptVector` with the
-    // results that remain in the hashmap.
+    // For most queries, we just accumulate results in 'scriptVector' as we find
+    // them. But if this is an 'innermost' query, then we've accumulated the
+    // results in the 'innermostForRealm' map. In that case, we now need to walk
+    // that map and populate 'scriptVector'.
     if (innermost) {
-      using RealmToScriptMap =
-          GCHashMap<Realm*, BaseScript*, DefaultHasher<Realm*>>;
-
-      Rooted<RealmToScriptMap> innermostForRealm(cx);
-
-      // Visit each candidate script and find innermost in each realm.
-      for (BaseScript* script : scriptVector) {
-        Realm* realm = script->realm();
-        RealmToScriptMap::AddPtr p = innermostForRealm.lookupForAdd(realm);
-        if (p) {
-          // Is our newly found script deeper than the last one we found?
-          BaseScript* incumbent = p->value();
-          if (script->asJSScript()->innermostScope()->chainLength() >
-              incumbent->asJSScript()->innermostScope()->chainLength()) {
-            p->value() = script;
-          }
-        } else {
-          // This is the first matching script we've encountered for this
-          // realm, so it is thus the innermost such script.
-          if (!innermostForRealm.add(p, realm, script)) {
-            return false;
-          }
-        }
-      }
-
-      // Reset the results vector.
-      scriptVector.clear();
-
-      // Re-add only the innermost scripts to the results.
       for (RealmToScriptMap::Range r = innermostForRealm.all(); !r.empty();
            r.popFront()) {
         if (!scriptVector.append(r.front().value())) {
+          ReportOutOfMemory(cx);
           return false;
         }
       }
@@ -5286,29 +5105,27 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
    * to this instance. Ideally we'd use a Maybe here, but Maybe interacts
    * very badly with Rooted's LIFO invariant.
    */
-  bool hasSource = false;
+  bool hasSource;
   Rooted<DebuggerSourceReferent> source;
 
   /* True if the query contained a 'line' property. */
-  bool hasLine = false;
+  bool hasLine;
 
   /* The line matching scripts must cover. */
-  uint32_t line = 0;
-
-  // As a performance optimization (and to avoid delazifying as many scripts),
-  // we would like to know the source offset of the target line.
-  //
-  // Since we do not have a simple way to compute this precisely, we instead
-  // track a lower-bound of the offset value. As we collect SourceExtent
-  // examples with (line,column) <-> sourceStart mappings, we can improve the
-  // bound. The target line is within the range [sourceOffsetLowerBound, Inf).
-  //
-  // NOTE: Using a SourceExtent for updating the bound happens independently of
-  //       if the script matches the target line or not in the in the end.
-  mutable uint32_t sourceOffsetLowerBound = 0;
+  unsigned int line;
 
   /* True if the query has an 'innermost' property whose value is true. */
-  bool innermost = false;
+  bool innermost;
+
+  using RealmToScriptMap =
+      GCHashMap<Realm*, JSScript*, DefaultHasher<Realm*>, ZoneAllocPolicy>;
+
+  /*
+   * For 'innermost' queries, a map from realms to the innermost script
+   * we've seen so far in that realm. (Template instantiation code size
+   * explosion ho!)
+   */
+  Rooted<RealmToScriptMap> innermostForRealm;
 
   /*
    * Accumulate the scripts in an Rooted<BaseScriptVector> instead of creating
@@ -5316,16 +5133,6 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
    * we use the CellIter.
    */
   Rooted<BaseScriptVector> scriptVector;
-
-  /*
-   * While in the CellIter we may find BaseScripts that need to be compiled
-   * before the query can be fully checked. Since we cannot compile while under
-   * CellIter we accumulate them here instead.
-   *
-   * This occurs when matching line numbers since `GetScriptLineExtent` cannot
-   * be computed without bytecode existing.
-   */
-  Rooted<BaseScriptVector> partialMatchVector;
 
   /*
    * Like above, but for wasm modules.
@@ -5349,59 +5156,41 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
     return true;
   }
 
-  void updateSourceOffsetLowerBound(const SourceExtent& extent) {
-    // We trying to find the offset of (target-line, 0) so just ignore any
-    // extents on target line to keep things simple.
-    MOZ_ASSERT(extent.lineno <= line);
-    if (extent.lineno == line) {
-      return;
+  bool delazifyScripts() {
+    // All scripts in debuggee realms must be visible, so delazify
+    // everything.
+    for (auto r = realms.all(); !r.empty(); r.popFront()) {
+      Realm* realm = r.front();
+      if (!realm->ensureDelazifyScriptsForDebugger(cx)) {
+        return false;
+      }
     }
-
-    // The extent.sourceStart position is now definitely *before* the target
-    // line, so update sourceOffsetLowerBound if extent.sourceStart is a tighter
-    // bound.
-    if (extent.sourceStart > sourceOffsetLowerBound) {
-      sourceOffsetLowerBound = extent.sourceStart;
-    }
-  }
-
-  // A partial match is a script that starts before the target line, but may or
-  // may not end before it. If we can prove the script definitely ends before
-  // the target line, we may return false here.
-  bool scriptIsPartialLineMatch(BaseScript* script) {
-    const SourceExtent& extent = script->extent();
-
-    // Check that start of script is before or on target line.
-    if (extent.lineno > line) {
-      return false;
-    }
-
-    // Use the implicit (line, column) <-> sourceStart mapping from the
-    // SourceExtent to update our bounds on possible matches. We call this
-    // without knowing if the script is a match or not.
-    updateSourceOffsetLowerBound(script->extent());
-
-    // As an optional performance optimization, we rule out any script that ends
-    // before the lower-bound on where target line exists.
-    return extent.sourceEnd > sourceOffsetLowerBound;
-  }
-
-  // True if any part of script source is on the target line.
-  bool scriptIsLineMatch(JSScript* script) {
-    MOZ_ASSERT(scriptIsPartialLineMatch(script));
-
-    uint32_t lineCount = GetScriptLineExtent(script);
-    return (script->lineno() + lineCount > line);
+    return true;
   }
 
   static void considerScript(JSRuntime* rt, void* data, BaseScript* script,
                              const JS::AutoRequireNoGC& nogc) {
     ScriptQuery* self = static_cast<ScriptQuery*>(data);
-    self->consider(script, nogc);
+    self->consider(script->asJSScript(), nogc);
+  }
+
+  static void considerLazyScript(JSRuntime* rt, void* data, BaseScript* script,
+                                 const JS::AutoRequireNoGC& nogc) {
+    ScriptQuery* self = static_cast<ScriptQuery*>(data);
+    self->considerLazy(script, nogc);
+  }
+
+  bool needsDelazifyBeforeQuery() const {
+    // * innermost
+    //   Currently not supported, since this is not used outside of test.
+    //
+    // * hasLine
+    //   Only JSScript supports GetScriptLineExtent.
+    return innermost || hasLine;
   }
 
   template <typename T>
-  [[nodiscard]] bool commonFilter(T script, const JS::AutoRequireNoGC& nogc) {
+  MOZ_MUST_USE bool commonFilter(T script, const JS::AutoRequireNoGC& nogc) {
     if (urlCString) {
       bool gotFilename = false;
       if (script->filename() &&
@@ -5438,53 +5227,86 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
   }
 
   /*
-   * If |script| matches this query, append it to |scriptVector|. Set |oom| if
-   * an out of memory condition occurred.
+   * If |script| matches this query, append it to |scriptVector| or place it
+   * in |innermostForRealm|, as appropriate. Set |oom| if an out of memory
+   * condition occurred.
    */
-  void consider(BaseScript* script, const JS::AutoRequireNoGC& nogc) {
+  void consider(JSScript* script, const JS::AutoRequireNoGC& nogc) {
     if (oom || script->selfHosted()) {
       return;
     }
-
     Realm* realm = script->realm();
     if (!realms.has(realm)) {
       return;
     }
-
     if (!commonFilter(script, nogc)) {
       return;
     }
-
-    bool partial = false;
-
     if (hasLine) {
-      if (!scriptIsPartialLineMatch(script)) {
+      if (line < script->lineno() ||
+          script->lineno() + GetScriptLineExtent(script) < line) {
         return;
-      }
-
-      if (script->hasBytecode()) {
-        // Check if line is within script (or any of its inner scripts).
-        if (!scriptIsLineMatch(script->asJSScript())) {
-          return;
-        }
-      } else {
-        // GetScriptLineExtent is not available on lazy scripts so instead to
-        // the partial match list for be compiled and reprocessed later. We only
-        // add scripts that are ready for delazification and they may in turn
-        // process their inner functions.
-        if (!script->isReadyForDelazification()) {
-          return;
-        }
-        partial = true;
       }
     }
 
-    // If innermost filter is required, we collect everything that matches the
-    // line number and filter at the end of `findScripts`.
-    MOZ_ASSERT_IF(innermost, hasLine);
+    if (innermost) {
+      // For 'innermost' queries, we don't place scripts in
+      // |scriptVector| right away; we may later find another script that
+      // is nested inside this one. Instead, we record the innermost
+      // script we've found so far for each realm in innermostForRealm,
+      // and only populate |scriptVector| at the bottom of findScripts,
+      // when we've traversed all the scripts.
+      //
+      // So: check this script against the innermost one we've found so
+      // far (if any), as recorded in innermostForRealm, and replace that
+      // if it's better.
+      RealmToScriptMap::AddPtr p = innermostForRealm.lookupForAdd(realm);
+      if (p) {
+        // Is our newly found script deeper than the last one we found?
+        JSScript* incumbent = p->value();
+        if (script->innermostScope()->chainLength() >
+            incumbent->innermostScope()->chainLength()) {
+          p->value() = script;
+        }
+      } else {
+        // This is the first matching script we've encountered for this
+        // realm, so it is thus the innermost such script.
+        if (!innermostForRealm.add(p, realm, script)) {
+          oom = true;
+          return;
+        }
+      }
+    } else {
+      // Record this matching script in the results scriptVector.
+      if (!scriptVector.append(script)) {
+        oom = true;
+        return;
+      }
+    }
+  }
 
-    Rooted<BaseScriptVector>& vec = partial ? partialMatchVector : scriptVector;
-    if (!vec.append(script)) {
+  void considerLazy(BaseScript* lazyScript, const JS::AutoRequireNoGC& nogc) {
+    MOZ_ASSERT(!needsDelazifyBeforeQuery());
+
+    if (oom) {
+      return;
+    }
+    Realm* realm = lazyScript->realm();
+    if (!realms.has(realm)) {
+      return;
+    }
+
+    // If the script is already delazified, it should be in scriptVector.
+    if (lazyScript->hasBytecode()) {
+      return;
+    }
+
+    if (!commonFilter(lazyScript, nogc)) {
+      return;
+    }
+
+    /* Record this matching script in the results scriptVector. */
+    if (!scriptVector.append(lazyScript)) {
       oom = true;
     }
   }
@@ -5535,7 +5357,7 @@ bool Debugger::CallData::findScripts() {
     return false;
   }
 
-  result->ensureDenseInitializedLength(0, resultLength);
+  result->ensureDenseInitializedLength(cx, 0, resultLength);
 
   for (size_t i = 0; i < scripts.length(); i++) {
     JSObject* scriptObject = dbg->wrapScript(cx, scripts[i]);
@@ -5583,6 +5405,7 @@ class MOZ_STACK_CLASS Debugger::SourceQuery : public Debugger::QueryBase {
     MOZ_ASSERT(sources.empty());
     oom = false;
     IterateScripts(cx, singletonRealm, this, considerScript);
+    IterateLazyScripts(cx, singletonRealm, this, considerLazyScript);
     if (oom) {
       ReportOutOfMemory(cx);
       return false;
@@ -5612,20 +5435,50 @@ class MOZ_STACK_CLASS Debugger::SourceQuery : public Debugger::QueryBase {
   static void considerScript(JSRuntime* rt, void* data, BaseScript* script,
                              const JS::AutoRequireNoGC& nogc) {
     SourceQuery* self = static_cast<SourceQuery*>(data);
-    self->consider(script, nogc);
+    self->consider(script->asJSScript(), nogc);
   }
 
-  void consider(BaseScript* script, const JS::AutoRequireNoGC& nogc) {
+  static void considerLazyScript(JSRuntime* rt, void* data, BaseScript* script,
+                                 const JS::AutoRequireNoGC& nogc) {
+    SourceQuery* self = static_cast<SourceQuery*>(data);
+    self->considerLazy(script, nogc);
+  }
+
+  void consider(JSScript* script, const JS::AutoRequireNoGC& nogc) {
     if (oom || script->selfHosted()) {
       return;
     }
-
     Realm* realm = script->realm();
     if (!realms.has(realm)) {
       return;
     }
 
-    ScriptSourceObject* source = script->sourceObject();
+    if (!script->sourceObject()) {
+      return;
+    }
+
+    ScriptSourceObject* source =
+        &UncheckedUnwrap(script->sourceObject())->as<ScriptSourceObject>();
+    if (!sources.put(source)) {
+      oom = true;
+    }
+  }
+
+  void considerLazy(BaseScript* lazyScript, const JS::AutoRequireNoGC& nogc) {
+    if (oom) {
+      return;
+    }
+    Realm* realm = lazyScript->realm();
+    if (!realms.has(realm)) {
+      return;
+    }
+
+    // If the script is already delazified, it should already be handled.
+    if (lazyScript->hasBytecode()) {
+      return;
+    }
+
+    ScriptSourceObject* source = lazyScript->sourceObject();
     if (!sources.put(source)) {
       oom = true;
     }
@@ -5663,7 +5516,7 @@ bool Debugger::CallData::findSources() {
     return false;
   }
 
-  result->ensureDenseInitializedLength(0, resultLength);
+  result->ensureDenseInitializedLength(cx, 0, resultLength);
 
   size_t i = 0;
   for (auto iter = sources.get().iter(); !iter.done(); iter.next()) {
@@ -5884,7 +5737,7 @@ bool Debugger::CallData::findObjects() {
     return false;
   }
 
-  result->ensureDenseInitializedLength(0, length);
+  result->ensureDenseInitializedLength(cx, 0, length);
 
   for (size_t i = 0; i < length; i++) {
     RootedValue debuggeeVal(cx, ObjectValue(*query.objects[i]));
@@ -6034,23 +5887,16 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
   bool result = true;
 
   CompileOptions options(cx);
-  Rooted<frontend::CompilationInput> input(cx,
-                                           frontend::CompilationInput(options));
-  if (!input.get().initForGlobal(cx)) {
-    return false;
-  }
-
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationState compilationState(cx, allocScope, input.get());
-  if (!compilationState.init(cx)) {
+  frontend::CompilationInfo compilationInfo(cx, allocScope, options);
+  if (!compilationInfo.init(cx)) {
     return false;
   }
 
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(
       cx, options, chars.twoByteChars(), length,
-      /* foldConstants = */ true, compilationState,
-      /* syntaxParser = */ nullptr);
+      /* foldConstants = */ true, compilationInfo, nullptr, nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of memory we report
     // it in the usual way.
@@ -6079,12 +5925,12 @@ bool Debugger::CallData::adoptDebuggeeValue() {
   RootedValue v(cx, args[0]);
   if (v.isObject()) {
     RootedObject obj(cx, &v.toObject());
-    DebuggerObject* ndobj = ToNativeDebuggerObject(cx, &obj);
+    NativeObject* ndobj = ToNativeDebuggerObject(cx, &obj);
     if (!ndobj) {
       return false;
     }
 
-    obj.set(ndobj->referent());
+    obj.set(static_cast<JSObject*>(ndobj->getPrivate()));
     v = ObjectValue(*obj);
 
     if (!dbg->wrapDebuggeeValue(cx, &v)) {
@@ -6148,7 +5994,7 @@ bool Debugger::CallData::adoptFrame() {
 
   RootedDebuggerFrame adoptedFrame(cx);
   if (frameObj->isOnStack()) {
-    FrameIter iter = frameObj->getFrameIter(cx);
+    FrameIter iter(*frameObj->frameIterData());
     if (!dbg->observesFrame(iter)) {
       JS_ReportErrorASCII(cx, "Debugger.Frame's global is not a debuggee");
       return false;
@@ -6156,7 +6002,7 @@ bool Debugger::CallData::adoptFrame() {
     if (!dbg->getFrame(cx, iter, &adoptedFrame)) {
       return false;
     }
-  } else if (frameObj->isSuspended()) {
+  } else if (frameObj->hasGenerator()) {
     Rooted<AbstractGeneratorObject*> gen(cx, &frameObj->unwrappedGenerator());
     if (!dbg->observesGlobal(&gen->global())) {
       JS_ReportErrorASCII(cx, "Debugger.Frame's global is not a debuggee");
@@ -6406,20 +6252,19 @@ bool Debugger::observesWasm(wasm::Instance* instance) const {
 /* static */
 bool Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from,
                                 AbstractFramePtr to, ScriptFrameIter& iter) {
-  MOZ_ASSERT(from != to);
+  auto removeFromDebuggerFramesOnExit = MakeScopeExit([&] {
+    // Remove any remaining old entries on exit, as the 'from' frame will
+    // be gone. This is only done in the failure case. On failure, the
+    // removeToDebuggerFramesOnExit lambda below will rollback any frames
+    // that were replaced, resulting in !frameMaps(to). On success, the
+    // range will be empty, as all from Frame.Debugger instances will have
+    // been removed.
+    MOZ_ASSERT_IF(DebugAPI::inFrameMaps(to), !DebugAPI::inFrameMaps(from));
+    removeFromFrameMapsAndClearBreakpointsIn(cx, from);
 
-  // Rekey missingScopes to maintain Debugger.Environment identity and
-  // forward liveScopes to point to the new frame.
-  DebugEnvironments::forwardLiveFrame(cx, from, to);
-
-  // If we hit an OOM anywhere in here, we need to make sure there aren't any
-  // Debugger.Frame objects left partially-initialized.
-  auto terminateDebuggerFramesOnExit = MakeScopeExit([&] {
-    terminateDebuggerFrames(cx, from);
-    terminateDebuggerFrames(cx, to);
-
-    MOZ_ASSERT(!DebugAPI::inFrameMaps(from));
-    MOZ_ASSERT(!DebugAPI::inFrameMaps(to));
+    // Rekey missingScopes to maintain Debugger.Environment identity and
+    // forward liveScopes to point to the new frame.
+    DebugEnvironments::forwardLiveFrame(cx, from, to);
   });
 
   // Forward live Debugger.Frame objects.
@@ -6427,75 +6272,103 @@ bool Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from,
   if (!getDebuggerFrames(from, &frames)) {
     // An OOM here means that all Debuggers' frame maps still contain
     // entries for 'from' and no entries for 'to'. Since the 'from' frame
-    // will be gone, they are removed by terminateDebuggerFramesOnExit
+    // will be gone, they are removed by removeFromDebuggerFramesOnExit
     // above.
     return false;
   }
 
+  // If during the loop below we hit an OOM, we must also rollback any of
+  // the frames that were successfully replaced. For OSR frames, OOM here
+  // means those frames will pop from the OSR trampoline, which does not
+  // call Debugger::onLeaveFrame.
+  auto removeToDebuggerFramesOnExit =
+      MakeScopeExit([&] { removeFromFrameMapsAndClearBreakpointsIn(cx, to); });
+
   for (size_t i = 0; i < frames.length(); i++) {
     HandleDebuggerFrame frameobj = frames[i];
-    Debugger* dbg = frameobj->owner();
+    Debugger* dbg = Debugger::fromChildJSObject(frameobj);
 
     // Update frame object's ScriptFrameIter::data pointer.
-    if (!frameobj->replaceFrameIterData(cx, iter)) {
+    frameobj->freeFrameIterData(cx->runtime()->defaultFreeOp());
+    ScriptFrameIter::Data* data = iter.copyData();
+    if (!data) {
+      // An OOM here means that some Debuggers' frame maps may still
+      // contain entries for 'from' and some Debuggers' frame maps may
+      // also contain entries for 'to'. Thus both
+      // removeFromDebuggerFramesOnExit and
+      // removeToDebuggerFramesOnExit must both run.
+      //
+      // The current frameobj in question is still in its Debugger's
+      // frame map keyed by 'from', so it will be covered by
+      // removeFromDebuggerFramesOnExit.
       return false;
     }
+    frameobj->setFrameIterData(data);
+
+    // Remove old frame.
+    dbg->frames.remove(from);
 
     // Add the frame object with |to| as key.
     if (!dbg->frames.putNew(to, frameobj)) {
+      // This OOM is subtle. At this point, both
+      // removeFromDebuggerFramesOnExit and removeToDebuggerFramesOnExit
+      // must both run for the same reason given above.
+      //
+      // The difference is that the current frameobj is no longer in its
+      // Debugger's frame map, so it will not be cleaned up by neither
+      // lambda. Manually clean it up here.
+      JSFreeOp* fop = cx->runtime()->defaultFreeOp();
+      frameobj->freeFrameIterData(fop);
+      frameobj->maybeDecrementStepperCounter(fop, to);
+
       ReportOutOfMemory(cx);
       return false;
     }
-
-    // Remove the old frame entry after all fallible operations are completed
-    // so that an OOM will be able to clean up properly.
-    dbg->frames.remove(from);
   }
 
   // All frames successfuly replaced, cancel the rollback.
-  terminateDebuggerFramesOnExit.release();
+  removeToDebuggerFramesOnExit.release();
 
-  MOZ_ASSERT(!DebugAPI::inFrameMaps(from));
-  MOZ_ASSERT_IF(!frames.empty(), DebugAPI::inFrameMaps(to));
   return true;
 }
 
 /* static */
 bool DebugAPI::inFrameMaps(AbstractFramePtr frame) {
   bool foundAny = false;
-  Debugger::forEachOnStackDebuggerFrame(
-      frame, [&](Debugger*, DebuggerFrame* frameobj) { foundAny = true; });
+  Debugger::forEachDebuggerFrame(
+      frame, [&](DebuggerFrame* frameobj) { foundAny = true; });
   return foundAny;
 }
 
 /* static */
-void Debugger::suspendGeneratorDebuggerFrames(JSContext* cx,
-                                              AbstractFramePtr frame) {
-  JSFreeOp* fop = cx->runtime()->defaultFreeOp();
-  forEachOnStackDebuggerFrame(
-      frame, [&](Debugger* dbg, DebuggerFrame* dbgFrame) {
-        dbg->frames.remove(frame);
+void Debugger::removeFromFrameMapsAndClearBreakpointsIn(JSContext* cx,
+                                                        AbstractFramePtr frame,
+                                                        bool suspending) {
+  forEachDebuggerFrame(frame, [&](DebuggerFrame* frameobj) {
+    JSFreeOp* fop = cx->runtime()->defaultFreeOp();
+    frameobj->freeFrameIterData(fop);
 
+    Debugger* dbg = Debugger::fromChildJSObject(frameobj);
+    dbg->frames.remove(frame);
+
+    if (frameobj->hasGenerator()) {
+      // If this is a generator's final pop, remove its entry from
+      // generatorFrames. Such an entry exists if and only if the
+      // Debugger.Frame's generator has been set.
+      if (!suspending) {
+        // Terminally exiting a generator.
 #if DEBUG
-        MOZ_ASSERT(dbgFrame->hasGeneratorInfo());
-        AbstractGeneratorObject& genObj = dbgFrame->unwrappedGenerator();
+        AbstractGeneratorObject& genObj = frameobj->unwrappedGenerator();
         GeneratorWeakMap::Ptr p = dbg->generatorFrames.lookup(&genObj);
         MOZ_ASSERT(p);
-        MOZ_ASSERT(p->value() == dbgFrame);
+        MOZ_ASSERT(p->value() == frameobj);
 #endif
-
-        dbgFrame->suspend(fop);
-      });
-}
-
-/* static */
-void Debugger::terminateDebuggerFrames(JSContext* cx, AbstractFramePtr frame) {
-  JSFreeOp* fop = cx->runtime()->defaultFreeOp();
-
-  forEachOnStackOrSuspendedDebuggerFrame(
-      cx, frame, [&](Debugger* dbg, DebuggerFrame* dbgFrame) {
-        Debugger::terminateDebuggerFrame(fop, dbg, dbgFrame, frame);
-      });
+        frameobj->clearGenerator(fop, dbg);
+      }
+    } else {
+      frameobj->maybeDecrementStepperCounter(fop, frame);
+    }
+  });
 
   // If this is an eval frame, then from the debugger's perspective the
   // script is about to be destroyed. Remove any breakpoints in it.
@@ -6504,38 +6377,6 @@ void Debugger::terminateDebuggerFrames(JSContext* cx, AbstractFramePtr frame) {
     DebugScript::clearBreakpointsIn(cx->runtime()->defaultFreeOp(), script,
                                     nullptr, nullptr);
   }
-}
-
-/* static */
-void Debugger::terminateDebuggerFrame(
-    JSFreeOp* fop, Debugger* dbg, DebuggerFrame* dbgFrame,
-    AbstractFramePtr frame, FrameMap::Enum* maybeFramesEnum,
-    GeneratorWeakMap::Enum* maybeGeneratorFramesEnum) {
-  // If we were not passed the frame, either we are destroying a frame early
-  // on before it was inserted into the "frames" list, or else we are
-  // terminating a frame from "generatorFrames" and the "frames" entries will
-  // be cleaned up later on with a second call to this function.
-  MOZ_ASSERT_IF(!frame, !maybeFramesEnum);
-  MOZ_ASSERT_IF(!frame, dbgFrame->hasGeneratorInfo());
-  MOZ_ASSERT_IF(!dbgFrame->hasGeneratorInfo(), !maybeGeneratorFramesEnum);
-
-  if (frame) {
-    if (maybeFramesEnum) {
-      maybeFramesEnum->removeFront();
-    } else {
-      dbg->frames.remove(frame);
-    }
-  }
-
-  if (dbgFrame->hasGeneratorInfo()) {
-    if (maybeGeneratorFramesEnum) {
-      maybeGeneratorFramesEnum->removeFront();
-    } else {
-      dbg->generatorFrames.remove(&dbgFrame->unwrappedGenerator());
-    }
-  }
-
-  dbgFrame->terminate(fop, frame);
 }
 
 DebuggerDebuggeeLink* Debugger::getDebuggeeLink() {
@@ -6587,7 +6428,7 @@ void DebugAPI::handleUnrecoverableIonBailoutError(
   // Ion bailout can fail due to overrecursion. In such cases we cannot
   // honor any further Debugger hooks on the frame, and need to ensure that
   // its Debugger.Frame entry is cleaned up.
-  Debugger::terminateDebuggerFrames(cx, frame);
+  Debugger::removeFromFrameMapsAndClearBreakpointsIn(cx, frame);
 }
 
 /*** JS::dbg::Builder *******************************************************/
@@ -6782,9 +6623,10 @@ bool Debugger::isDebuggerCrossCompartmentEdge(JSObject* obj,
   } else if (obj->is<DebuggerSource>()) {
     referent = obj->as<DebuggerSource>().getReferentRawObject();
   } else if (obj->is<DebuggerObject>()) {
-    referent = obj->as<DebuggerObject>().referent();
+    referent = static_cast<gc::Cell*>(obj->as<DebuggerObject>().getPrivate());
   } else if (obj->is<DebuggerEnvironment>()) {
-    referent = obj->as<DebuggerEnvironment>().referent();
+    referent =
+        static_cast<gc::Cell*>(obj->as<DebuggerEnvironment>().getPrivate());
   }
 
   return referent == target;
@@ -6909,9 +6751,9 @@ JSObject* GarbageCollectionEvent::toJSObject(JSContext* cx) const {
 JS_PUBLIC_API bool FireOnGarbageCollectionHookRequired(JSContext* cx) {
   AutoCheckCannotGC noGC;
 
-  for (auto& dbg : cx->runtime()->onGarbageCollectionWatchers()) {
-    MOZ_ASSERT(dbg.getHook(Debugger::OnGarbageCollection));
-    if (dbg.observedGC(cx->runtime()->gc.majorGCCount())) {
+  for (Debugger* dbg : cx->runtime()->debuggerList()) {
+    if (dbg->observedGC(cx->runtime()->gc.majorGCCount()) &&
+        dbg->getHook(Debugger::OnGarbageCollection)) {
       return true;
     }
   }
@@ -6929,10 +6771,10 @@ JS_PUBLIC_API bool FireOnGarbageCollectionHook(
     // participated in this GC.
     AutoCheckCannotGC noGC;
 
-    for (auto& dbg : cx->runtime()->onGarbageCollectionWatchers()) {
-      MOZ_ASSERT(dbg.getHook(Debugger::OnGarbageCollection));
-      if (dbg.observedGC(data->majorGCNumber())) {
-        if (!triggered.append(dbg.object)) {
+    for (Debugger* dbg : cx->runtime()->debuggerList()) {
+      if (dbg->observedGC(data->majorGCNumber()) &&
+          dbg->getHook(Debugger::OnGarbageCollection)) {
+        if (!triggered.append(dbg->object)) {
           JS_ReportOutOfMemory(cx);
           return false;
         }
@@ -6943,12 +6785,10 @@ JS_PUBLIC_API bool FireOnGarbageCollectionHook(
   for (; !triggered.empty(); triggered.popBack()) {
     Debugger* dbg = Debugger::fromJSObject(triggered.back());
 
-    if (dbg->getHook(Debugger::OnGarbageCollection)) {
-      mozilla::Unused << dbg->enterDebuggerHook(cx, [&]() -> bool {
-        return dbg->fireOnGarbageCollectionHook(cx, data);
-      });
-      MOZ_ASSERT(!cx->isExceptionPending());
-    }
+    mozilla::Unused << dbg->enterDebuggerHook(cx, [&]() -> bool {
+      return dbg->fireOnGarbageCollectionHook(cx, data);
+    });
+    MOZ_ASSERT(!cx->isExceptionPending());
   }
 
   return true;

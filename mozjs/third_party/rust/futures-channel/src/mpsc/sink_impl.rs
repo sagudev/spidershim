@@ -49,14 +49,14 @@ impl<T> Sink<T> for UnboundedSender<T> {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        Self::poll_ready(&*self, cx)
+        UnboundedSender::poll_ready(&*self, cx)
     }
 
     fn start_send(
         mut self: Pin<&mut Self>,
         msg: T,
     ) -> Result<(), Self::Error> {
-        Self::start_send(&mut *self, msg)
+        UnboundedSender::start_send(&mut *self, msg)
     }
 
     fn poll_flush(

@@ -1,4 +1,3 @@
-// |reftest| skip-if(!this.hasOwnProperty('FinalizationRegistry')) async -- FinalizationRegistry is not enabled unconditionally
 // Copyright (C) 2019 Leo Balter. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -23,7 +22,7 @@ info: |
       i. Remove cell from finalizationRegistry.[[Cells]].
       ii. Set removed to true.
   3. Return removed.
-features: [FinalizationRegistry.prototype.cleanupSome, cleanupSome, FinalizationRegistry, host-gc-required]
+features: [FinalizationRegistry, host-gc-required]
 includes: [async-gc.js]
 flags: [async, non-deterministic]
 ---*/
@@ -50,6 +49,6 @@ emptyCells().then(function() {
   finalizationRegistry.cleanupSome(function cb(holding) {
     called += 1;
   });
-
+  
   assert.sameValue(called, 0, 'callback was not called');
 }).then($DONE, resolveAsyncGC);

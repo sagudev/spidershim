@@ -2,6 +2,8 @@
 
 // OOM tests for module parsing.
 
+load(libdir + "dummyModuleResolveHook.js");
+
 const sa =
 `export default 20;
  export let a = 22;
@@ -16,8 +18,8 @@ const sb =
 `;
 
 oomTest(() => {
-    let a = registerModule('a', parseModule(sa));
-    let b = registerModule('b', parseModule(sb));
+    let a = moduleRepo['a'] = parseModule(sa);
+    let b = moduleRepo['b'] = parseModule(sb);
     b.declarationInstantiation();
     assertEq(b.evaluation(), 42);
 });

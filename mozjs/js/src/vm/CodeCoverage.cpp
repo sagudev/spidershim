@@ -178,7 +178,7 @@ void LCovSource::writeScript(JSScript* script, const char* scriptName) {
         sn = *iter;
         SrcNoteType type = sn->type();
         if (type == SrcNoteType::SetLine) {
-          lineno = SrcNote::SetLine::getLine(sn, script->lineno());
+          lineno = SrcNote::SetLine::getLine(sn);
         } else if (type == SrcNoteType::NewLine) {
           lineno++;
         }
@@ -469,7 +469,8 @@ void LCovRealm::writeRealmName(JS::Realm* realm) {
     {
       // Hazard analysis cannot tell that the callback does not GC.
       JS::AutoSuppressGCAnalysis nogc;
-      (*cx->runtime()->realmNameCallback)(cx, realm, name, sizeof(name), nogc);
+      Rooted<Realm*> rootedRealm(cx, realm);
+      (*cx->runtime()->realmNameCallback)(cx, rootedRealm, name, sizeof(name));
     }
     for (char* s = name; s < name + sizeof(name) && *s; s++) {
       if (('a' <= *s && *s <= 'z') || ('A' <= *s && *s <= 'Z') ||

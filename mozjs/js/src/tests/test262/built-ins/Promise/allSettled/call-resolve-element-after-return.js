@@ -27,7 +27,7 @@ function Constructor(executor) {
     valuesArray = values;
     checkSettledPromises(values, expected, 'values');
   }
-  executor(resolve, Test262Error.thrower);
+  executor(resolve, $ERROR);
 }
 Constructor.resolve = function(v) {
   return v;

@@ -24,7 +24,6 @@
 #include "gc/Memory.h"
 #include "threading/ExclusiveData.h"
 #include "vm/MutexIDs.h"
-#include "vm/Runtime.h"
 #ifdef ENABLE_WASM_CRANELIFT
 #  include "wasm/cranelift/clifapi.h"
 #endif
@@ -45,7 +44,7 @@ using mozilla::BinarySearchIf;
 // any JSContext/JS::Compartment/etc lying around, we have to use a process-wide
 // map instead.
 
-using CodeSegmentVector = Vector<const CodeSegment*, 0, SystemAllocPolicy>;
+typedef Vector<const CodeSegment*, 0, SystemAllocPolicy> CodeSegmentVector;
 
 Atomic<bool> wasm::CodeExists(false);
 

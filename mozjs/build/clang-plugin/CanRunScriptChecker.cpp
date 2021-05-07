@@ -54,8 +54,9 @@
 
 void CanRunScriptChecker::registerMatchers(MatchFinder *AstMatcher) {
   auto Refcounted = qualType(hasDeclaration(cxxRecordDecl(isRefCounted())));
-  auto StackSmartPtr = ignoreTrivials(declRefExpr(to(varDecl(
-      hasAutomaticStorageDuration(), hasType(isSmartPtrToRefCounted())))));
+  auto StackSmartPtr =
+      ignoreTrivials(declRefExpr(to(varDecl(hasAutomaticStorageDuration(),
+                                            hasType(isSmartPtrToRefCounted())))));
   auto ConstMemberOfThisSmartPtr =
       memberExpr(hasType(isSmartPtrToRefCounted()), hasType(isConstQualified()),
                  hasObjectExpression(cxxThisExpr()));
@@ -75,16 +76,12 @@ void CanRunScriptChecker::registerMatchers(MatchFinder *AstMatcher) {
 
   // Params of the calling function are presumed live, because it itself should
   // be MOZ_CAN_RUN_SCRIPT.  Note that this is subject to
-  // https://bugzilla.mozilla.org/show_bug.cgi?id=1537656 at the moment.
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1537656 a the moment.
   auto KnownLiveParam = anyOf(
       // "this" is OK
       cxxThisExpr(),
       // A parameter of the calling function is OK.
       declRefExpr(to(parmVarDecl())));
-
-  auto KnownLiveMemberOfParam =
-      memberExpr(hasKnownLiveAnnotation(),
-                 hasObjectExpression(ignoreTrivials(KnownLiveParam)));
 
   // A matcher that matches various things that are known to be live directly,
   // without making any assumptions about operators.
@@ -95,8 +92,6 @@ void CanRunScriptChecker::registerMatchers(MatchFinder *AstMatcher) {
       MozKnownLiveCall,
       // Params of the caller function.
       KnownLiveParam,
-      // Members of the params that are marked as MOZ_KNOWN_LIVE
-      KnownLiveMemberOfParam,
       // Constexpr things.
       declRefExpr(to(varDecl(isConstexpr()))));
 
@@ -363,7 +358,7 @@ void CanRunScriptChecker::check(const MatchFinder::MatchResult &Result) {
   // If we have an invalid argument in the call, we emit the diagnostic to
   // signal it.
   if (InvalidArg) {
-    const StringRef invalidArgText = Lexer::getSourceText(
+    const std::string invalidArgText = Lexer::getSourceText(
         CharSourceRange::getTokenRange(InvalidArg->getSourceRange()),
         Result.Context->getSourceManager(), Result.Context->getLangOpts());
     diag(InvalidArg->getExprLoc(), ErrorInvalidArg, DiagnosticIDs::Error)

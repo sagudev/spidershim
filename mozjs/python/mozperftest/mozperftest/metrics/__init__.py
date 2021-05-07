@@ -4,20 +4,13 @@
 from mozperftest.layers import Layers
 from mozperftest.metrics.perfherder import Perfherder
 from mozperftest.metrics.consoleoutput import ConsoleOutput
-from mozperftest.metrics.notebookupload import Notebook
-from mozperftest.metrics.visualmetrics import VisualMetrics
-from mozperftest.metrics.perfboard.influx import Influx
 
 
 def get_layers():
-    return VisualMetrics, Perfherder, ConsoleOutput, Notebook, Influx
+    return Perfherder, ConsoleOutput
 
 
 def pick_metrics(env, flavor, mach_cmd):
-    if flavor in ("desktop-browser", "mobile-browser"):
-        layers = get_layers()
-    else:
-        # we don't need VisualMetrics for xpcshell
-        layers = Perfherder, ConsoleOutput, Notebook, Influx
-
-    return Layers(env, mach_cmd, layers)
+    if flavor == "script":
+        return Layers(env, mach_cmd, get_layers())
+    raise NotImplementedError(flavor)

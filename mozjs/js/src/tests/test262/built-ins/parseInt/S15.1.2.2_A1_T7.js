@@ -13,7 +13,7 @@ var object = {
     return 1
   }
 };
-assert.sameValue(parseInt(object), NaN, 'parseInt({valueOf: function() {return 1}}) must return NaN');
+assert.sameValue(parseInt(object), NaN, "{valueOf: function() {return 1}}");
 
 //CHECK#2
 var object = {
@@ -24,12 +24,9 @@ var object = {
     return 0
   }
 };
-
-assert.sameValue(
-  parseInt(object),
-  0,
-  'parseInt({valueOf: function() {return 1}, toString: function() {return 0}}) must return 0'
-);
+if (parseInt(object) !== 0) {
+  $ERROR('#2: var object = {valueOf: function() {return 1}, toString: function() {return 0}}; parseInt(object) === 0. Actual: ' + (parseInt(object)));
+}
 
 //CHECK#3
 var object = {
@@ -40,12 +37,9 @@ var object = {
     return {}
   }
 };
-
-assert.sameValue(
-  parseInt(object),
-  1,
-  'parseInt({valueOf: function() {return 1}, toString: function() {return {}}}) must return 1'
-);
+if (parseInt(object) !== 1) {
+  $ERROR('#3: var object = {valueOf: function() {return 1}, toString: function() {return {}}}; parseInt(object) === 1. Actual: ' + (parseInt(object)));
+}
 
 //CHECK#4
 try {
@@ -57,15 +51,16 @@ try {
       return 1
     }
   };
-
-  assert.sameValue(
-    parseInt(object),
-    1,
-    'parseInt({valueOf: function() {throw \\"error\\"}, toString: function() {return 1}}) must return 1'
-  );
+  if (parseInt(object) !== 1) {
+    $ERROR('#4.1: var object = {valueOf: function() {throw "error"}, toString: function() {return 1}}; parseInt(object) === 1. Actual: ' + (parseInt(object)));
+  }
 }
 catch (e) {
-  assert.notSameValue(e, "error", 'The value of `e` is not "error"');
+  if (e === "error") {
+    $ERROR('#4.2: var object = {valueOf: function() {throw "error"}, toString: function() {return 1}}; parseInt(object) not throw "error"');
+  } else {
+    $ERROR('#4.3: var object = {valueOf: function() {throw "error"}, toString: function() {return 1}}; parseInt(object) not throw Error. Actual: ' + (e));
+  }
 }
 
 //CHECK#5
@@ -74,7 +69,9 @@ var object = {
     return 1
   }
 };
-assert.sameValue(parseInt(object), 1, 'parseInt({toString: function() {return 1}}) must return 1');
+if (parseInt(object) !== 1) {
+  $ERROR('#5: var object = {toString: function() {return 1}}; parseInt(object) === 1. Actual: ' + (parseInt(object)));
+}
 
 //CHECK#6
 var object = {
@@ -85,12 +82,9 @@ var object = {
     return 1
   }
 }
-
-assert.sameValue(
-  parseInt(object),
-  1,
-  'parseInt({valueOf: function() {return {}}, toString: function() {return 1}}) must return 1'
-);
+if (parseInt(object) !== 1) {
+  $ERROR('#6: var object = {valueOf: function() {return {}}, toString: function() {return 1}}; parseInt(object) === 1. Actual: ' + (parseInt(object)));
+}
 
 //CHECK#7
 try {
@@ -103,10 +97,12 @@ try {
     }
   };
   parseInt(object);
-  Test262Error.thrower('#7.1: var object = {valueOf: function() {return 1}, toString: function() {throw "error"}}; parseInt(object) throw "error". Actual: ' + (parseInt(object)));
+  $ERROR('#7.1: var object = {valueOf: function() {return 1}, toString: function() {throw "error"}}; parseInt(object) throw "error". Actual: ' + (parseInt(object)));
 }
 catch (e) {
-  assert.sameValue(e, "error", 'The value of `e` is "error"');
+  if (e !== "error") {
+    $ERROR('#7.2: var object = {valueOf: function() {return 1}, toString: function() {throw "error"}}; parseInt(object) throw "error". Actual: ' + (e));
+  }
 }
 
 //CHECK#8
@@ -120,10 +116,12 @@ try {
     }
   };
   parseInt(object);
-  Test262Error.thrower('#8.1: var object = {valueOf: function() {return {}}, toString: function() {return {}}}; parseInt(object) throw TypeError. Actual: ' + (parseInt(object)));
+  $ERROR('#8.1: var object = {valueOf: function() {return {}}, toString: function() {return {}}}; parseInt(object) throw TypeError. Actual: ' + (parseInt(object)));
 }
 catch (e) {
-  assert.sameValue(e instanceof TypeError, true, 'The result of `(e instanceof TypeError)` is true');
+  if ((e instanceof TypeError) !== true) {
+    $ERROR('#8.2: var object = {valueOf: function() {return {}}, toString: function() {return {}}}; parseInt(object) throw TypeError. Actual: ' + (e));
+  }
 }
 
 reportCompare(0, 0);

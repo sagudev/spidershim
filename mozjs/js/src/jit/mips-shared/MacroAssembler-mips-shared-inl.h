@@ -68,17 +68,6 @@ void MacroAssembler::xor32(Register src, Register dest) { ma_xor(dest, src); }
 
 void MacroAssembler::xor32(Imm32 imm, Register dest) { ma_xor(dest, imm); }
 
-void MacroAssembler::xor32(Imm32 imm, const Address& dest) {
-  load32(dest, SecondScratchReg);
-  ma_xor(SecondScratchReg, imm);
-  store32(SecondScratchReg, dest);
-}
-
-void MacroAssembler::xor32(const Address& src, Register dest) {
-  load32(src, SecondScratchReg);
-  ma_xor(dest, SecondScratchReg);
-}
-
 // ===============================================================
 // Swap instructions
 
@@ -519,11 +508,11 @@ void MacroAssembler::branchAdd32(Condition cond, T src, Register dest,
                                  Label* overflow) {
   switch (cond) {
     case Overflow:
-      ma_add32TestOverflow(dest, dest, src, overflow);
+      ma_addTestOverflow(dest, dest, src, overflow);
       break;
     case CarryClear:
     case CarrySet:
-      ma_add32TestCarry(cond, dest, dest, src, overflow);
+      ma_addTestCarry(cond, dest, dest, src, overflow);
       break;
     default:
       MOZ_CRASH("NYI");
@@ -535,7 +524,7 @@ void MacroAssembler::branchSub32(Condition cond, T src, Register dest,
                                  Label* overflow) {
   switch (cond) {
     case Overflow:
-      ma_sub32TestOverflow(dest, dest, src, overflow);
+      ma_subTestOverflow(dest, dest, src, overflow);
       break;
     case NonZero:
     case Zero:
@@ -553,7 +542,7 @@ template <typename T>
 void MacroAssembler::branchMul32(Condition cond, T src, Register dest,
                                  Label* overflow) {
   MOZ_ASSERT(cond == Assembler::Overflow);
-  ma_mul32TestOverflow(dest, dest, src, overflow);
+  ma_mul_branch_overflow(dest, dest, src, overflow);
 }
 
 template <typename T>
@@ -568,47 +557,6 @@ void MacroAssembler::branchNeg32(Condition cond, Register reg, Label* label) {
   MOZ_ASSERT(cond == Overflow);
   neg32(reg);
   branch32(Assembler::Equal, reg, Imm32(INT32_MIN), label);
-}
-
-template <typename T>
-void MacroAssembler::branchAddPtr(Condition cond, T src, Register dest,
-                                  Label* label) {
-  switch (cond) {
-    case Overflow:
-      ma_addPtrTestOverflow(dest, dest, src, label);
-      break;
-    case CarryClear:
-    case CarrySet:
-      ma_addPtrTestCarry(cond, dest, dest, src, label);
-      break;
-    default:
-      MOZ_CRASH("NYI");
-  }
-}
-
-template <typename T>
-void MacroAssembler::branchSubPtr(Condition cond, T src, Register dest,
-                                  Label* label) {
-  switch (cond) {
-    case Overflow:
-      ma_subPtrTestOverflow(dest, dest, src, label);
-      break;
-    case NonZero:
-    case Zero:
-    case Signed:
-    case NotSigned:
-      subPtr(src, dest);
-      ma_b(dest, dest, label, cond);
-      break;
-    default:
-      MOZ_CRASH("NYI");
-  }
-}
-
-void MacroAssembler::branchMulPtr(Condition cond, Register src, Register dest,
-                                  Label* label) {
-  MOZ_ASSERT(cond == Assembler::Overflow);
-  ma_mulPtrTestOverflow(dest, dest, src, label);
 }
 
 void MacroAssembler::decBranchPtr(Condition cond, Register lhs, Imm32 rhs,
@@ -1009,21 +957,6 @@ void MacroAssembler::spectreBoundsCheck32(Register index, const Address& length,
   branch32(Assembler::BelowOrEqual, length, index, failure);
 }
 
-void MacroAssembler::spectreBoundsCheckPtr(Register index, Register length,
-                                           Register maybeScratch,
-                                           Label* failure) {
-  MOZ_RELEASE_ASSERT(!JitOptions.spectreIndexMasking);
-  branchPtr(Assembler::BelowOrEqual, length, index, failure);
-}
-
-void MacroAssembler::spectreBoundsCheckPtr(Register index,
-                                           const Address& length,
-                                           Register maybeScratch,
-                                           Label* failure) {
-  MOZ_RELEASE_ASSERT(!JitOptions.spectreIndexMasking);
-  branchPtr(Assembler::BelowOrEqual, length, index, failure);
-}
-
 void MacroAssembler::spectreMovePtr(Condition cond, Register src,
                                     Register dest) {
   MOZ_CRASH();
@@ -1036,6 +969,12 @@ void MacroAssembler::spectreZeroRegister(Condition cond, Register scratch,
 
 // ========================================================================
 // Memory access primitives.
+void MacroAssembler::storeFloat32x3(FloatRegister src, const Address& dest) {
+  MOZ_CRASH("NYI");
+}
+void MacroAssembler::storeFloat32x3(FloatRegister src, const BaseIndex& dest) {
+  MOZ_CRASH("NYI");
+}
 
 void MacroAssembler::storeUncanonicalizedDouble(FloatRegister src,
                                                 const Address& addr) {

@@ -4,13 +4,13 @@ use crate::SourceLocation;
 use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-struct Key {
+pub struct Key {
     type_id: NodeTypeId,
     loc: SourceLocation,
 }
 
 impl Key {
-    fn new<NodeT>(node: &NodeT) -> Self
+    pub fn new<NodeT>(node: &NodeT) -> Self
     where
         NodeT: SourceLocationAccessor + NodeTypeIdAccessor,
     {

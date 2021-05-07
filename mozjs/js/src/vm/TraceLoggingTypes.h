@@ -27,7 +27,6 @@ class JSLinearString;
   _(Engine)                                    \
   _(GC)                                        \
   _(GCAllocation)                              \
-  _(GCUnmarking)                               \
   _(GCSweeping)                                \
   _(GCFree)                                    \
   _(Interpreter)                               \
@@ -46,7 +45,9 @@ class JSLinearString;
   _(BytecodeFoldConstants)                     \
   _(BytecodeNameFunctions)                     \
   _(DecodeScript)                              \
+  _(DecodeFunction)                            \
   _(EncodeScript)                              \
+  _(EncodeFunction)                            \
   _(Scripts)                                   \
   _(VM)                                        \
   _(CompressSource)                            \
@@ -84,6 +85,7 @@ class JSLinearString;
   _(GenerateLIR)                               \
   _(RegisterAllocation)                        \
   _(GenerateCode)                              \
+  _(IonBuilderRestartLoop)                     \
   _(VMSpecific)
 
 // Log items, with timestamp only.

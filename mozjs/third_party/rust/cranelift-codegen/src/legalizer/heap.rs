@@ -66,14 +66,19 @@ fn dynamic_addr(
 
     // Start with the bounds check. Trap if `offset + access_size > bound`.
     let bound = pos.ins().global_value(offset_ty, bound_gv);
-    let (cc, lhs, bound) = if access_size == 1 {
+    let oob;
+    if access_size == 1 {
         // `offset > bound - 1` is the same as `offset >= bound`.
-        (IntCC::UnsignedGreaterThanOrEqual, offset, bound)
+        oob = pos
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, offset, bound);
     } else if access_size <= min_size {
         // We know that bound >= min_size, so here we can compare `offset > bound - access_size`
         // without wrapping.
         let adj_bound = pos.ins().iadd_imm(bound, -(access_size as i64));
-        (IntCC::UnsignedGreaterThan, offset, adj_bound)
+        oob = pos
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, offset, adj_bound);
     } else {
         // We need an overflow check for the adjusted offset.
         let access_size_val = pos.ins().iconst(offset_ty, access_size as i64);
@@ -83,27 +88,13 @@ fn dynamic_addr(
             overflow,
             ir::TrapCode::HeapOutOfBounds,
         );
-        (IntCC::UnsignedGreaterThan, adj_offset, bound)
-    };
-    let oob = pos.ins().icmp(cc, lhs, bound);
+        oob = pos
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThan, adj_offset, bound);
+    }
     pos.ins().trapnz(oob, ir::TrapCode::HeapOutOfBounds);
 
-    let spectre_oob_comparison = if isa.flags().enable_heap_access_spectre_mitigation() {
-        Some((cc, lhs, bound))
-    } else {
-        None
-    };
-
-    compute_addr(
-        isa,
-        inst,
-        heap,
-        addr_ty,
-        offset,
-        offset_ty,
-        pos.func,
-        spectre_oob_comparison,
-    );
+    compute_addr(isa, inst, heap, addr_ty, offset, offset_ty, pos.func);
 }
 
 /// Expand a `heap_addr` for a static heap.
@@ -155,35 +146,20 @@ fn static_addr(
     // With that we have an optimization here where with 32-bit offsets and
     // `bound - access_size >= 4GB` we can omit a bounds check.
     let limit = bound - access_size;
-    let mut spectre_oob_comparison = None;
     if offset_ty != ir::types::I32 || limit < 0xffff_ffff {
-        let (cc, lhs, limit_imm) = if limit & 1 == 1 {
+        let oob = if limit & 1 == 1 {
             // Prefer testing `offset >= limit - 1` when limit is odd because an even number is
             // likely to be a convenient constant on ARM and other RISC architectures.
-            let limit = limit as i64 - 1;
-            (IntCC::UnsignedGreaterThanOrEqual, offset, limit)
+            pos.ins()
+                .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, offset, limit as i64 - 1)
         } else {
-            let limit = limit as i64;
-            (IntCC::UnsignedGreaterThan, offset, limit)
+            pos.ins()
+                .icmp_imm(IntCC::UnsignedGreaterThan, offset, limit as i64)
         };
-        let oob = pos.ins().icmp_imm(cc, lhs, limit_imm);
         pos.ins().trapnz(oob, ir::TrapCode::HeapOutOfBounds);
-        if isa.flags().enable_heap_access_spectre_mitigation() {
-            let limit = pos.ins().iconst(offset_ty, limit_imm);
-            spectre_oob_comparison = Some((cc, lhs, limit));
-        }
     }
 
-    compute_addr(
-        isa,
-        inst,
-        heap,
-        addr_ty,
-        offset,
-        offset_ty,
-        pos.func,
-        spectre_oob_comparison,
-    );
+    compute_addr(isa, inst, heap, addr_ty, offset, offset_ty, pos.func);
 }
 
 /// Emit code for the base address computation of a `heap_addr` instruction.
@@ -195,11 +171,6 @@ fn compute_addr(
     mut offset: ir::Value,
     offset_ty: ir::Type,
     func: &mut ir::Function,
-    // If we are performing Spectre mitigation with conditional selects, the
-    // values to compare and the condition code that indicates an out-of bounds
-    // condition; on this condition, the conditional move will choose a
-    // speculatively safe address (a zero / null pointer) instead.
-    spectre_oob_comparison: Option<(IntCC, ir::Value, ir::Value)>,
 ) {
     let mut pos = FuncCursor::new(func).at_inst(inst);
     pos.use_srcloc(inst);
@@ -227,15 +198,5 @@ fn compute_addr(
         pos.ins().global_value(addr_ty, base_gv)
     };
 
-    if let Some((cc, a, b)) = spectre_oob_comparison {
-        let final_addr = pos.ins().iadd(base, offset);
-        let zero = pos.ins().iconst(addr_ty, 0);
-        let flags = pos.ins().ifcmp(a, b);
-        pos.func
-            .dfg
-            .replace(inst)
-            .selectif_spectre_guard(addr_ty, cc, flags, zero, final_addr);
-    } else {
-        pos.func.dfg.replace(inst).iadd(base, offset);
-    }
+    pos.func.dfg.replace(inst).iadd(base, offset);
 }

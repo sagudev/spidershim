@@ -68,10 +68,6 @@ void MacroAssembler::move32To64SignExtend(Register src, Register64 dest) {
   ma_sra(dest.high, dest.low, Imm32(31));
 }
 
-void MacroAssembler::move32SignExtendToPtr(Register src, Register dest) {
-  move32(src, dest);
-}
-
 void MacroAssembler::move32ZeroExtendToPtr(Register src, Register dest) {
   move32(src, dest);
 }
@@ -85,8 +81,6 @@ void MacroAssembler::load32SignExtendToPtr(const Address& src, Register dest) {
 
 // ===============================================================
 // Logical instructions
-
-void MacroAssembler::notPtr(Register reg) { ma_not(reg, reg); }
 
 void MacroAssembler::andPtr(Register src, Register dest) { ma_and(dest, src); }
 
@@ -245,10 +239,6 @@ void MacroAssembler::sub64(Imm64 imm, Register64 dest) {
   ma_subu(dest.high, dest.high, imm.hi());
 }
 
-void MacroAssembler::mulPtr(Register rhs, Register srcDest) {
-  as_mul(srcDest, srcDest, rhs);
-}
-
 void MacroAssembler::mul64(Imm64 imm, const Register64& dest) {
   // LOW32  = LOW(LOW(dest) * LOW(imm));
   // HIGH32 = LOW(HIGH(dest) * LOW(imm)) [multiply imm into upper bits]
@@ -369,10 +359,6 @@ void MacroAssembler::lshiftPtr(Imm32 imm, Register dest) {
   ma_sll(dest, dest, imm);
 }
 
-void MacroAssembler::lshiftPtr(Register src, Register dest) {
-  ma_sll(dest, dest, src);
-}
-
 void MacroAssembler::lshift64(Imm32 imm, Register64 dest) {
   MOZ_ASSERT(0 <= imm.value && imm.value < 64);
   ScratchRegisterScope scratch(*this);
@@ -421,10 +407,6 @@ void MacroAssembler::rshiftPtr(Imm32 imm, Register dest) {
 void MacroAssembler::rshiftPtrArithmetic(Imm32 imm, Register dest) {
   MOZ_ASSERT(0 <= imm.value && imm.value < 32);
   ma_sra(dest, dest, imm);
-}
-
-void MacroAssembler::rshiftPtr(Register src, Register dest) {
-  ma_srl(dest, dest, src);
 }
 
 void MacroAssembler::rshift64(Imm32 imm, Register64 dest) {
@@ -790,8 +772,6 @@ void MacroAssembler::branchTest64(Condition cond, Register64 lhs,
     MOZ_ASSERT(lhs.high == rhs.high);
     as_or(ScratchRegister, lhs.low, lhs.high);
     ma_b(ScratchRegister, ScratchRegister, label, cond);
-  } else if (cond == Assembler::Signed || cond == Assembler::NotSigned) {
-    branchTest32(cond, lhs.high, rhs.high, label);
   } else {
     MOZ_CRASH("Unsupported condition");
   }
@@ -941,17 +921,6 @@ void MacroAssembler::branchTruncateFloat32MaybeModUint32(FloatRegister src,
 
 //}}} check_macroassembler_style
 // ===============================================================
-
-void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs, Register rhs,
-                                   Register src, Register dest) {
-  cmp32Move32(cond, lhs, rhs, src, dest);
-}
-
-void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs,
-                                   const Address& rhs, Register src,
-                                   Register dest) {
-  cmp32Move32(cond, lhs, rhs, src, dest);
-}
 
 void MacroAssemblerMIPSCompat::incrementInt32Value(const Address& addr) {
   asMasm().add32(Imm32(1), ToPayload(addr));

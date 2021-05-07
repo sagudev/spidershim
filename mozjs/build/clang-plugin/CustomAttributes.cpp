@@ -37,7 +37,6 @@ static CustomAttributesSet CacheAttributes(const Decl *D) {
     attrs.has_##a = true;                                                      \
   } else
 #include "CustomAttributes.inc"
-#include "external/CustomAttributes.inc"
 #undef ATTR
     {}
   }
@@ -75,7 +74,6 @@ bool hasCustomAttribute(const clang::Decl *D, CustomAttributes A) {
   case a:                                                                      \
     return attrs.has_##a;
 #include "CustomAttributes.inc"
-#include "external/CustomAttributes.inc"
 #undef ATTR
   }
   return false;

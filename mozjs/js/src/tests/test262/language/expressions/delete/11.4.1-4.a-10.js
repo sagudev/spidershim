@@ -5,7 +5,7 @@
 info: |
     This test is actually testing the [[Delete]] internal method (8.12.8). Since the
     language provides no way to directly exercise [[Delete]], the tests are placed here.
-esid: sec-delete-operator-runtime-semantics-evaluation
+es5id: 11.4.1-4.a-10
 description: >
     delete operator returns true for property (stringify) defined on
     built-in object (JSON)

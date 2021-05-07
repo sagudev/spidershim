@@ -26,18 +26,14 @@ class JS_PUBLIC_API ContextOptions {
         wasmIon_(true),
         wasmCranelift_(false),
         wasmReftypes_(true),
-        wasmFunctionReferences_(false),
         wasmGc_(false),
         wasmMultiValue_(false),
         wasmSimd_(false),
-        wasmSimdWormhole_(false),
-        wasmExceptions_(false),
         testWasmAwaitTier2_(false),
         throwOnAsmJSValidationFailure_(false),
         disableIon_(false),
         disableEvalSecurityChecks_(false),
         asyncStack_(true),
-        asyncStackCaptureDebuggeeOnly_(false),
         sourcePragmas_(true),
         throwOnDebuggeeWouldRun_(true),
         dumpStackOnDebuggeeWouldRun_(false),
@@ -46,10 +42,7 @@ class JS_PUBLIC_API ContextOptions {
         trackNotImplemented_(false),
         trySmoosh_(false),
 #endif
-        fuzzing_(false),
-        privateClassFields_(false),
-        privateClassMethods_(false),
-        topLevelAwait_(false) {
+        fuzzing_(false) {
   }
 
   bool asmJS() const { return asmJS_; }
@@ -112,10 +105,6 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
-  bool wasmFunctionReferences() const { return wasmFunctionReferences_; }
-  // Defined out-of-line because it depends on a compile-time option
-  ContextOptions& setWasmFunctionReferences(bool flag);
-
   bool wasmGc() const { return wasmGc_; }
   // Defined out-of-line because it depends on a compile-time option
   ContextOptions& setWasmGc(bool flag);
@@ -127,14 +116,6 @@ class JS_PUBLIC_API ContextOptions {
   bool wasmSimd() const { return wasmSimd_; }
   // Defined out-of-line because it depends on a compile-time option
   ContextOptions& setWasmSimd(bool flag);
-
-  bool wasmSimdWormhole() const { return wasmSimdWormhole_; }
-  // Defined out-of-line because it depends on a compile-time option
-  ContextOptions& setWasmSimdWormhole(bool flag);
-
-  bool wasmExceptions() const { return wasmExceptions_; }
-  // Defined out-of-line because it depends on a compile-time option
-  ContextOptions& setWasmExceptions(bool flag);
 
   bool throwOnAsmJSValidationFailure() const {
     return throwOnAsmJSValidationFailure_;
@@ -157,24 +138,6 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
-  bool privateClassFields() const { return privateClassFields_; }
-  ContextOptions& setPrivateClassFields(bool enabled) {
-    privateClassFields_ = enabled;
-    return *this;
-  }
-
-  bool privateClassMethods() const { return privateClassMethods_; }
-  ContextOptions& setPrivateClassMethods(bool enabled) {
-    privateClassMethods_ = enabled;
-    return *this;
-  }
-
-  bool topLevelAwait() const { return topLevelAwait_; }
-  ContextOptions& setTopLevelAwait(bool enabled) {
-    topLevelAwait_ = enabled;
-    return *this;
-  }
-
   // Override to allow disabling the eval restriction security checks for
   // this context.
   bool disableEvalSecurityChecks() const { return disableEvalSecurityChecks_; }
@@ -186,14 +149,6 @@ class JS_PUBLIC_API ContextOptions {
   bool asyncStack() const { return asyncStack_; }
   ContextOptions& setAsyncStack(bool flag) {
     asyncStack_ = flag;
-    return *this;
-  }
-
-  bool asyncStackCaptureDebuggeeOnly() const {
-    return asyncStackCaptureDebuggeeOnly_;
-  }
-  ContextOptions& setAsyncStackCaptureDebuggeeOnly(bool flag) {
-    asyncStackCaptureDebuggeeOnly_ = flag;
     return *this;
   }
 
@@ -252,7 +207,12 @@ class JS_PUBLIC_API ContextOptions {
 
   void disableOptionsForSafeMode() {
     setAsmJS(false);
+    setWasm(false);
     setWasmBaseline(false);
+    setWasmIon(false);
+    setWasmGc(false);
+    setWasmMultiValue(false);
+    setWasmSimd(false);
   }
 
  private:
@@ -264,18 +224,14 @@ class JS_PUBLIC_API ContextOptions {
   bool wasmIon_ : 1;
   bool wasmCranelift_ : 1;
   bool wasmReftypes_ : 1;
-  bool wasmFunctionReferences_ : 1;
   bool wasmGc_ : 1;
   bool wasmMultiValue_ : 1;
   bool wasmSimd_ : 1;
-  bool wasmSimdWormhole_ : 1;
-  bool wasmExceptions_ : 1;
   bool testWasmAwaitTier2_ : 1;
   bool throwOnAsmJSValidationFailure_ : 1;
   bool disableIon_ : 1;
   bool disableEvalSecurityChecks_ : 1;
   bool asyncStack_ : 1;
-  bool asyncStackCaptureDebuggeeOnly_ : 1;
   bool sourcePragmas_ : 1;
   bool throwOnDebuggeeWouldRun_ : 1;
   bool dumpStackOnDebuggeeWouldRun_ : 1;
@@ -285,9 +241,6 @@ class JS_PUBLIC_API ContextOptions {
   bool trySmoosh_ : 1;
 #endif
   bool fuzzing_ : 1;
-  bool privateClassFields_ : 1;
-  bool privateClassMethods_ : 1;
-  bool topLevelAwait_ : 1;
 };
 
 JS_PUBLIC_API ContextOptions& ContextOptionsRef(JSContext* cx);

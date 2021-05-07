@@ -7,6 +7,8 @@
 #ifndef jit_AlignmentMaskAnalysis_h
 #define jit_AlignmentMaskAnalysis_h
 
+#include "mozilla/Attributes.h"
+
 namespace js {
 namespace jit {
 
@@ -18,7 +20,7 @@ class AlignmentMaskAnalysis {
  public:
   explicit AlignmentMaskAnalysis(MIRGraph& graph) : graph_(graph) {}
 
-  [[nodiscard]] bool analyze();
+  MOZ_MUST_USE bool analyze();
 };
 
 } /* namespace jit */

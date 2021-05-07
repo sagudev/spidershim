@@ -19,6 +19,8 @@
 #ifndef wasm_signal_handlers_h
 #define wasm_signal_handlers_h
 
+#include "mozilla/Attributes.h"
+
 #include "js/ProfilingFrameIterator.h"
 #include "wasm/WasmProcess.h"
 

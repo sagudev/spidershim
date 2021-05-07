@@ -10,7 +10,7 @@
 //! single ISA instance.
 
 use crate::binemit::{
-    relax_branches, shrink_instructions, CodeInfo, MemoryCodeSink, RelocSink, StackMapSink,
+    relax_branches, shrink_instructions, CodeInfo, MemoryCodeSink, RelocSink, StackmapSink,
     TrapSink,
 };
 use crate::dce::do_dce;
@@ -27,7 +27,6 @@ use crate::nan_canonicalization::do_nan_canonicalization;
 use crate::postopt::do_postopt;
 use crate::redundant_reload_remover::RedundantReloadRemover;
 use crate::regalloc;
-use crate::remove_constant_phis::do_remove_constant_phis;
 use crate::result::CodegenResult;
 use crate::settings::{FlagsOrIsa, OptLevel};
 use crate::simple_gvn::do_simple_gvn;
@@ -36,13 +35,8 @@ use crate::timing;
 use crate::unreachable_code::eliminate_unreachable_code;
 use crate::value_label::{build_value_labels_ranges, ComparableSourceLoc, ValueLabelsRanges};
 use crate::verifier::{verify_context, verify_locations, VerifierErrors, VerifierResult};
-#[cfg(feature = "souper-harvest")]
-use alloc::string::String;
 use alloc::vec::Vec;
 use log::debug;
-
-#[cfg(feature = "souper-harvest")]
-use crate::souper_harvest::do_souper_harvest;
 
 /// Persistent data structures and compilation pipeline.
 pub struct Context {
@@ -132,19 +126,13 @@ impl Context {
         mem: &mut Vec<u8>,
         relocs: &mut dyn RelocSink,
         traps: &mut dyn TrapSink,
-        stack_maps: &mut dyn StackMapSink,
+        stackmaps: &mut dyn StackmapSink,
     ) -> CodegenResult<CodeInfo> {
         let info = self.compile(isa)?;
         let old_len = mem.len();
         mem.resize(old_len + info.total_size as usize, 0);
         let new_info = unsafe {
-            self.emit_to_memory(
-                isa,
-                mem.as_mut_ptr().add(old_len),
-                relocs,
-                traps,
-                stack_maps,
-            )
+            self.emit_to_memory(isa, mem.as_mut_ptr().add(old_len), relocs, traps, stackmaps)
         };
         debug_assert!(new_info == info);
         Ok(info)
@@ -191,8 +179,6 @@ impl Context {
             self.dce(isa)?;
         }
 
-        self.remove_constant_phis(isa)?;
-
         if let Some(backend) = isa.get_mach_backend() {
             let result = backend.compile_function(&self.func, self.want_disasm)?;
             let info = result.code_info();
@@ -233,12 +219,12 @@ impl Context {
         mem: *mut u8,
         relocs: &mut dyn RelocSink,
         traps: &mut dyn TrapSink,
-        stack_maps: &mut dyn StackMapSink,
+        stackmaps: &mut dyn StackmapSink,
     ) -> CodeInfo {
         let _tt = timing::binemit();
-        let mut sink = MemoryCodeSink::new(mem, relocs, traps, stack_maps);
+        let mut sink = MemoryCodeSink::new(mem, relocs, traps, stackmaps);
         if let Some(ref result) = &self.mach_compile_result {
-            result.buffer.emit(&mut sink);
+            result.sections.emit(&mut sink);
         } else {
             isa.emit_function_to_memory(&self.func, &mut sink);
         }
@@ -253,17 +239,6 @@ impl Context {
         &self,
         isa: &dyn TargetIsa,
     ) -> CodegenResult<Option<crate::isa::unwind::UnwindInfo>> {
-        if let Some(backend) = isa.get_mach_backend() {
-            use crate::isa::CallConv;
-            use crate::machinst::UnwindInfoKind;
-            let unwind_info_kind = match self.func.signature.call_conv {
-                CallConv::Fast | CallConv::Cold | CallConv::SystemV => UnwindInfoKind::SystemV,
-                CallConv::WindowsFastcall => UnwindInfoKind::Windows,
-                _ => UnwindInfoKind::None,
-            };
-            let result = self.mach_compile_result.as_ref().unwrap();
-            return backend.emit_unwind_info(result, unwind_info_kind);
-        }
         isa.create_unwind_info(&self.func)
     }
 
@@ -313,16 +288,6 @@ impl Context {
     /// Perform dead-code elimination on the function.
     pub fn dce<'a, FOI: Into<FlagsOrIsa<'a>>>(&mut self, fisa: FOI) -> CodegenResult<()> {
         do_dce(&mut self.func, &mut self.domtree);
-        self.verify_if(fisa)?;
-        Ok(())
-    }
-
-    /// Perform constant-phi removal on the function.
-    pub fn remove_constant_phis<'a, FOI: Into<FlagsOrIsa<'a>>>(
-        &mut self,
-        fisa: FOI,
-    ) -> CodegenResult<()> {
-        do_remove_constant_phis(&mut self.func, &mut self.domtree);
         self.verify_if(fisa)?;
         Ok(())
     }
@@ -462,15 +427,5 @@ impl Context {
             &self.regalloc,
             isa,
         ))
-    }
-
-    /// Harvest candidate left-hand sides for superoptimization with Souper.
-    #[cfg(feature = "souper-harvest")]
-    pub fn souper_harvest(
-        &mut self,
-        out: &mut std::sync::mpsc::Sender<String>,
-    ) -> CodegenResult<()> {
-        do_souper_harvest(&self.func, out);
-        Ok(())
     }
 }

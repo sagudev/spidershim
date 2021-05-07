@@ -12,12 +12,11 @@ from collections import OrderedDict
 import functools
 from pathlib import Path
 import textwrap
-from typing import Any, Dict, Generator, Iterable, Optional, Tuple, Union
 
-import jsonschema  # type: ignore
-from jsonschema.exceptions import ValidationError  # type: ignore
+import jsonschema
+from jsonschema.exceptions import ValidationError
 
-from .metrics import Metric, ObjectTree
+from .metrics import Metric
 from .pings import Ping, RESERVED_PING_NAMES
 from . import util
 
@@ -25,8 +24,10 @@ from . import util
 ROOT_DIR = Path(__file__).parent
 SCHEMAS_DIR = ROOT_DIR / "schemas"
 
-METRICS_ID = "moz://mozilla.org/schemas/glean/metrics/2-0-0"
-PINGS_ID = "moz://mozilla.org/schemas/glean/pings/2-0-0"
+METRICS_ID = "moz://mozilla.org/schemas/glean/metrics/1-0-0"
+PINGS_ID = "moz://mozilla.org/schemas/glean/pings/1-0-0"
+
+FILE_TYPES = {METRICS_ID: "metrics", PINGS_ID: "pings"}
 
 
 def _update_validator(validator):
@@ -44,54 +45,32 @@ def _update_validator(validator):
         if len(missing_properties):
             missing_properties = sorted(list(missing_properties))
             yield ValidationError(
-                f"Missing required properties: {', '.join(missing_properties)}"
+                "Missing required properties: {}".format(", ".join(missing_properties))
             )
 
     validator.VALIDATORS["required"] = required
 
 
-def _load_file(
-    filepath: Path, parser_config: Dict[str, Any]
-) -> Generator[str, None, Tuple[Dict[str, util.JSONType], Optional[str]]]:
+def _load_file(filepath):
     """
     Load a metrics.yaml or pings.yaml format file.
-
-    If the `filepath` does not exist, raises `FileNotFoundError`, unless
-    `parser_config["allow_missing_files"]` is `True`.
     """
     try:
-        content = util.load_yaml_or_json(filepath)
-    except FileNotFoundError:
-        if not parser_config.get("allow_missing_files", False):
-            raise
-        else:
-            return {}, None
+        content = util.load_yaml_or_json(filepath, ordered_dict=True)
     except Exception as e:
         yield util.format_error(filepath, "", textwrap.fill(str(e)))
         return {}, None
 
     if content is None:
-        yield util.format_error(filepath, "", f"'{filepath}' file can not be empty.")
-        return {}, None
-
-    if not isinstance(content, dict):
+        yield util.format_error(
+            filepath, "", "'{}' file can not be empty.".format(filepath)
+        )
         return {}, None
 
     if content == {}:
         return {}, None
 
-    schema_key = content.get("$schema")
-    if not isinstance(schema_key, str):
-        raise TypeError(f"Invalid schema key {schema_key}")
-
-    filetype: Optional[str] = None
-    try:
-        filetype = schema_key.split("/")[-2]
-    except IndexError:
-        filetype = None
-
-    if filetype not in ("metrics", "pings"):
-        filetype = None
+    filetype = FILE_TYPES.get(content.get("$schema"))
 
     for error in validate(content, filepath):
         content = {}
@@ -101,7 +80,7 @@ def _load_file(
 
 
 @functools.lru_cache(maxsize=1)
-def _load_schemas() -> Dict[str, Tuple[Any, Any]]:
+def _load_schemas():
     """
     Load all of the known schemas from disk, and put them in a map based on the
     schema's $id.
@@ -118,9 +97,7 @@ def _load_schemas() -> Dict[str, Tuple[Any, Any]]:
     return schemas
 
 
-def _get_schema(
-    schema_id: str, filepath: Union[str, Path] = "<input>"
-) -> Tuple[Any, Any]:
+def _get_schema(schema_id, filepath="<input>"):
     """
     Get the schema for the given schema $id.
     """
@@ -130,25 +107,20 @@ def _get_schema(
             util.format_error(
                 filepath,
                 "",
-                f"$schema key must be one of {', '.join(schemas.keys())}",
+                "$schema key must be one of {}".format(", ".join(schemas.keys())),
             )
         )
     return schemas[schema_id]
 
 
-def _get_schema_for_content(
-    content: Dict[str, util.JSONType], filepath: Union[str, Path]
-) -> Tuple[Any, Any]:
+def _get_schema_for_content(content, filepath):
     """
     Get the appropriate schema for the given JSON content.
     """
-    schema_url = content.get("$schema")
-    if not isinstance(schema_url, str):
-        raise TypeError("Invalid $schema type {schema_url}")
-    return _get_schema(schema_url, filepath)
+    return _get_schema(content.get("$schema"), filepath)
 
 
-def get_parameter_doc(key: str) -> str:
+def get_parameter_doc(key):
     """
     Returns documentation about a specific metric parameter.
     """
@@ -156,7 +128,7 @@ def get_parameter_doc(key: str) -> str:
     return schema["definitions"]["metric"]["properties"][key]["description"]
 
 
-def get_ping_parameter_doc(key: str) -> str:
+def get_ping_parameter_doc(key):
     """
     Returns documentation about a specific ping parameter.
     """
@@ -164,9 +136,7 @@ def get_ping_parameter_doc(key: str) -> str:
     return schema["additionalProperties"]["properties"][key]["description"]
 
 
-def validate(
-    content: Dict[str, util.JSONType], filepath: Union[str, Path] = "<input>"
-) -> Generator[str, None, None]:
+def validate(content, filepath="<input>"):
     """
     Validate the given content against the appropriate schema.
     """
@@ -181,13 +151,7 @@ def validate(
         )
 
 
-def _instantiate_metrics(
-    all_objects: ObjectTree,
-    sources: Dict[Any, Path],
-    content: Dict[str, util.JSONType],
-    filepath: Path,
-    config: Dict[str, Any],
-) -> Generator[str, None, None]:
+def _instantiate_metrics(all_objects, sources, content, filepath, config):
     """
     Load a list of metrics.yaml files, convert the JSON information into Metric
     objects, and merge them into a single tree.
@@ -202,16 +166,12 @@ def _instantiate_metrics(
         if not config.get("allow_reserved") and category_key.split(".")[0] == "glean":
             yield util.format_error(
                 filepath,
-                f"For category '{category_key}'",
+                "For category '{}'".format(category_key),
                 "Categories beginning with 'glean' are reserved for "
                 "Glean internal use.",
             )
             continue
         all_objects.setdefault(category_key, OrderedDict())
-
-        if not isinstance(category_val, dict):
-            raise TypeError(f"Invalid content for {category_key}")
-
         for metric_key, metric_val in category_val.items():
             try:
                 metric_obj = Metric.make_metric(
@@ -220,7 +180,7 @@ def _instantiate_metrics(
             except Exception as e:
                 yield util.format_error(
                     filepath,
-                    f"On instance {category_key}.{metric_key}",
+                    "On instance {}.{}".format(category_key, metric_key),
                     str(e),
                 )
                 metric_obj = None
@@ -231,7 +191,7 @@ def _instantiate_metrics(
                 ):
                     yield util.format_error(
                         filepath,
-                        f"On instance {category_key}.{metric_key}",
+                        "On instance {}.{}".format(category_key, metric_key),
                         'Only internal metrics may specify "all-pings" '
                         'in "send_in_pings"',
                     )
@@ -240,18 +200,14 @@ def _instantiate_metrics(
             if metric_obj is not None:
                 metric_obj.no_lint = list(set(metric_obj.no_lint + global_no_lint))
 
-            if isinstance(filepath, Path):
-                metric_obj.defined_in["filepath"] = str(filepath)
-
             already_seen = sources.get((category_key, metric_key))
             if already_seen is not None:
                 # We've seen this metric name already
                 yield util.format_error(
                     filepath,
                     "",
-                    (
-                        f"Duplicate metric name '{category_key}.{metric_key}' "
-                        f"already defined in '{already_seen}'"
+                    ("Duplicate metric name '{}.{}'" "already defined in '{}'").format(
+                        category_key, metric_key, already_seen
                     ),
                 )
             else:
@@ -259,51 +215,30 @@ def _instantiate_metrics(
                 sources[(category_key, metric_key)] = filepath
 
 
-def _instantiate_pings(
-    all_objects: ObjectTree,
-    sources: Dict[Any, Path],
-    content: Dict[str, util.JSONType],
-    filepath: Path,
-    config: Dict[str, Any],
-) -> Generator[str, None, None]:
+def _instantiate_pings(all_objects, sources, content, filepath, config):
     """
     Load a list of pings.yaml files, convert the JSON information into Ping
     objects.
     """
-    global_no_lint = content.get("no_lint", [])
-    assert isinstance(global_no_lint, list)
-
     for ping_key, ping_val in content.items():
         if ping_key.startswith("$"):
-            continue
-        if ping_key == "no_lint":
             continue
         if not config.get("allow_reserved"):
             if ping_key in RESERVED_PING_NAMES:
                 yield util.format_error(
                     filepath,
-                    f"For ping '{ping_key}'",
-                    f"Ping uses a reserved name ({RESERVED_PING_NAMES})",
+                    "For ping '{}'".format(ping_key),
+                    "Ping uses a reserved name ({})".format(RESERVED_PING_NAMES),
                 )
                 continue
-        if not isinstance(ping_val, dict):
-            raise TypeError(f"Invalid content for ping {ping_key}")
         ping_val["name"] = ping_key
         try:
-            ping_obj = Ping(
-                defined_in=getattr(ping_val, "defined_in", None),
-                _validated=True,
-                **ping_val,
-            )
+            ping_obj = Ping(**ping_val)
         except Exception as e:
-            yield util.format_error(filepath, f"On instance '{ping_key}'", str(e))
-            continue
-
-        if ping_obj is not None:
-            ping_obj.no_lint = list(set(ping_obj.no_lint + global_no_lint))
-
-        if isinstance(filepath, Path) and ping_obj.defined_in is not None:
-            ping_obj.defined_in["filepath"] = str(filepath)
+            yield util.format_error(
+                filepath, "On instance '{}'".format(ping_key), str(e)
+            )
+            ping_obj = None
 
         already_seen = sources.get(ping_key)
         if already_seen is not None:
@@ -311,23 +246,21 @@ def _instantiate_pings(
             yield util.format_error(
                 filepath,
                 "",
-                f"Duplicate ping name '{ping_key}' "
-                f"already defined in '{already_seen}'",
+                ("Duplicate ping name '{}'" "already defined in '{}'").format(
+                    ping_key, already_seen
+                ),
             )
         else:
             all_objects.setdefault("pings", {})[ping_key] = ping_obj
             sources[ping_key] = filepath
 
 
-def _preprocess_objects(objs: ObjectTree, config: Dict[str, Any]) -> ObjectTree:
+def _preprocess_objects(objs, config):
     """
     Preprocess the object tree to better set defaults.
     """
     for category in objs.values():
         for obj in category.values():
-            if not isinstance(obj, Metric):
-                continue
-
             if not config.get("do_not_disable_expired", False) and hasattr(
                 obj, "is_disabled"
             ):
@@ -343,9 +276,7 @@ def _preprocess_objects(objs: ObjectTree, config: Dict[str, Any]) -> ObjectTree:
 
 
 @util.keep_value
-def parse_objects(
-    filepaths: Iterable[Path], config: Optional[Dict[str, Any]] = None
-) -> Generator[str, None, ObjectTree]:
+def parse_objects(filepaths, config={}):
     """
     Parse one or more metrics.yaml and/or pings.yaml files, returning a tree of
     `metrics.Metric` and `pings.Ping` instances.
@@ -367,23 +298,17 @@ def parse_objects(
         files
     :param config: A dictionary of options that change parsing behavior.
         Supported keys are:
-
         - `allow_reserved`: Allow values reserved for internal Glean use.
         - `do_not_disable_expired`: Don't mark expired metrics as disabled.
           This is useful when you want to retain the original "disabled"
           value from the `metrics.yaml`, rather than having it overridden when
           the metric expires.
-        - `allow_missing_files`: Do not raise a `FileNotFoundError` if any of
-          the input `filepaths` do not exist.
     """
-    if config is None:
-        config = {}
-
-    all_objects: ObjectTree = OrderedDict()
-    sources: Dict[Any, Path] = {}
+    all_objects = OrderedDict()
+    sources = {}
     filepaths = util.ensure_list(filepaths)
     for filepath in filepaths:
-        content, filetype = yield from _load_file(filepath, config)
+        content, filetype = yield from _load_file(filepath)
         if filetype == "metrics":
             yield from _instantiate_metrics(
                 all_objects, sources, content, filepath, config

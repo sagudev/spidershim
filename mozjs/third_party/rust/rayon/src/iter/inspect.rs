@@ -28,7 +28,7 @@ impl<I, F> Inspect<I, F>
 where
     I: ParallelIterator,
 {
-    /// Creates a new `Inspect` iterator.
+    /// Create a new `Inspect` iterator.
     pub(super) fn new(base: I, inspect_op: F) -> Self {
         Inspect { base, inspect_op }
     }
@@ -108,7 +108,7 @@ where
 
 /// ////////////////////////////////////////////////////////////////////////
 
-struct InspectProducer<'f, P, F> {
+struct InspectProducer<'f, P, F: 'f> {
     base: P,
     inspect_op: &'f F,
 }
@@ -162,7 +162,7 @@ where
 /// ////////////////////////////////////////////////////////////////////////
 /// Consumer implementation
 
-struct InspectConsumer<'f, C, F> {
+struct InspectConsumer<'f, C, F: 'f> {
     base: C,
     inspect_op: &'f F,
 }
@@ -217,7 +217,7 @@ where
     }
 }
 
-struct InspectFolder<'f, C, F> {
+struct InspectFolder<'f, C, F: 'f> {
     base: C,
     inspect_op: &'f F,
 }

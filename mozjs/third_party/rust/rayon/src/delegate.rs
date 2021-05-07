@@ -3,7 +3,7 @@
 // Note: these place `impl` bounds at the end, as token gobbling is the only way
 // I know how to consume an arbitrary list of constraints, with `$($args:tt)*`.
 
-/// Creates a parallel iterator implementation which simply wraps an inner type
+/// Create a parallel iterator implementation which simply wraps an inner type
 /// and delegates all methods inward.  The actual struct must already be
 /// declared with an `inner` field.
 ///
@@ -37,7 +37,7 @@ macro_rules! delegate_iterator {
     }
 }
 
-/// Creates an indexed parallel iterator implementation which simply wraps an
+/// Create an indexed parallel iterator implementation which simply wraps an
 /// inner type and delegates all methods inward.  The actual struct must already
 /// be declared with an `inner` field.
 macro_rules! delegate_indexed_iterator {

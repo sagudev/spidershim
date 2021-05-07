@@ -13,8 +13,8 @@ var numberFormatCache = new Record();
  * Spec: ECMAScript Internationalization API Specification, 13.2.1.
  */
 function Number_toLocaleString() {
-    // Steps 1-2.
-    var x = callFunction(ThisNumberValueForToLocaleString, this);
+    // Steps 1-2.  Note that valueOf enforces "this Number value" restrictions.
+    var x = callFunction(std_Number_valueOf, this);
 
     // Steps 2-3.
     var locales = arguments.length > 0 ? arguments[0] : undefined;
@@ -53,41 +53,57 @@ function Number_isNaN(num) {
     return num !== num;
 }
 
-// ES2021 draft rev 889f2f30cf554b7ed812c0984626db1c8a4997c7
+// ES2018 draft rev f83aa38282c2a60c6916ebc410bfdf105a0f6a54
 // 20.1.2.3 Number.isInteger ( number )
 function Number_isInteger(number) {
-    // Step 1. (Inlined call to IsIntegralNumber)
-
-    // 7.2.6 IsIntegralNumber, step 1.
+    // Step 1.
     if (typeof number !== "number")
         return false;
 
-    var integer = std_Math_trunc(number);
+    // -(2**31) is an int32, but abs(-(2**31)) isn't. Avoid bailouts below by
+    // special casing it here.
+    if (number === -(2 ** 31))
+        return true;
 
-    // 7.2.6 IsIntegralNumber, steps 2-4.
-    // |number - integer| ensures Infinity correctly returns false, because
-    // |Infinity - Infinity| yields NaN.
-    return number - integer === 0;
+    // Step 3.
+    // Note: We're using abs + floor instead ceil to workaround bug 1379626.
+    var absNumber = std_Math_abs(number);
+    var integer = std_Math_floor(absNumber);
+
+    // Steps 2, 4.
+    if (absNumber - integer !== 0)
+        return false;
+
+    // Step 5.
+    return true;
 }
 
-// ES2021 draft rev 889f2f30cf554b7ed812c0984626db1c8a4997c7
+// ES2018 draft rev f83aa38282c2a60c6916ebc410bfdf105a0f6a54
 // 20.1.2.5 Number.isSafeInteger ( number )
 function Number_isSafeInteger(number) {
-    // Step 1. (Inlined call to IsIntegralNumber)
-
-    // 7.2.6 IsIntegralNumber, step 1.
+    // Step 1.
     if (typeof number !== "number")
         return false;
 
-    var integer = std_Math_trunc(number);
+    // -(2**31) is an int32, but abs(-(2**31)) isn't. Avoid bailouts below by
+    // special casing it here.
+    if (number === -(2 ** 31))
+        return true;
 
-    // 7.2.6 IsIntegralNumber, steps 2-4.
-    // |number - integer| to handle the Infinity case correctly.
-    if (number - integer !== 0)
+    // Step 3.
+    var absNumber = std_Math_abs(number);
+    var integer = std_Math_floor(absNumber);
+
+    // Steps 2, 4.
+    if (absNumber - integer !== 0)
         return false;
 
-    // Steps 1.a, 2.
-    return -((2 ** 53) - 1) <= integer && integer <= (2 ** 53) - 1;
+    // Step 5.
+    if (integer <= (2 ** 53) - 1)
+        return true;
+
+    // Step 6.
+    return false;
 }
 
 function Global_isNaN(number) {

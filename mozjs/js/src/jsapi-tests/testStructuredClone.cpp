@@ -112,7 +112,7 @@ BEGIN_TEST(testStructuredClone_externalArrayBuffer) {
     JS::RootedObject obj(cx, &v2.toObject());
     CHECK(&v1.toObject() != obj);
 
-    size_t len;
+    uint32_t len;
     bool isShared;
     uint8_t* clonedData;
     JS::GetArrayBufferLengthAndData(obj, &len, &isShared, &clonedData);
@@ -157,7 +157,7 @@ bool testStructuredCloneCopy(JS::StructuredCloneScope scope) {
   CHECK(bufferOut);
   CHECK(JS::IsArrayBufferObject(bufferOut));
 
-  size_t len;
+  uint32_t len;
   bool isShared;
   uint8_t* clonedData;
   JS::GetArrayBufferLengthAndData(bufferOut, &len, &isShared, &clonedData);

@@ -16,11 +16,9 @@
 //! [`DescriptorSetWrite`]: struct.DescriptorSetWrite.html
 //! [`DescriptorSetCopy`]: struct.DescriptorSetWrite.html
 
-use crate::{
-    buffer::SubRange, device::OutOfMemory, image::Layout, pso::ShaderStageFlags, Backend, PseudoVec,
-};
+use std::{borrow::Borrow, fmt, iter};
 
-use std::{fmt, iter};
+use crate::{buffer::SubRange, image::Layout, pso::ShaderStageFlags, Backend, PseudoVec};
 
 ///
 pub type DescriptorSetIndex = u16;
@@ -137,24 +135,48 @@ pub struct DescriptorRangeDesc {
 }
 
 /// An error allocating descriptor sets from a pool.
-#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AllocationError {
-    /// OutOfMemory::Host: Memory allocation on the host side failed.
-    /// OutOfMemory::Device: Memory allocation on the device side failed.
+    /// Memory allocation on the host side failed.
     /// This could be caused by a lack of memory or pool fragmentation.
-    #[error(transparent)]
-    OutOfMemory(#[from] OutOfMemory),
+    Host,
+    /// Memory allocation on the host side failed.
+    /// This could be caused by a lack of memory or pool fragmentation.
+    Device,
     /// Memory allocation failed as there is not enough in the pool.
     /// This could be caused by too many descriptor sets being created.
-    #[error("Out of pool memory")]
     OutOfPoolMemory,
     /// Memory allocation failed due to pool fragmentation.
-    #[error("Pool is fragmented")]
     FragmentedPool,
     /// Descriptor set allocation failed as the layout is incompatible with the pool.
-    #[error("Incompatible layout")]
     IncompatibleLayout,
 }
+
+impl std::fmt::Display for AllocationError {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AllocationError::Host => {
+                write!(fmt, "Failed to allocate descriptor set: Out of host memory")
+            }
+            AllocationError::Device => write!(
+                fmt,
+                "Failed to allocate descriptor set: Out of device memory"
+            ),
+            AllocationError::OutOfPoolMemory => {
+                write!(fmt, "Failed to allocate descriptor set: Out of pool memory")
+            }
+            AllocationError::FragmentedPool => {
+                write!(fmt, "Failed to allocate descriptor set: Pool is fragmented")
+            }
+            AllocationError::IncompatibleLayout => write!(
+                fmt,
+                "Failed to allocate descriptor set: Incompatible layout"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AllocationError {}
 
 /// A descriptor pool is a collection of memory from which descriptor sets are allocated.
 pub trait DescriptorPool<B: Backend>: Send + Sync + fmt::Debug {
@@ -169,7 +191,7 @@ pub trait DescriptorPool<B: Backend>: Send + Sync + fmt::Debug {
     ///
     /// [`DescriptorSetWrite`]: struct.DescriptorSetWrite.html
     /// [`DescriptorSetCopy`]: struct.DescriptorSetCopy.html
-    unsafe fn allocate_one(
+    unsafe fn allocate_set(
         &mut self,
         layout: &B::DescriptorSetLayout,
     ) -> Result<B::DescriptorSet, AllocationError> {
@@ -190,22 +212,23 @@ pub trait DescriptorPool<B: Backend>: Send + Sync + fmt::Debug {
     ///
     /// [`DescriptorSetWrite`]: struct.DescriptorSetWrite.html
     /// [`DescriptorSetCopy`]: struct.DescriptorSetCopy.html
-    unsafe fn allocate<'a, I, E>(&mut self, layouts: I, list: &mut E) -> Result<(), AllocationError>
+    unsafe fn allocate<I, E>(&mut self, layouts: I, list: &mut E) -> Result<(), AllocationError>
     where
-        I: Iterator<Item = &'a B::DescriptorSetLayout>,
+        I: IntoIterator,
+        I::Item: Borrow<B::DescriptorSetLayout>,
         E: Extend<B::DescriptorSet>,
     {
         for layout in layouts {
-            let set = self.allocate_one(layout)?;
+            let set = self.allocate_set(layout.borrow())?;
             list.extend(iter::once(set));
         }
         Ok(())
     }
 
     /// Free the given descriptor sets provided as an iterator.
-    unsafe fn free<I>(&mut self, descriptor_sets: I)
+    unsafe fn free_sets<I>(&mut self, descriptor_sets: I)
     where
-        I: Iterator<Item = B::DescriptorSet>;
+        I: IntoIterator<Item = B::DescriptorSet>;
 
     /// Resets a descriptor pool, releasing all resources from all the descriptor sets
     /// allocated from it and freeing the descriptor sets. Invalidates all descriptor
@@ -214,27 +237,23 @@ pub trait DescriptorPool<B: Backend>: Send + Sync + fmt::Debug {
     unsafe fn reset(&mut self);
 }
 
-/// Writes the actual descriptors to be bound into a descriptor set.
-///
-/// Should be provided to the `write_descriptor_sets` method of a `Device`.
+/// Writes the actual descriptors to be bound into a descriptor set. Should be provided
+/// to the `write_descriptor_sets` method of a `Device`.
+#[allow(missing_docs)]
 #[derive(Debug)]
-pub struct DescriptorSetWrite<'a, B: Backend, I>
+pub struct DescriptorSetWrite<'a, B: Backend, WI>
 where
-    I: Iterator<Item = Descriptor<'a, B>>,
+    WI: IntoIterator,
+    WI::Item: Borrow<Descriptor<'a, B>>,
 {
-    /// The descriptor set to modify.
-    pub set: &'a mut B::DescriptorSet,
-    /// Binding index to start writing at.
-    ///
-    /// *Note*: when there are more descriptors provided than
+    pub set: &'a B::DescriptorSet,
+    /// *Note*: when there is more descriptors provided than
     /// array elements left in the specified binding starting
-    /// at the specified offset, the updates are spilled onto
+    /// at specified, offset, the updates are spilled onto
     /// the next binding (starting with offset 0), and so on.
     pub binding: DescriptorBinding,
-    /// Offset into the array to copy to.
     pub array_offset: DescriptorArrayIndex,
-    /// Descriptors to write to the set.
-    pub descriptors: I,
+    pub descriptors: WI,
 }
 
 /// A handle to a specific shader resource that can be bound for use in a `DescriptorSet`.
@@ -251,34 +270,17 @@ pub enum Descriptor<'a, B: Backend> {
     TexelBuffer(&'a B::BufferView),
 }
 
-/// Copies a range of descriptors to be bound from one descriptor set to another.
-///
-/// Should be provided to the `copy_descriptor_sets` method of a `Device`.
-#[derive(Debug)]
+/// Copies a range of descriptors to be bound from one descriptor set to another Should be
+/// provided to the `copy_descriptor_sets` method of a `Device`.
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug)]
 pub struct DescriptorSetCopy<'a, B: Backend> {
-    /// Descriptor set to copy from.
     pub src_set: &'a B::DescriptorSet,
-    /// Binding to copy from.
-    ///
-    /// *Note*: when there are more descriptors required than
-    /// array elements left in the specified binding starting
-    /// at the specified offset, the updates are taken from
-    /// the next binding (starting with offset 0), and so on.
     pub src_binding: DescriptorBinding,
-    /// Offset into the descriptor array to start copying from.
     pub src_array_offset: DescriptorArrayIndex,
-    /// Descriptor set to copy to.
-    pub dst_set: &'a mut B::DescriptorSet,
-    /// Binding to copy to.
-    ///
-    /// *Note*: when there are more descriptors provided than
-    /// array elements left in the specified binding starting
-    /// at the specified offset, the updates are spilled onto
-    /// the next binding (starting with offset 0), and so on.
+    pub dst_set: &'a B::DescriptorSet,
     pub dst_binding: DescriptorBinding,
-    /// Offset into the descriptor array to copy to.
     pub dst_array_offset: DescriptorArrayIndex,
-    /// How many descriptors to copy.
     pub count: usize,
 }
 

@@ -82,7 +82,7 @@ Registers::Code Registers::FromName(const char* name) {
   return Invalid;
 }
 
-void FlushICache(void* code, size_t size, bool codeIsThreadLocal) {
+void FlushICache(void* code, size_t size) {
 #if defined(JS_SIMULATOR)
   js::jit::SimulatorProcess::FlushICache(code, size);
 
@@ -100,7 +100,7 @@ void FlushICache(void* code, size_t size, bool codeIsThreadLocal) {
       "jr.hb  $ra \n"
       "move   $ra, %[tmp] \n"
       ".set   pop\n"
-      : [tmp] "=&r"(tmp));
+      : [ tmp ] "=&r"(tmp));
 
 #elif defined(__GNUC__)
   intptr_t end = reinterpret_cast<intptr_t>(code) + size;

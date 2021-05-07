@@ -17,7 +17,7 @@ features: [Promise.allSettled]
 function rejectFunction() {}
 
 function Constructor(executor) {
-  executor(rejectFunction, Test262Error.thrower);
+  executor(rejectFunction, $ERROR);
 }
 Constructor.resolve = function(v) {
   return v;

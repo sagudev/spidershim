@@ -6,10 +6,6 @@
 
 #include "jit/BitSet.h"
 
-#include <string.h>
-
-#include "jit/JitAllocPolicy.h"
-
 using namespace js;
 using namespace js::jit;
 

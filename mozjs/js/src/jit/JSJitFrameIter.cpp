@@ -8,18 +8,11 @@
 
 #include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineIC.h"
-#include "jit/CalleeToken.h"
 #include "jit/IonScript.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitFrames.h"
-#include "jit/JitRuntime.h"
 #include "jit/JitScript.h"
-#include "jit/MacroAssembler.h"  // js::jit::Assembler::GetPointer
-#include "jit/SafepointIndex.h"
 #include "jit/Safepoints.h"
-#include "jit/ScriptFromCalleeToken.h"
-#include "jit/VMFunctions.h"
-#include "js/friend/DumpFunctions.h"  // js::DumpObject, js::DumpValue
 
 #include "vm/JSScript-inl.h"
 
@@ -27,7 +20,20 @@ using namespace js;
 using namespace js::jit;
 
 JSJitFrameIter::JSJitFrameIter(const JitActivation* activation)
-    : JSJitFrameIter(activation, FrameType::Exit, activation->jsExitFP()) {}
+    : current_(activation->jsExitFP()),
+      type_(FrameType::Exit),
+      resumePCinCurrentFrame_(nullptr),
+      frameSize_(0),
+      cachedSafepointIndex_(nullptr),
+      activation_(activation) {
+  if (activation_->bailoutData()) {
+    current_ = activation_->bailoutData()->fp();
+    frameSize_ = activation_->bailoutData()->topFrameSize();
+    type_ = FrameType::Bailout;
+  } else {
+    MOZ_ASSERT(!TlsContext.get()->inUnsafeCallWithABI);
+  }
+}
 
 JSJitFrameIter::JSJitFrameIter(const JitActivation* activation,
                                FrameType frameType, uint8_t* fp)
@@ -38,13 +44,8 @@ JSJitFrameIter::JSJitFrameIter(const JitActivation* activation,
       cachedSafepointIndex_(nullptr),
       activation_(activation) {
   MOZ_ASSERT(type_ == FrameType::JSJitToWasm || type_ == FrameType::Exit);
-  if (activation_->bailoutData()) {
-    current_ = activation_->bailoutData()->fp();
-    frameSize_ = activation_->bailoutData()->topFrameSize();
-    type_ = FrameType::Bailout;
-  } else {
-    MOZ_ASSERT(!TlsContext.get()->inUnsafeCallWithABI);
-  }
+  MOZ_ASSERT(!activation_->bailoutData());
+  MOZ_ASSERT(!TlsContext.get()->inUnsafeCallWithABI);
 }
 
 bool JSJitFrameIter::checkInvalidation() const {
@@ -441,11 +442,9 @@ bool JSJitFrameIter::verifyReturnAddressUsingNativeToBytecodeMap() {
 
   JitSpew(JitSpew_Profiling, "Found bytecode location of depth %u:", depth);
   for (size_t i = 0; i < location.length(); i++) {
-    JitSpew(JitSpew_Profiling, "   %s:%u - %zu",
-            location[i].getDebugOnlyScript()->filename(),
-            location[i].getDebugOnlyScript()->lineno(),
-            size_t(location[i].toRawBytecode() -
-                   location[i].getDebugOnlyScript()->code()));
+    JitSpew(JitSpew_Profiling, "   %s:%u - %zu", location[i].script->filename(),
+            location[i].script->lineno(),
+            size_t(location[i].pc - location[i].script->code()));
   }
 
   if (type_ == FrameType::IonJS) {
@@ -460,12 +459,10 @@ bool JSJitFrameIter::verifyReturnAddressUsingNativeToBytecodeMap() {
               (int)idx, inlineFrames.script()->filename(),
               inlineFrames.script()->lineno(),
               size_t(inlineFrames.pc() - inlineFrames.script()->code()),
-              location[idx].getDebugOnlyScript()->filename(),
-              location[idx].getDebugOnlyScript()->lineno(),
-              size_t(location[idx].toRawBytecode() -
-                     location[idx].getDebugOnlyScript()->code()));
+              location[idx].script->filename(), location[idx].script->lineno(),
+              size_t(location[idx].pc - location[idx].script->code()));
 
-      MOZ_ASSERT(inlineFrames.script() == location[idx].getDebugOnlyScript());
+      MOZ_ASSERT(inlineFrames.script() == location[idx].script);
 
       if (inlineFrames.more()) {
         ++inlineFrames;

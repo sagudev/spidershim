@@ -6,6 +6,5 @@
 
 HOST_SOURCES += [
     # 'AlphaChecker.cpp',
-    "NonStdMoveChecker.cpp",
     'TempRefPtrChecker.cpp',
 ]

@@ -7,10 +7,6 @@
  * Interface implementation for the unified fuzzing interface
  */
 
-#include "nsIFile.h"
-#include "nsIPrefService.h"
-#include "nsIProperties.h"
-
 #include "FuzzingInterfaceStream.h"
 
 #include "mozilla/Assertions.h"

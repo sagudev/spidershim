@@ -6,10 +6,6 @@
 
 #include "vm/GeneratorObject.h"
 
-#include "frontend/ParserAtom.h"
-#ifdef DEBUG
-#  include "js/friend/DumpFunctions.h"  // js::DumpObject, js::DumpValue
-#endif
 #include "js/PropertySpec.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
@@ -27,100 +23,32 @@
 
 using namespace js;
 
-AbstractGeneratorObject* AbstractGeneratorObject::create(
-    JSContext* cx, HandleFunction callee, HandleScript script,
-    HandleObject environmentChain, Handle<ArgumentsObject*> argsObject) {
-  Rooted<AbstractGeneratorObject*> genObj(cx);
-  if (!callee->isAsync()) {
-    genObj = GeneratorObject::create(cx, callee);
-  } else if (callee->isGenerator()) {
-    genObj = AsyncGeneratorObject::create(cx, callee);
-  } else {
-    genObj = AsyncFunctionGeneratorObject::create(cx, callee);
-  }
-  if (!genObj) {
-    return nullptr;
-  }
-
-  genObj->setCallee(*callee);
-  genObj->setEnvironmentChain(*environmentChain);
-  if (argsObject) {
-    genObj->setArgsObj(*argsObject.get());
-  }
-
-  ArrayObject* stack = NewDenseFullyAllocatedArray(cx, script->nslots());
-  if (!stack) {
-    return nullptr;
-  }
-
-  genObj->setStackStorage(*stack);
-
-  // Note: This assumes that a Warp frame cannot be the target of
-  //       the debugger, as we do not call OnNewGenerator.
-  return genObj;
-}
-
-JSObject* AbstractGeneratorObject::createFromFrame(JSContext* cx,
-                                                   AbstractFramePtr frame) {
+JSObject* AbstractGeneratorObject::create(JSContext* cx,
+                                          AbstractFramePtr frame) {
   MOZ_ASSERT(frame.isGeneratorFrame());
+  MOZ_ASSERT(frame.script()->nfixed() == 0);
   MOZ_ASSERT(!frame.isConstructing());
 
-  if (frame.isModuleFrame()) {
-    return createModuleGenerator(cx, frame);
-  }
-
   RootedFunction fun(cx, frame.callee());
-  Rooted<ArgumentsObject*> maybeArgs(
-      cx, frame.script()->needsArgsObj() ? &frame.argsObj() : nullptr);
-  RootedObject environmentChain(cx, frame.environmentChain());
 
-  RootedScript script(cx, frame.script());
-  Rooted<AbstractGeneratorObject*> genObj(
-      cx, AbstractGeneratorObject::create(cx, fun, script, environmentChain,
-                                          maybeArgs));
-  if (!genObj) {
-    return nullptr;
-  }
-
-  if (!DebugAPI::onNewGenerator(cx, frame, genObj)) {
-    return nullptr;
-  }
-
-  return genObj;
-}
-
-JSObject* AbstractGeneratorObject::createModuleGenerator(
-    JSContext* cx, AbstractFramePtr frame) {
-  Rooted<ModuleObject*> module(cx, frame.script()->module());
   Rooted<AbstractGeneratorObject*> genObj(cx);
-  genObj = AsyncFunctionGeneratorObject::create(cx, module);
+  if (!fun->isAsync()) {
+    genObj = GeneratorObject::create(cx, fun);
+  } else if (fun->isGenerator()) {
+    genObj = AsyncGeneratorObject::create(cx, fun);
+  } else {
+    genObj = AsyncFunctionGeneratorObject::create(cx, fun);
+  }
   if (!genObj) {
     return nullptr;
   }
 
-  // Create a handler function to wrap the module's script. This way
-  // we can access it later and restore the state.
-  HandlePropertyName funName = cx->names().empty;
-  RootedFunction handlerFun(
-      cx, NewFunctionWithProto(cx, nullptr, 0,
-                               FunctionFlags::INTERPRETED_GENERATOR_OR_ASYNC,
-                               nullptr, funName, nullptr,
-                               gc::AllocKind::FUNCTION, GenericObject));
-  if (!handlerFun) {
-    return nullptr;
-  }
-  handlerFun->initScript(module->script());
-
-  genObj->setCallee(*handlerFun);
+  genObj->setCallee(*frame.callee());
   genObj->setEnvironmentChain(*frame.environmentChain());
-
-  ArrayObject* stack =
-      NewDenseFullyAllocatedArray(cx, module->script()->nslots());
-  if (!stack) {
-    return nullptr;
+  if (frame.script()->needsArgsObj()) {
+    genObj->setArgsObj(frame.argsObj());
   }
-
-  genObj->setStackStorage(*stack);
+  genObj->clearExpressionStack();
 
   if (!DebugAPI::onNewGenerator(cx, frame, genObj)) {
     return nullptr;
@@ -135,69 +63,47 @@ void AbstractGeneratorObject::trace(JSTracer* trc) {
 
 bool AbstractGeneratorObject::suspend(JSContext* cx, HandleObject obj,
                                       AbstractFramePtr frame, jsbytecode* pc,
-                                      unsigned nvalues) {
+                                      Value* vp, unsigned nvalues) {
   MOZ_ASSERT(JSOp(*pc) == JSOp::InitialYield || JSOp(*pc) == JSOp::Yield ||
              JSOp(*pc) == JSOp::Await);
 
   auto genObj = obj.as<AbstractGeneratorObject>();
-  MOZ_ASSERT(!genObj->hasStackStorage() || genObj->isStackStorageEmpty());
+  MOZ_ASSERT(!genObj->hasExpressionStack() || genObj->isExpressionStackEmpty());
   MOZ_ASSERT_IF(JSOp(*pc) == JSOp::Await, genObj->callee().isAsync());
   MOZ_ASSERT_IF(JSOp(*pc) == JSOp::Yield, genObj->callee().isGenerator());
 
+  ArrayObject* stack = nullptr;
   if (nvalues > 0) {
-    ArrayObject* stack = nullptr;
-    MOZ_ASSERT(genObj->hasStackStorage());
-    stack = &genObj->stackStorage();
-    MOZ_ASSERT(stack->getDenseCapacity() >= nvalues);
-    if (!frame.saveGeneratorSlots(cx, nvalues, stack)) {
-      return false;
-    }
+    do {
+      if (genObj->hasExpressionStack()) {
+        MOZ_ASSERT(genObj->expressionStack().getDenseInitializedLength() == 0);
+        auto result = genObj->expressionStack().setOrExtendDenseElements(
+            cx, 0, vp, nvalues, ShouldUpdateTypes::DontUpdate);
+        if (result == DenseElementResult::Success) {
+          MOZ_ASSERT(genObj->expressionStack().getDenseInitializedLength() ==
+                     nvalues);
+          break;
+        }
+        if (result == DenseElementResult::Failure) {
+          return false;
+        }
+      }
+
+      stack = NewDenseCopiedArray(cx, nvalues, vp);
+      if (!stack) {
+        return false;
+      }
+    } while (false);
   }
 
   genObj->setResumeIndex(pc);
   genObj->setEnvironmentChain(*frame.environmentChain());
+  if (stack) {
+    genObj->setExpressionStack(*stack);
+  }
+
   return true;
 }
-
-#ifdef DEBUG
-void AbstractGeneratorObject::dump() const {
-  fprintf(stderr, "(AbstractGeneratorObject*) %p {\n", (void*)this);
-  fprintf(stderr, "  callee: (JSFunction*) %p,\n", (void*)&callee());
-  fprintf(stderr, "  environmentChain: (JSObject*) %p,\n",
-          (void*)&environmentChain());
-  if (hasArgsObj()) {
-    fprintf(stderr, "  argsObj: Some((ArgumentsObject*) %p),\n",
-            (void*)&argsObj());
-  } else {
-    fprintf(stderr, "  argsObj: None,\n");
-  }
-  if (hasStackStorage()) {
-    fprintf(stderr, "  stackStorage: Some(ArrayObject {\n");
-    ArrayObject& stack = stackStorage();
-    uint32_t denseLen = uint32_t(stack.getDenseInitializedLength());
-    fprintf(stderr, "    denseInitializedLength: %u\n,", denseLen);
-    uint32_t len = stack.length();
-    fprintf(stderr, "    length: %u\n,", len);
-    fprintf(stderr, "    data: [\n");
-    const Value* elements =
-        const_cast<AbstractGeneratorObject*>(this)->getDenseElements();
-    for (uint32_t i = 0; i < std::max(len, denseLen); i++) {
-      fprintf(stderr, "      [%u]: ", i);
-      js::DumpValue(elements[i]);
-    }
-    fprintf(stderr, "    ],\n");
-    fprintf(stderr, "  }),\n");
-  } else {
-    fprintf(stderr, "  stackStorage: None\n");
-  }
-  if (isSuspended()) {
-    fprintf(stderr, "  resumeIndex: Some(%u),\n", resumeIndex());
-  } else {
-    fprintf(stderr, "  resumeIndex: None, /* (not suspended) */\n");
-  }
-  fprintf(stderr, "}\n");
-}
-#endif
 
 void AbstractGeneratorObject::finalSuspend(HandleObject obj) {
   auto* genObj = &obj->as<AbstractGeneratorObject>();
@@ -205,47 +111,35 @@ void AbstractGeneratorObject::finalSuspend(HandleObject obj) {
   genObj->setClosed();
 }
 
-static AbstractGeneratorObject* GetGeneratorObjectForCall(JSContext* cx,
-                                                          CallObject& callObj) {
-  // The ".generator" binding is always present and always "aliased".
-  Shape* shape = callObj.lookup(cx, cx->names().dotGenerator);
-  if (shape == nullptr) {
+AbstractGeneratorObject* js::GetGeneratorObjectForFrame(
+    JSContext* cx, AbstractFramePtr frame) {
+  cx->check(frame);
+  MOZ_ASSERT(frame.isGeneratorFrame());
+
+  if (!frame.hasInitialEnvironment()) {
     return nullptr;
   }
+
+  // The ".generator" binding is always present and always "aliased".
+  CallObject& callObj = frame.callObj();
+  Shape* shape = callObj.lookup(cx, cx->names().dotGenerator);
   Value genValue = callObj.getSlot(shape->slot());
 
-  // If the `Generator; SetAliasedVar ".generator"; InitialYield` bytecode
+  // If the `generator; setaliasedvar ".generator"; initialyield` bytecode
   // sequence has not run yet, genValue is undefined.
   return genValue.isObject()
              ? &genValue.toObject().as<AbstractGeneratorObject>()
              : nullptr;
 }
 
-AbstractGeneratorObject* js::GetGeneratorObjectForFrame(
-    JSContext* cx, AbstractFramePtr frame) {
-  cx->check(frame);
-  MOZ_ASSERT(frame.isGeneratorFrame());
+void js::SetGeneratorClosed(JSContext* cx, AbstractFramePtr frame) {
+  CallObject& callObj = frame.callObj();
 
-  if (frame.isModuleFrame()) {
-    ModuleEnvironmentObject* moduleEnv =
-        frame.script()->module()->environment();
-    Shape* shape = moduleEnv->lookup(cx, cx->names().dotGenerator);
-    Value genValue = moduleEnv->getSlot(shape->slot());
-    return genValue.isObject()
-               ? &genValue.toObject().as<AbstractGeneratorObject>()
-               : nullptr;
-  }
-  if (!frame.hasInitialEnvironment()) {
-    return nullptr;
-  }
-
-  return GetGeneratorObjectForCall(cx, frame.callObj());
-}
-
-AbstractGeneratorObject* js::GetGeneratorObjectForEnvironment(
-    JSContext* cx, HandleObject env) {
-  auto* call = CallObject::find(env);
-  return call ? GetGeneratorObjectForCall(cx, *call) : nullptr;
+  // Get the generator object stored on the scope chain and close it.
+  Shape* shape = callObj.lookup(cx, cx->names().dotGenerator);
+  auto& genObj =
+      callObj.getSlot(shape->slot()).toObject().as<AbstractGeneratorObject>();
+  genObj.setClosed();
 }
 
 bool js::GeneratorThrowOrReturn(JSContext* cx, AbstractFramePtr frame,
@@ -284,13 +178,13 @@ bool AbstractGeneratorObject::resume(JSContext* cx,
     activation.regs().fp()->initArgsObj(genObj->argsObj());
   }
 
-  if (genObj->hasStackStorage() && !genObj->isStackStorageEmpty()) {
-    JSScript* script = activation.regs().fp()->script();
-    ArrayObject* storage = &genObj->stackStorage();
-    uint32_t len = storage->getDenseInitializedLength();
-    activation.regs().fp()->restoreGeneratorSlots(storage);
-    activation.regs().sp += len - script->nfixed();
-    storage->setDenseInitializedLength(0);
+  if (genObj->hasExpressionStack() && !genObj->isExpressionStackEmpty()) {
+    uint32_t len = genObj->expressionStack().getDenseInitializedLength();
+    MOZ_ASSERT(activation.regs().spForStackDepth(len));
+    const Value* src = genObj->expressionStack().getDenseElements();
+    mozilla::PodCopy(activation.regs().sp, src, len);
+    activation.regs().sp += len;
+    genObj->expressionStack().setDenseInitializedLength(0);
   }
 
   JSScript* script = callee->nonLazyScript();
@@ -352,14 +246,22 @@ static const JSFunctionSpec generator_methods[] = {
     JS_SELF_HOSTED_FN("throw", "GeneratorThrow", 1, 0),
     JS_SELF_HOSTED_FN("return", "GeneratorReturn", 1, 0), JS_FS_END};
 
-JSObject* js::NewTenuredObjectWithFunctionPrototype(
+JSObject* js::NewSingletonObjectWithFunctionPrototype(
     JSContext* cx, Handle<GlobalObject*> global) {
   RootedObject proto(cx,
                      GlobalObject::getOrCreateFunctionPrototype(cx, global));
   if (!proto) {
     return nullptr;
   }
-  return NewTenuredObjectWithGivenProto<PlainObject>(cx, proto);
+  RootedObject obj(cx,
+                   NewSingletonObjectWithGivenProto<PlainObject>(cx, proto));
+  if (!obj) {
+    return nullptr;
+  }
+  if (!JSObject::setDelegate(cx, obj)) {
+    return nullptr;
+  }
+  return obj;
 }
 
 static JSObject* CreateGeneratorFunction(JSContext* cx, JSProtoKey key) {
@@ -372,12 +274,12 @@ static JSObject* CreateGeneratorFunction(JSContext* cx, JSProtoKey key) {
   HandlePropertyName name = cx->names().GeneratorFunction;
   return NewFunctionWithProto(cx, Generator, 1, FunctionFlags::NATIVE_CTOR,
                               nullptr, name, proto, gc::AllocKind::FUNCTION,
-                              TenuredObject);
+                              SingletonObject);
 }
 
 static JSObject* CreateGeneratorFunctionPrototype(JSContext* cx,
                                                   JSProtoKey key) {
-  return NewTenuredObjectWithFunctionPrototype(cx, cx->global());
+  return NewSingletonObjectWithFunctionPrototype(cx, cx->global());
 }
 
 static bool GeneratorFunctionClassFinish(JSContext* cx,
@@ -442,21 +344,6 @@ static const ClassSpec GeneratorFunctionClassSpec = {
 const JSClass js::GeneratorFunctionClass = {
     "GeneratorFunction", 0, JS_NULL_CLASS_OPS, &GeneratorFunctionClassSpec};
 
-const Value& AbstractGeneratorObject::getUnaliasedLocal(uint32_t slot) const {
-  MOZ_ASSERT(isSuspended());
-  MOZ_ASSERT(hasStackStorage());
-  MOZ_ASSERT(slot < callee().nonLazyScript()->nfixed());
-  return stackStorage().getDenseElement(slot);
-}
-
-void AbstractGeneratorObject::setUnaliasedLocal(uint32_t slot,
-                                                const Value& value) {
-  MOZ_ASSERT(isSuspended());
-  MOZ_ASSERT(hasStackStorage());
-  MOZ_ASSERT(slot < callee().nonLazyScript()->nfixed());
-  return stackStorage().setDenseElement(slot, value);
-}
-
 bool AbstractGeneratorObject::isAfterYield() {
   return isAfterYieldOrAwait(JSOp::Yield);
 }
@@ -496,15 +383,14 @@ bool JSObject::is<js::AbstractGeneratorObject>() const {
          is<AsyncGeneratorObject>();
 }
 
-GeneratorResumeKind js::ParserAtomToResumeKind(
-    JSContext* cx, frontend::TaggedParserAtomIndex atom) {
-  if (atom == frontend::TaggedParserAtomIndex::WellKnown::next()) {
+GeneratorResumeKind js::AtomToResumeKind(JSContext* cx, JSAtom* atom) {
+  if (atom == cx->names().next) {
     return GeneratorResumeKind::Next;
   }
-  if (atom == frontend::TaggedParserAtomIndex::WellKnown::throw_()) {
+  if (atom == cx->names().throw_) {
     return GeneratorResumeKind::Throw;
   }
-  MOZ_ASSERT(atom == frontend::TaggedParserAtomIndex::WellKnown::return_());
+  MOZ_ASSERT(atom == cx->names().return_);
   return GeneratorResumeKind::Return;
 }
 

@@ -13,13 +13,13 @@
 
 #include "NamespaceImports.h"  // for Value
 
-inline bool js::DebuggerFrame::hasGeneratorInfo() const {
+inline bool js::DebuggerFrame::hasGenerator() const {
   return !getReservedSlot(GENERATOR_INFO_SLOT).isUndefined();
 }
 
 inline js::DebuggerFrame::GeneratorInfo* js::DebuggerFrame::generatorInfo()
     const {
-  MOZ_ASSERT(hasGeneratorInfo());
+  MOZ_ASSERT(hasGenerator());
   return static_cast<GeneratorInfo*>(
       getReservedSlot(GENERATOR_INFO_SLOT).toPrivate());
 }

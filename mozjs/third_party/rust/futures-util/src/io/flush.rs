@@ -15,7 +15,7 @@ impl<W: ?Sized + Unpin> Unpin for Flush<'_, W> {}
 
 impl<'a, W: AsyncWrite + ?Sized + Unpin> Flush<'a, W> {
     pub(super) fn new(writer: &'a mut W) -> Self {
-        Self { writer }
+        Flush { writer }
     }
 }
 

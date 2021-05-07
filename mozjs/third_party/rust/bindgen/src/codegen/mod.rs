@@ -1,4 +1,3 @@
-mod dyngen;
 mod error;
 mod helpers;
 mod impl_debug;
@@ -11,43 +10,41 @@ pub(crate) mod bitfield_unit;
 #[cfg(all(test, target_endian = "little"))]
 mod bitfield_unit_tests;
 
-use self::dyngen::DynamicItems;
 use self::helpers::attributes;
 use self::struct_layout::StructLayoutTracker;
 
 use super::BindgenOptions;
 
-use crate::ir::analysis::{HasVtable, Sizedness};
-use crate::ir::annotations::FieldAccessorKind;
-use crate::ir::comment;
-use crate::ir::comp::{
+use ir::analysis::{HasVtable, Sizedness};
+use ir::annotations::FieldAccessorKind;
+use ir::comment;
+use ir::comp::{
     Base, Bitfield, BitfieldUnit, CompInfo, CompKind, Field, FieldData,
     FieldMethods, Method, MethodKind,
 };
-use crate::ir::context::{BindgenContext, ItemId};
-use crate::ir::derive::{
+use ir::context::{BindgenContext, ItemId};
+use ir::derive::{
     CanDerive, CanDeriveCopy, CanDeriveDebug, CanDeriveDefault, CanDeriveEq,
     CanDeriveHash, CanDeriveOrd, CanDerivePartialEq, CanDerivePartialOrd,
 };
-use crate::ir::dot;
-use crate::ir::enum_ty::{Enum, EnumVariant, EnumVariantValue};
-use crate::ir::function::{Abi, Function, FunctionKind, FunctionSig, Linkage};
-use crate::ir::int::IntKind;
-use crate::ir::item::{IsOpaque, Item, ItemCanonicalName, ItemCanonicalPath};
-use crate::ir::item_kind::ItemKind;
-use crate::ir::layout::Layout;
-use crate::ir::module::Module;
-use crate::ir::objc::{ObjCInterface, ObjCMethod};
-use crate::ir::template::{
+use ir::dot;
+use ir::enum_ty::{Enum, EnumVariant, EnumVariantValue};
+use ir::function::{Abi, Function, FunctionKind, FunctionSig, Linkage};
+use ir::int::IntKind;
+use ir::item::{IsOpaque, Item, ItemCanonicalName, ItemCanonicalPath};
+use ir::item_kind::ItemKind;
+use ir::layout::Layout;
+use ir::module::Module;
+use ir::objc::{ObjCInterface, ObjCMethod};
+use ir::template::{
     AsTemplateParam, TemplateInstantiation, TemplateParameters,
 };
-use crate::ir::ty::{Type, TypeKind};
-use crate::ir::var::Var;
+use ir::ty::{Type, TypeKind};
+use ir::var::Var;
 
 use proc_macro2::{self, Ident, Span};
 use quote::TokenStreamExt;
 
-use crate::{Entry, HashMap, HashSet};
 use std;
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -56,6 +53,7 @@ use std::fmt::Write;
 use std::iter;
 use std::ops;
 use std::str::FromStr;
+use {Entry, HashMap, HashSet};
 
 // Name of type defined in constified enum module
 pub static CONSTIFIED_ENUM_MODULE_REPR_NAME: &'static str = "Type";
@@ -97,96 +95,8 @@ fn root_import(
     }
 }
 
-bitflags! {
-    struct DerivableTraits: u16 {
-        const DEBUG       = 1 << 0;
-        const DEFAULT     = 1 << 1;
-        const COPY        = 1 << 2;
-        const CLONE       = 1 << 3;
-        const HASH        = 1 << 4;
-        const PARTIAL_ORD = 1 << 5;
-        const ORD         = 1 << 6;
-        const PARTIAL_EQ  = 1 << 7;
-        const EQ          = 1 << 8;
-    }
-}
-
-fn derives_of_item(item: &Item, ctx: &BindgenContext) -> DerivableTraits {
-    let mut derivable_traits = DerivableTraits::empty();
-
-    if item.can_derive_debug(ctx) && !item.annotations().disallow_debug() {
-        derivable_traits |= DerivableTraits::DEBUG;
-    }
-
-    if item.can_derive_default(ctx) && !item.annotations().disallow_default() {
-        derivable_traits |= DerivableTraits::DEFAULT;
-    }
-
-    let all_template_params = item.all_template_params(ctx);
-
-    if item.can_derive_copy(ctx) && !item.annotations().disallow_copy() {
-        derivable_traits |= DerivableTraits::COPY;
-
-        if ctx.options().rust_features().builtin_clone_impls ||
-            !all_template_params.is_empty()
-        {
-            // FIXME: This requires extra logic if you have a big array in a
-            // templated struct. The reason for this is that the magic:
-            //     fn clone(&self) -> Self { *self }
-            // doesn't work for templates.
-            //
-            // It's not hard to fix though.
-            derivable_traits |= DerivableTraits::CLONE;
-        }
-    }
-
-    if item.can_derive_hash(ctx) {
-        derivable_traits |= DerivableTraits::HASH;
-    }
-
-    if item.can_derive_partialord(ctx) {
-        derivable_traits |= DerivableTraits::PARTIAL_ORD;
-    }
-
-    if item.can_derive_ord(ctx) {
-        derivable_traits |= DerivableTraits::ORD;
-    }
-
-    if item.can_derive_partialeq(ctx) {
-        derivable_traits |= DerivableTraits::PARTIAL_EQ;
-    }
-
-    if item.can_derive_eq(ctx) {
-        derivable_traits |= DerivableTraits::EQ;
-    }
-
-    derivable_traits
-}
-
-impl From<DerivableTraits> for Vec<&'static str> {
-    fn from(derivable_traits: DerivableTraits) -> Vec<&'static str> {
-        [
-            (DerivableTraits::DEBUG, "Debug"),
-            (DerivableTraits::DEFAULT, "Default"),
-            (DerivableTraits::COPY, "Copy"),
-            (DerivableTraits::CLONE, "Clone"),
-            (DerivableTraits::HASH, "Hash"),
-            (DerivableTraits::PARTIAL_ORD, "PartialOrd"),
-            (DerivableTraits::ORD, "Ord"),
-            (DerivableTraits::PARTIAL_EQ, "PartialEq"),
-            (DerivableTraits::EQ, "Eq"),
-        ]
-        .iter()
-        .filter_map(|&(flag, derive)| {
-            Some(derive).filter(|_| derivable_traits.contains(flag))
-        })
-        .collect()
-    }
-}
-
 struct CodegenResult<'a> {
     items: Vec<proc_macro2::TokenStream>,
-    dynamic_items: DynamicItems,
 
     /// A monotonic counter used to add stable unique id's to stuff that doesn't
     /// need to be referenced by anything.
@@ -237,22 +147,17 @@ impl<'a> CodegenResult<'a> {
     fn new(codegen_id: &'a Cell<usize>) -> Self {
         CodegenResult {
             items: vec![],
-            dynamic_items: DynamicItems::new(),
             saw_bindgen_union: false,
             saw_incomplete_array: false,
             saw_objc: false,
             saw_block: false,
             saw_bitfield_unit: false,
-            codegen_id,
+            codegen_id: codegen_id,
             items_seen: Default::default(),
             functions_seen: Default::default(),
             vars_seen: Default::default(),
             overload_counters: Default::default(),
         }
-    }
-
-    fn dynamic_items(&mut self) -> &mut DynamicItems {
-        &mut self.dynamic_items
     }
 
     fn saw_bindgen_union(&mut self) {
@@ -457,7 +362,7 @@ impl CodeGenerator for Item {
             // TODO(emilio, #453): Figure out what to do when this happens
             // legitimately, we could track the opaque stuff and disable the
             // assertion there I guess.
-            warn!("Found non-whitelisted item in code generation: {:?}", self);
+            error!("Found non-whitelisted item in code generation: {:?}", self);
         }
 
         result.set_seen(self.id());
@@ -578,7 +483,7 @@ impl CodeGenerator for Var {
         result: &mut CodegenResult<'a>,
         item: &Item,
     ) {
-        use crate::ir::var::VarType;
+        use ir::var::VarType;
         debug!("<Var as CodeGenerator>::codegen: item = {:?}", item);
         debug_assert!(item.is_enabled_for_codegen(ctx));
 
@@ -888,17 +793,8 @@ impl CodeGenerator for Type {
                             "repr_transparent feature is required to use {:?}",
                             alias_style
                         );
-
-                        let mut attributes =
-                            vec![attributes::repr("transparent")];
-                        let derivable_traits = derives_of_item(item, ctx);
-                        if !derivable_traits.is_empty() {
-                            let derives: Vec<_> = derivable_traits.into();
-                            attributes.push(attributes::derives(&derives))
-                        }
-
                         quote! {
-                            #( #attributes )*
+                            #[repr(transparent)]
                             pub struct #rust_name
                         }
                     }
@@ -995,9 +891,9 @@ impl<'a> Vtable<'a> {
         base_classes: &'a [Base],
     ) -> Self {
         Vtable {
-            item_id,
-            methods,
-            base_classes,
+            item_id: item_id,
+            methods: methods,
+            base_classes: base_classes,
         }
     }
 }
@@ -1414,7 +1310,7 @@ impl<'a> FieldCodegen<'a> for BitfieldUnit {
         F: Extend<proc_macro2::TokenStream>,
         M: Extend<proc_macro2::TokenStream>,
     {
-        use crate::ir::ty::RUST_DERIVE_IN_ARRAY_LIMIT;
+        use ir::ty::RUST_DERIVE_IN_ARRAY_LIMIT;
 
         result.saw_bitfield_unit();
 
@@ -1891,37 +1787,66 @@ impl CodeGenerator for CompInfo {
             }
         }
 
-        let derivable_traits = derives_of_item(item, ctx);
-        if !derivable_traits.contains(DerivableTraits::DEBUG) {
-            needs_debug_impl = ctx.options().derive_debug &&
-                ctx.options().impl_debug &&
-                !ctx.no_debug_by_name(item) &&
-                !item.annotations().disallow_debug();
+        let mut derives = vec![];
+        if item.can_derive_debug(ctx) {
+            derives.push("Debug");
+        } else {
+            needs_debug_impl =
+                ctx.options().derive_debug && ctx.options().impl_debug
         }
 
-        if !derivable_traits.contains(DerivableTraits::DEFAULT) {
-            needs_default_impl = ctx.options().derive_default &&
-                !self.is_forward_declaration() &&
-                !ctx.no_default_by_name(item) &&
-                !item.annotations().disallow_default();
+        if item.can_derive_default(ctx) {
+            derives.push("Default");
+        } else {
+            needs_default_impl =
+                ctx.options().derive_default && !self.is_forward_declaration();
         }
 
         let all_template_params = item.all_template_params(ctx);
 
-        if derivable_traits.contains(DerivableTraits::COPY) &&
-            !derivable_traits.contains(DerivableTraits::CLONE)
-        {
-            needs_clone_impl = true;
+        if item.can_derive_copy(ctx) && !item.annotations().disallow_copy() {
+            derives.push("Copy");
+
+            if ctx.options().rust_features().builtin_clone_impls ||
+                !all_template_params.is_empty()
+            {
+                // FIXME: This requires extra logic if you have a big array in a
+                // templated struct. The reason for this is that the magic:
+                //     fn clone(&self) -> Self { *self }
+                // doesn't work for templates.
+                //
+                // It's not hard to fix though.
+                derives.push("Clone");
+            } else {
+                needs_clone_impl = true;
+            }
         }
 
-        if !derivable_traits.contains(DerivableTraits::PARTIAL_EQ) {
+        if item.can_derive_hash(ctx) {
+            derives.push("Hash");
+        }
+
+        if item.can_derive_partialord(ctx) {
+            derives.push("PartialOrd");
+        }
+
+        if item.can_derive_ord(ctx) {
+            derives.push("Ord");
+        }
+
+        if item.can_derive_partialeq(ctx) {
+            derives.push("PartialEq");
+        } else {
             needs_partialeq_impl = ctx.options().derive_partialeq &&
                 ctx.options().impl_partialeq &&
                 ctx.lookup_can_derive_partialeq_or_partialord(item.id()) ==
                     CanDerive::Manually;
         }
 
-        let mut derives: Vec<_> = derivable_traits.into();
+        if item.can_derive_eq(ctx) {
+            derives.push("Eq");
+        }
+
         derives.extend(item.annotations().derives().iter().map(String::as_str));
 
         if !derives.is_empty() {
@@ -2221,10 +2146,6 @@ impl MethodCodegen for Method {
 
         // First of all, output the actual function.
         let function_item = ctx.resolve_item(self.signature());
-        if function_item.is_blacklisted(ctx) {
-            // We shouldn't emit a method declaration if the function is blacklisted
-            return;
-        }
         function_item.codegen(ctx, result, &());
 
         let function = function_item.expect_function();
@@ -2364,9 +2285,7 @@ impl MethodCodegen for Method {
 /// A helper type that represents different enum variations.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum EnumVariation {
-    /// The code for this enum will use a Rust enum. Note that creating this in unsafe code
-    /// (including FFI) with an invalid value will invoke undefined behaviour, whether or not
-    /// its marked as non_exhaustive.
+    /// The code for this enum will use a Rust enum
     Rust {
         /// Indicates whether the generated struct should be `#[non_exhaustive]`
         non_exhaustive: bool,
@@ -2450,7 +2369,6 @@ enum EnumBuilder<'a> {
         is_bitfield: bool,
     },
     Consts {
-        repr: proc_macro2::TokenStream,
         variants: Vec<proc_macro2::TokenStream>,
         codegen_depth: usize,
     },
@@ -2469,14 +2387,6 @@ impl<'a> EnumBuilder<'a> {
             EnumBuilder::NewType { codegen_depth, .. } |
             EnumBuilder::ModuleConsts { codegen_depth, .. } |
             EnumBuilder::Consts { codegen_depth, .. } => codegen_depth,
-        }
-    }
-
-    /// Returns true if the builder is for a rustified enum.
-    fn is_rust_enum(&self) -> bool {
-        match *self {
-            EnumBuilder::Rust { .. } => true,
-            _ => false,
         }
     }
 
@@ -2513,20 +2423,13 @@ impl<'a> EnumBuilder<'a> {
                 }
             }
 
-            EnumVariation::Consts => {
-                let mut variants = Vec::new();
-
-                variants.push(quote! {
+            EnumVariation::Consts => EnumBuilder::Consts {
+                variants: vec![quote! {
                     #( #attrs )*
                     pub type #ident = #repr;
-                });
-
-                EnumBuilder::Consts {
-                    repr,
-                    variants,
-                    codegen_depth: enum_codegen_depth,
-                }
-            }
+                }],
+                codegen_depth: enum_codegen_depth,
+            },
 
             EnumVariation::ModuleConsts => {
                 let ident = Ident::new(
@@ -2558,12 +2461,7 @@ impl<'a> EnumBuilder<'a> {
         is_ty_named: bool,
     ) -> Self {
         let variant_name = ctx.rust_mangle(variant.name());
-        let is_rust_enum = self.is_rust_enum();
         let expr = match variant.val() {
-            EnumVariantValue::Boolean(v) if is_rust_enum => {
-                helpers::ast_ty::uint_expr(v as u64)
-            }
-            EnumVariantValue::Boolean(v) => quote!(#v),
             EnumVariantValue::Signed(v) => helpers::ast_ty::int_expr(v),
             EnumVariantValue::Unsigned(v) => helpers::ast_ty::uint_expr(v),
         };
@@ -2626,7 +2524,7 @@ impl<'a> EnumBuilder<'a> {
                 self
             }
 
-            EnumBuilder::Consts { ref repr, .. } => {
+            EnumBuilder::Consts { .. } => {
                 let constant_name = match mangling_prefix {
                     Some(prefix) => {
                         Cow::Owned(format!("{}_{}", prefix, variant_name))
@@ -2634,12 +2532,10 @@ impl<'a> EnumBuilder<'a> {
                     None => variant_name,
                 };
 
-                let ty = if is_ty_named { &rust_ty } else { repr };
-
                 let ident = ctx.rust_ident(constant_name);
                 result.push(quote! {
                     #doc
-                    pub const #ident : #ty = #expr ;
+                    pub const #ident : #rust_ty = #expr ;
                 });
 
                 self
@@ -2850,17 +2746,17 @@ impl CodeGenerator for Enum {
         }
 
         if !variation.is_const() {
-            let mut derives = derives_of_item(item, ctx);
-            // For backwards compat, enums always derive Clone/Eq/PartialEq/Hash, even
-            // if we don't generate those by default.
-            derives.insert(
-                DerivableTraits::CLONE |
-                    DerivableTraits::COPY |
-                    DerivableTraits::HASH |
-                    DerivableTraits::PARTIAL_EQ |
-                    DerivableTraits::EQ,
-            );
-            let derives: Vec<_> = derives.into();
+            let mut derives =
+                vec!["Debug", "Copy", "Clone", "PartialEq", "Eq", "Hash"];
+
+            if item.can_derive_partialord(ctx) {
+                derives.push("PartialOrd");
+            }
+
+            if item.can_derive_ord(ctx) {
+                derives.push("Ord");
+            }
+
             attrs.push(attributes::derives(&derives));
         }
 
@@ -2894,12 +2790,9 @@ impl CodeGenerator for Enum {
             });
         }
 
-        let repr = match self.repr() {
-            Some(ty) => ty.to_rust_ty_or_opaque(ctx, &()),
-            None => {
-                let repr_name = ctx.rust_ident_raw(repr_name);
-                quote! { #repr_name }
-            }
+        let repr = {
+            let repr_name = ctx.rust_ident_raw(repr_name);
+            quote! { #repr_name }
         };
 
         let mut builder = EnumBuilder::new(
@@ -3051,50 +2944,6 @@ impl CodeGenerator for Enum {
 
         let item = builder.build(ctx, enum_rust_ty, result);
         result.push(item);
-    }
-}
-
-/// Enum for the default type of macro constants.
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum MacroTypeVariation {
-    /// Use i32 or i64
-    Signed,
-    /// Use u32 or u64
-    Unsigned,
-}
-
-impl MacroTypeVariation {
-    /// Convert a `MacroTypeVariation` to its str representation.
-    pub fn as_str(&self) -> &str {
-        match self {
-            MacroTypeVariation::Signed => "signed",
-            MacroTypeVariation::Unsigned => "unsigned",
-        }
-    }
-}
-
-impl Default for MacroTypeVariation {
-    fn default() -> MacroTypeVariation {
-        MacroTypeVariation::Unsigned
-    }
-}
-
-impl std::str::FromStr for MacroTypeVariation {
-    type Err = std::io::Error;
-
-    /// Create a `MacroTypeVariation` from a string.
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "signed" => Ok(MacroTypeVariation::Signed),
-            "unsigned" => Ok(MacroTypeVariation::Unsigned),
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                concat!(
-                    "Got an invalid MacroTypeVariation. Accepted values ",
-                    "are 'signed' and 'unsigned'"
-                ),
-            )),
-        }
     }
 }
 
@@ -3410,7 +3259,10 @@ impl TryToRustTy for Type {
                     IntKind::I64 => Ok(quote! { i64 }),
                     IntKind::U64 => Ok(quote! { u64 }),
                     IntKind::Custom { name, .. } => {
-                        Ok(proc_macro2::TokenStream::from_str(name).unwrap())
+                        let ident = ctx.rust_ident_raw(name);
+                        Ok(quote! {
+                            #ident
+                        })
                     }
                     IntKind::U128 => {
                         Ok(if ctx.options().rust_features.i128_and_u128 {
@@ -3518,11 +3370,6 @@ impl TryToRustTy for Type {
                     inner.into_resolver().through_type_refs().resolve(ctx);
                 let inner_ty = inner.expect_type();
 
-                let is_objc_pointer = match inner_ty.kind() {
-                    TypeKind::ObjCInterface(..) => true,
-                    _ => false,
-                };
-
                 // Regardless if we can properly represent the inner type, we
                 // should always generate a proper pointer here, so use
                 // infallible conversion of the inner type.
@@ -3531,8 +3378,7 @@ impl TryToRustTy for Type {
 
                 // Avoid the first function pointer level, since it's already
                 // represented in Rust.
-                if inner_ty.canonical_type(ctx).is_function() || is_objc_pointer
-                {
+                if inner_ty.canonical_type(ctx).is_function() {
                     Ok(ty)
                 } else {
                     Ok(ty.to_ptr(is_const))
@@ -3548,15 +3394,9 @@ impl TryToRustTy for Type {
             TypeKind::ObjCSel => Ok(quote! {
                 objc::runtime::Sel
             }),
-            TypeKind::ObjCId => Ok(quote! {
+            TypeKind::ObjCId | TypeKind::ObjCInterface(..) => Ok(quote! {
                 id
             }),
-            TypeKind::ObjCInterface(ref interface) => {
-                let name = ctx.rust_ident(interface.name());
-                Ok(quote! {
-                    #name
-                })
-            }
             ref u @ TypeKind::UnresolvedTypeRef(..) => {
                 unreachable!("Should have been resolved after parsing {:?}!", u)
             }
@@ -3795,30 +3635,7 @@ impl CodeGenerator for Function {
                 pub fn #ident ( #( #args ),* ) #ret;
             }
         };
-
-        // If we're doing dynamic binding generation, add to the dynamic items.
-        if ctx.options().dynamic_library_name.is_some() &&
-            self.kind() == FunctionKind::Function
-        {
-            let args_identifiers =
-                utils::fnsig_argument_identifiers(ctx, signature);
-            let return_item = ctx.resolve_item(signature.return_type());
-            let ret_ty = match *return_item.kind().expect_type().kind() {
-                TypeKind::Void => quote! {()},
-                _ => return_item.to_rust_ty_or_opaque(ctx, &()),
-            };
-            result.dynamic_items().push(
-                ident,
-                abi,
-                signature.is_variadic(),
-                args,
-                args_identifiers,
-                ret,
-                ret_ty,
-            );
-        } else {
-            result.push(tokens);
-        }
+        result.push(tokens);
     }
 }
 
@@ -3827,7 +3644,7 @@ fn objc_method_codegen(
     method: &ObjCMethod,
     class_name: Option<&str>,
     prefix: &str,
-) -> proc_macro2::TokenStream {
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     let signature = method.signature();
     let fn_args = utils::fnsig_arguments(ctx, signature);
     let fn_ret = utils::fnsig_return_ty(ctx, signature);
@@ -3839,7 +3656,7 @@ fn objc_method_codegen(
         }
     } else {
         let fn_args = fn_args.clone();
-        let args = iter::once(quote! { &self }).chain(fn_args.into_iter());
+        let args = iter::once(quote! { self }).chain(fn_args.into_iter());
         quote! {
             ( #( #args ),* ) #fn_ret
         }
@@ -3848,28 +3665,35 @@ fn objc_method_codegen(
     let methods_and_args = method.format_method_call(&fn_args);
 
     let body = if method.is_class_method() {
-        let class_name = ctx.rust_ident(
+        let class_name = class_name
+            .expect("Generating a class method without class name?")
+            .to_owned();
+        let expect_msg = proc_macro2::Literal::string(&format!(
+            "Couldn't find {}",
             class_name
-                .expect("Generating a class method without class name?")
-                .to_owned(),
-        );
+        ));
         quote! {
-            msg_send!(class!(#class_name), #methods_and_args)
+            msg_send!(objc::runtime::Class::get(#class_name).expect(#expect_msg), #methods_and_args)
         }
     } else {
         quote! {
-            msg_send!(*self, #methods_and_args)
+            msg_send!(self, #methods_and_args)
         }
     };
 
     let method_name =
         ctx.rust_ident(format!("{}{}", prefix, method.rust_name()));
 
-    quote! {
-        unsafe fn #method_name #sig where <Self as std::ops::Deref>::Target: objc::Message + Sized {
-            #body
-        }
-    }
+    (
+        quote! {
+            unsafe fn #method_name #sig {
+                #body
+            }
+        },
+        quote! {
+            unsafe fn #method_name #sig ;
+        },
+    )
 }
 
 impl CodeGenerator for ObjCInterface {
@@ -3884,191 +3708,77 @@ impl CodeGenerator for ObjCInterface {
         debug_assert!(item.is_enabled_for_codegen(ctx));
 
         let mut impl_items = vec![];
+        let mut trait_items = vec![];
 
         for method in self.methods() {
-            let impl_item = objc_method_codegen(ctx, method, None, "");
+            let (impl_item, trait_item) =
+                objc_method_codegen(ctx, method, None, "");
             impl_items.push(impl_item);
+            trait_items.push(trait_item)
         }
 
         let instance_method_names: Vec<_> =
-            self.methods().iter().map(|m| m.rust_name()).collect();
+            self.methods().iter().map({ |m| m.rust_name() }).collect();
 
         for class_method in self.class_methods() {
             let ambiquity =
                 instance_method_names.contains(&class_method.rust_name());
             let prefix = if ambiquity { "class_" } else { "" };
-            let impl_item = objc_method_codegen(
+            let (impl_item, trait_item) = objc_method_codegen(
                 ctx,
                 class_method,
                 Some(self.name()),
                 prefix,
             );
             impl_items.push(impl_item);
+            trait_items.push(trait_item)
         }
 
         let trait_name = ctx.rust_ident(self.rust_name());
-        let trait_constraints = quote! {
-            Sized + std::ops::Deref
-        };
+
         let trait_block = if self.is_template() {
             let template_names: Vec<Ident> = self
                 .template_names
                 .iter()
                 .map(|g| ctx.rust_ident(g))
                 .collect();
-
             quote! {
-                pub trait #trait_name <#(#template_names),*> : #trait_constraints {
+                pub trait #trait_name <#(#template_names),*>{
+                    #( #trait_items )*
+                }
+            }
+        } else {
+            quote! {
+                pub trait #trait_name {
+                    #( #trait_items )*
+                }
+            }
+        };
+
+        let ty_for_impl = quote! {
+            id
+        };
+        let impl_block = if self.is_template() {
+            let template_names: Vec<Ident> = self
+                .template_names
+                .iter()
+                .map(|g| ctx.rust_ident(g))
+                .collect();
+            quote! {
+                impl <#(#template_names :'static),*> #trait_name <#(#template_names),*> for #ty_for_impl {
                     #( #impl_items )*
                 }
             }
         } else {
             quote! {
-                pub trait #trait_name : #trait_constraints {
+                impl #trait_name for #ty_for_impl {
                     #( #impl_items )*
                 }
             }
         };
 
-        let class_name = ctx.rust_ident(self.name());
-        if !self.is_category() && !self.is_protocol() {
-            let struct_block = quote! {
-                #[repr(transparent)]
-                #[derive(Clone)]
-                pub struct #class_name(pub id);
-                impl std::ops::Deref for #class_name {
-                    type Target = objc::runtime::Object;
-                    fn deref(&self) -> &Self::Target {
-                        unsafe {
-                            &*self.0
-                        }
-                    }
-                }
-                unsafe impl objc::Message for #class_name { }
-                impl #class_name {
-                    pub fn alloc() -> Self {
-                        Self(unsafe {
-                            msg_send!(objc::class!(#class_name), alloc)
-                        })
-                    }
-                }
-            };
-            result.push(struct_block);
-            let mut protocol_set: HashSet<ItemId> = Default::default();
-            for protocol_id in self.conforms_to.iter() {
-                protocol_set.insert(*protocol_id);
-                let protocol_name = ctx.rust_ident(
-                    ctx.resolve_type(protocol_id.expect_type_id(ctx))
-                        .name()
-                        .unwrap(),
-                );
-                let impl_trait = quote! {
-                    impl #protocol_name for #class_name { }
-                };
-                result.push(impl_trait);
-            }
-            let mut parent_class = self.parent_class;
-            while let Some(parent_id) = parent_class {
-                let parent = parent_id
-                    .expect_type_id(ctx)
-                    .into_resolver()
-                    .through_type_refs()
-                    .resolve(ctx)
-                    .expect_type()
-                    .kind();
-
-                let parent = match parent {
-                    TypeKind::ObjCInterface(ref parent) => parent,
-                    _ => break,
-                };
-                parent_class = parent.parent_class;
-
-                let parent_name = ctx.rust_ident(parent.rust_name());
-                let impl_trait = if parent.is_template() {
-                    let template_names: Vec<Ident> = parent
-                        .template_names
-                        .iter()
-                        .map(|g| ctx.rust_ident(g))
-                        .collect();
-                    quote! {
-                        impl <#(#template_names :'static),*> #parent_name <#(#template_names),*> for #class_name {
-                        }
-                    }
-                } else {
-                    quote! {
-                        impl #parent_name for #class_name { }
-                    }
-                };
-                result.push(impl_trait);
-                for protocol_id in parent.conforms_to.iter() {
-                    if protocol_set.insert(*protocol_id) {
-                        let protocol_name = ctx.rust_ident(
-                            ctx.resolve_type(protocol_id.expect_type_id(ctx))
-                                .name()
-                                .unwrap(),
-                        );
-                        let impl_trait = quote! {
-                            impl #protocol_name for #class_name { }
-                        };
-                        result.push(impl_trait);
-                    }
-                }
-                if !parent.is_template() {
-                    let parent_struct_name = parent.name();
-                    let child_struct_name = self.name();
-                    let parent_struct = ctx.rust_ident(parent_struct_name);
-                    let from_block = quote! {
-                        impl From<#class_name> for #parent_struct {
-                            fn from(child: #class_name) -> #parent_struct {
-                                #parent_struct(child.0)
-                            }
-                        }
-                    };
-                    result.push(from_block);
-
-                    let error_msg = format!(
-                        "This {} cannot be downcasted to {}",
-                        parent_struct_name, child_struct_name
-                    );
-                    let try_into_block = quote! {
-                        impl std::convert::TryFrom<#parent_struct> for #class_name {
-                            type Error = &'static str;
-                            fn try_from(parent: #parent_struct) -> Result<#class_name, Self::Error> {
-                                let is_kind_of : bool = unsafe { msg_send!(parent, isKindOfClass:class!(#class_name))};
-                                if is_kind_of {
-                                    Ok(#class_name(parent.0))
-                                } else {
-                                    Err(#error_msg)
-                                }
-                            }
-                        }
-                    };
-                    result.push(try_into_block);
-                }
-            }
-        }
-
-        if !self.is_protocol() {
-            let impl_block = if self.is_template() {
-                let template_names: Vec<Ident> = self
-                    .template_names
-                    .iter()
-                    .map(|g| ctx.rust_ident(g))
-                    .collect();
-                quote! {
-                    impl <#(#template_names :'static),*> #trait_name <#(#template_names),*> for #class_name {
-                    }
-                }
-            } else {
-                quote! {
-                    impl #trait_name for #class_name {
-                    }
-                }
-            };
-            result.push(impl_block);
-        }
-
         result.push(trait_block);
+        result.push(impl_block);
         result.saw_objc();
     }
 }
@@ -4098,7 +3808,7 @@ pub(crate) fn codegen(
                     "Your dot file was generated successfully into: {}",
                     path
                 ),
-                Err(e) => warn!("{}", e),
+                Err(e) => error!("{}", e),
             }
         }
 
@@ -4108,23 +3818,16 @@ pub(crate) fn codegen(
             &(),
         );
 
-        if let Some(ref lib_name) = context.options().dynamic_library_name {
-            let lib_ident = context.rust_ident(lib_name);
-            let dynamic_items_tokens =
-                result.dynamic_items().get_tokens(lib_ident);
-            result.push(dynamic_items_tokens);
-        }
-
         result.items
     })
 }
 
-pub mod utils {
+mod utils {
     use super::{error, ToRustTyOrOpaque};
-    use crate::ir::context::BindgenContext;
-    use crate::ir::function::{Abi, FunctionSig};
-    use crate::ir::item::{Item, ItemCanonicalPath};
-    use crate::ir::ty::TypeKind;
+    use ir::context::BindgenContext;
+    use ir::function::{Abi, FunctionSig};
+    use ir::item::{Item, ItemCanonicalPath};
+    use ir::ty::TypeKind;
     use proc_macro2;
     use std::borrow::Cow;
     use std::mem;
@@ -4486,12 +4189,11 @@ pub mod utils {
                     TypeKind::Pointer(inner) => {
                         let inner = ctx.resolve_item(inner);
                         let inner_ty = inner.expect_type();
-                        if let TypeKind::ObjCInterface(ref interface) =
+                        if let TypeKind::ObjCInterface(_) =
                             *inner_ty.canonical_type(ctx).kind()
                         {
-                            let name = ctx.rust_ident(interface.name());
                             quote! {
-                                #name
+                                id
                             }
                         } else {
                             arg_item.to_rust_ty_or_opaque(ctx, &())
@@ -4520,35 +4222,6 @@ pub mod utils {
         if sig.is_variadic() {
             args.push(quote! { ... })
         }
-
-        args
-    }
-
-    pub fn fnsig_argument_identifiers(
-        ctx: &BindgenContext,
-        sig: &FunctionSig,
-    ) -> Vec<proc_macro2::TokenStream> {
-        let mut unnamed_arguments = 0;
-        let args = sig
-            .argument_types()
-            .iter()
-            .map(|&(ref name, _ty)| {
-                let arg_name = match *name {
-                    Some(ref name) => ctx.rust_mangle(name).into_owned(),
-                    None => {
-                        unnamed_arguments += 1;
-                        format!("arg{}", unnamed_arguments)
-                    }
-                };
-
-                assert!(!arg_name.is_empty());
-                let arg_name = ctx.rust_ident(arg_name);
-
-                quote! {
-                    #arg_name
-                }
-            })
-            .collect::<Vec<_>>();
 
         args
     }

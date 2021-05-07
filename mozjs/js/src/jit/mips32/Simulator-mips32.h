@@ -213,6 +213,8 @@ class Simulator {
   Simulator();
   ~Simulator();
 
+  static bool supportsAtomics() { return true; }
+
   // The currently executing Simulator instance. Potentially there can be one
   // for each native thread.
   static Simulator* Current();
@@ -503,17 +505,17 @@ class SimulatorProcess {
     // Technically we need the lock to access the innards of the
     // icache, not to take its address, but the latter condition
     // serves as a useful complement to the former.
-    singleton_->cacheLock_.assertOwnedByCurrentThread();
+    MOZ_ASSERT(singleton_->cacheLock_.ownedByCurrentThread());
     return singleton_->icache_;
   }
 
   static Redirection* redirection() {
-    singleton_->cacheLock_.assertOwnedByCurrentThread();
+    MOZ_ASSERT(singleton_->cacheLock_.ownedByCurrentThread());
     return singleton_->redirection_;
   }
 
   static void setRedirection(js::jit::Redirection* redirection) {
-    singleton_->cacheLock_.assertOwnedByCurrentThread();
+    MOZ_ASSERT(singleton_->cacheLock_.ownedByCurrentThread());
     singleton_->redirection_ = redirection;
   }
 };

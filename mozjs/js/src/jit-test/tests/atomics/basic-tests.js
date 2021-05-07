@@ -366,8 +366,8 @@ function exchangeLoop(ta) {
     return sum;
 }
 
-function adHocExchange(SharedOrUnsharedArrayBuffer) {
-    var a = new Int8Array(new SharedOrUnsharedArrayBuffer(16));
+function adHocExchange() {
+    var a = new Int8Array(new SharedArrayBuffer(16));
     for ( var i=0 ; i < a.length ; i++ )
 	a[i] = 255;
     assertEq(exchangeLoop(a), -100000);
@@ -375,14 +375,14 @@ function adHocExchange(SharedOrUnsharedArrayBuffer) {
 
 // isLockFree(n) may return true only if there is an integer array
 // on which atomic operations is allowed whose byte size is n,
-// ie, it must return false for n=7.
+// ie, it must return false for n=8.
 //
-// SpiderMonkey has isLockFree(1), isLockFree(2), isLockFree(8), isLockFree(4)
-// on all supported platforms, only the last is guaranteed by the spec.
+// SpiderMonkey has isLockFree(1), isLockFree(2), isLockFree(4) on all
+// supported platforms, only the last is guaranteed by the spec.
 
 var sizes   = [    1,     2,     3,     4,     5,     6,     7,  8,
                    9,    10,    11,    12];
-var answers = [ true,  true, false,  true, false, false, false, true,
+var answers = [ true,  true, false,  true, false, false, false, false,
 	       false, false, false, false];
 
 function testIsLockFree() {
@@ -402,7 +402,7 @@ function testIsLockFree() {
     assertEq(Atomics.isLockFree(5), false);
     assertEq(Atomics.isLockFree(6), false);
     assertEq(Atomics.isLockFree(7), false);
-    assertEq(Atomics.isLockFree(8), true);
+    assertEq(Atomics.isLockFree(8), false);
     assertEq(Atomics.isLockFree(9), false);
     assertEq(Atomics.isLockFree(10), false);
     assertEq(Atomics.isLockFree(11), false);
@@ -454,8 +454,8 @@ function testUint8Clamped(sab) {
     assertEq(thrown, true);
 }
 
-function testWeirdIndices(SharedOrUnsharedArrayBuffer) {
-    var a = new Int8Array(new SharedOrUnsharedArrayBuffer(16));
+function testWeirdIndices() {
+    var a = new Int8Array(new SharedArrayBuffer(16));
     a[3] = 10;
     assertEq(Atomics.load(a, "0x03"), 10);
     assertEq(Atomics.load(a, {valueOf: () => 3}), 10);
@@ -470,11 +470,11 @@ function isLittleEndian() {
     return is_little;
 }
 
-function runTests(SharedOrUnsharedArrayBuffer) {
+function runTests() {
     var is_little = isLittleEndian();
 
     // Currently the SharedArrayBuffer needs to be a multiple of 4K bytes in size.
-    var sab = new SharedOrUnsharedArrayBuffer(4096);
+    var sab = new SharedArrayBuffer(4096);
 
     // Test that two arrays created on the same storage alias
     var t1 = new Int8Array(sab);
@@ -550,15 +550,14 @@ function runTests(SharedOrUnsharedArrayBuffer) {
     testUint8Clamped(sab);
 
     // Misc ad-hoc tests
-    adHocExchange(SharedOrUnsharedArrayBuffer);
+    adHocExchange();
 
     // Misc
     testIsLockFree();
     testIsLockFree2();
-    testWeirdIndices(SharedOrUnsharedArrayBuffer);
+    testWeirdIndices();
 
     assertEq(Atomics[Symbol.toStringTag], "Atomics");
 }
 
-runTests(SharedArrayBuffer);
-runTests(ArrayBuffer);
+runTests();

@@ -21,15 +21,18 @@ testWithTypedArrayConstructors(function(TA) {
   var loops = 0;
   var sample = new TA(2);
 
-  sample.map(function() {
-    if (loops === 0) {
+  assert.throws(TypeError, function() {
+    sample.map(function() {
+      if (loops === 1) {
+        throw new Test262Error("callbackfn called twice");
+      }
       $DETACHBUFFER(sample.buffer);
-    }
-    loops++;
-    return true;
+      loops++;
+      return 0;
+    });
   });
 
-  assert.sameValue(loops, 2);
+  assert.sameValue(loops, 1, "callbackfn called only once");
 });
 
 reportCompare(0, 0);

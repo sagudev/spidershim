@@ -276,12 +276,9 @@ class UniquePtr {
     return *this;
   }
 
-  std::add_lvalue_reference_t<T> operator*() const {
-    MOZ_ASSERT(get(), "dereferencing a UniquePtr containing nullptr with *");
-    return *get();
-  }
+  std::add_lvalue_reference_t<T> operator*() const { return *get(); }
   Pointer operator->() const {
-    MOZ_ASSERT(get(), "dereferencing a UniquePtr containing nullptr with ->");
+    MOZ_ASSERT(get(), "dereferencing a UniquePtr containing nullptr");
     return get();
   }
 
@@ -292,7 +289,7 @@ class UniquePtr {
   DeleterType& get_deleter() { return del(); }
   const DeleterType& get_deleter() const { return del(); }
 
-  [[nodiscard]] Pointer release() {
+  MOZ_MUST_USE Pointer release() {
     Pointer p = ptr();
     ptr() = nullptr;
     return p;
@@ -403,7 +400,7 @@ class UniquePtr<T[], D> {
   DeleterType& get_deleter() { return mTuple.second(); }
   const DeleterType& get_deleter() const { return mTuple.second(); }
 
-  [[nodiscard]] Pointer release() {
+  MOZ_MUST_USE Pointer release() {
     Pointer p = mTuple.first();
     mTuple.first() = nullptr;
     return p;

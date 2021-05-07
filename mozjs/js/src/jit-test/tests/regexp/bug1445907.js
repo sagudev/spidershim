@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmDebuggingEnabled()
+// |jit-test| skip-if: !wasmIsSupported()
 
 // On ARM64, we failed to save x28 properly when generating code for the regexp
 // matcher.

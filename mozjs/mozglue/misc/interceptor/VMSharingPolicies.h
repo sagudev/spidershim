@@ -185,10 +185,18 @@ class VMSharingPolicyUnique : public MMPolicy {
 namespace mozilla {
 namespace interceptor {
 
+template <typename MMPolicy, bool Dummy>
+class VMSharingPolicyShared;
+
 // We only support this policy for in-proc MMPolicy.
-class MOZ_TRIVIAL_CTOR_DTOR VMSharingPolicyShared : public MMPolicyInProcess {
+// Dummy is not actually needed for the implementation, but we need this
+// to be a partial specialization so that its statics are treated as inlines
+// (At least until we have C++17 enabled by default)
+template <bool Dummy>
+class MOZ_TRIVIAL_CTOR_DTOR VMSharingPolicyShared<MMPolicyInProcess, Dummy>
+    : public MMPolicyInProcess {
   typedef VMSharingPolicyUnique<MMPolicyInProcess> UniquePolicyT;
-  typedef VMSharingPolicyShared ThisType;
+  typedef VMSharingPolicyShared<MMPolicyInProcess, Dummy> ThisType;
 
  public:
   using PoolType = TrampolinePool<ThisType, UniquePolicyT::PoolType>;
@@ -275,9 +283,16 @@ class MOZ_TRIVIAL_CTOR_DTOR VMSharingPolicyShared : public MMPolicyInProcess {
   template <typename VMPolicyT, typename InnerT>
   friend class TrampolinePool;
 
-  inline static RangeMap<MMPolicyInProcess> sVMMap;
-  inline static CRITICAL_SECTION sCS;
+  static RangeMap<MMPolicyInProcess> sVMMap;
+  static CRITICAL_SECTION sCS;
 };
+
+template <bool Dummy>
+RangeMap<MMPolicyInProcess>
+    VMSharingPolicyShared<MMPolicyInProcess, Dummy>::sVMMap;
+
+template <bool Dummy>
+CRITICAL_SECTION VMSharingPolicyShared<MMPolicyInProcess, Dummy>::sCS;
 
 }  // namespace interceptor
 }  // namespace mozilla

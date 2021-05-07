@@ -4,6 +4,7 @@
 //! The only difference from the original is that calls to `recurse` are executed in parallel using
 //! `rayon_core::join`.
 
+use rayon_core;
 use std::cmp;
 use std::mem;
 use std::ptr;
@@ -255,14 +256,14 @@ where
     let mut block_l = BLOCK;
     let mut start_l = ptr::null_mut();
     let mut end_l = ptr::null_mut();
-    let mut offsets_l = [0u8; BLOCK];
+    let mut offsets_l: [u8; BLOCK] = unsafe { mem::uninitialized() };
 
     // The current block on the right side (from `r.offset(-block_r)` to `r`).
     let mut r = unsafe { l.add(v.len()) };
     let mut block_r = BLOCK;
     let mut start_r = ptr::null_mut();
     let mut end_r = ptr::null_mut();
-    let mut offsets_r = [0u8; BLOCK];
+    let mut offsets_r: [u8; BLOCK] = unsafe { mem::uninitialized() };
 
     // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
     fn width<T>(l: *mut T, r: *mut T) -> usize {
@@ -766,7 +767,7 @@ mod tests {
 
     #[test]
     fn test_heapsort() {
-        let rng = thread_rng();
+        let mut rng = thread_rng();
 
         for len in (0..25).chain(500..501) {
             for &modulus in &[5, 10, 100] {

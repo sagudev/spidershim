@@ -1,3 +1,5 @@
+// |reftest| skip-if(release_or_beta)
+
 // Test assignment to const and function name bindings. The latter is kind of a
 // const binding, but only throws in strict mode.
 

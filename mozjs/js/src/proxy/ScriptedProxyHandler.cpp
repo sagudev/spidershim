@@ -9,9 +9,8 @@
 #include "jsapi.h"
 
 #include "js/CharacterEncoding.h"
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/PropertyDescriptor.h"    // JS::FromPropertyDescriptor
-#include "vm/EqualityOperations.h"    // js::SameValue
+#include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor
+#include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/PlainObject.h"  // js::PlainObject
@@ -792,7 +791,7 @@ static bool CreateFilteredListFromArrayLike(JSContext* cx, HandleValue v,
       return false;
     }
 
-    if (!PrimitiveValueToId<CanGC>(cx, next, &id)) {
+    if (!ValueToId<CanGC>(cx, next, &id)) {
       return false;
     }
 
@@ -907,7 +906,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
 
   // Step 17.
   if (extensibleTarget && targetNonconfigurableKeys.empty()) {
-    return props.appendAll(std::move(trapResult));
+    return props.appendAll(trapResult);
   }
 
   // Step 19.
@@ -927,7 +926,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
 
   // Step 20.
   if (extensibleTarget) {
-    return props.appendAll(std::move(trapResult));
+    return props.appendAll(trapResult);
   }
 
   // Step 21.
@@ -953,7 +952,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
   }
 
   // Step 23.
-  return props.appendAll(std::move(trapResult));
+  return props.appendAll(trapResult);
 }
 
 // ES8 rev 0c1bd3004329336774cbc90de727cd0cf5f11e93

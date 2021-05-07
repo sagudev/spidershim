@@ -48,14 +48,18 @@ info: |
     Result: Throw a TypeError Exception
 
 includes: [testTypedArray.js]
-features: [align-detached-buffer-semantics-with-web-reality, BigInt, TypedArray]
+features: [BigInt, TypedArray]
 ---*/
-testWithTypedArrayConstructors(function(TA) {
-  var typedArray = new TA(1);
 
-  assert.throws(TypeError, function() {
-    typedArray[0] = 1n;
-  }, '`typedArray[0] = 1n` throws TypeError');
-});
+var typedArray;
+
+testWithTypedArrayConstructors(function(TA) {
+
+    typedArray = new TA(1);
+    assert.throws(TypeError, function() {
+      typedArray[0] = 1n;
+    });
+  });
+
 
 reportCompare(0, 0);

@@ -7,8 +7,6 @@
 #include "mozilla/EnumSet.h"
 #include "mozilla/Vector.h"
 
-#include <type_traits>
-
 using namespace mozilla;
 
 enum SeaBird {
@@ -80,8 +78,6 @@ class EnumSetSuite {
                   "EnumSet should be no bigger than the enum by default");
     static_assert(sizeof(EnumSet<SmallEnum, uint32_t>) == sizeof(uint32_t),
                   "EnumSet should be able to have its size overriden.");
-    static_assert(std::is_trivially_copyable_v<EnumSet<SmallEnum>>,
-                  "EnumSet should be lightweight outside of debug.");
 #endif
   }
 

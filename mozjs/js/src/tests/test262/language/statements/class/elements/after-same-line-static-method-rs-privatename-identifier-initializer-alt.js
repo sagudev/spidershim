@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-fields) skip-if(!xulRuntime.shell) -- requires shell-options
+// |reftest| skip -- class-fields-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/rs-privatename-identifier-initializer-alt.case
 // - src/class-elements/productions/cls-decl-after-same-line-static-method.template

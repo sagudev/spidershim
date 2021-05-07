@@ -1,7 +1,6 @@
 use crate::cursor::{Cursor, FuncCursor};
 use crate::dominator_tree::DominatorTree;
-use crate::inst_predicates::is_safepoint;
-use crate::ir::{Function, InstBuilder};
+use crate::ir::{Function, InstBuilder, InstructionData, Opcode, TrapCode};
 use crate::isa::TargetIsa;
 use crate::regalloc::live_value_tracker::LiveValueTracker;
 use crate::regalloc::liveness::Liveness;
@@ -32,9 +31,9 @@ fn insert_and_encode_safepoint<'f>(
     }
 }
 
-// The emit_stack_maps() function analyzes each instruction to retrieve the liveness of
+// The emit_stackmaps() function analyzes each instruction to retrieve the liveness of
 // the defs and operands by traversing a function's blocks in layout order.
-pub fn emit_stack_maps(
+pub fn emit_stackmaps(
     func: &mut Function,
     domtree: &DominatorTree,
     liveness: &Liveness,
@@ -52,8 +51,16 @@ pub fn emit_stack_maps(
         pos.goto_top(block);
 
         while let Some(inst) = pos.next_inst() {
-            if is_safepoint(&pos.func, inst) {
+            if let InstructionData::Trap {
+                code: TrapCode::Interrupt,
+                ..
+            } = &pos.func.dfg[inst]
+            {
                 insert_and_encode_safepoint(&mut pos, tracker, isa);
+            } else if pos.func.dfg[inst].opcode().is_call() {
+                insert_and_encode_safepoint(&mut pos, tracker, isa);
+            } else if pos.func.dfg[inst].opcode() == Opcode::Safepoint {
+                panic!("safepoint instruction can only be used by the compiler!");
             }
 
             // Process the instruction and get rid of dead values.

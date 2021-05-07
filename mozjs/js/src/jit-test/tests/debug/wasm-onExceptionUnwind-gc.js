@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmDebuggingEnabled()
+// |jit-test| skip-if: !wasmDebuggingIsSupported()
 
 var sandbox = newGlobal({newCompartment: true});
 var dbg = new Debugger(sandbox);

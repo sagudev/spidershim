@@ -49,9 +49,9 @@ class FutexWaiter;
 class SharedArrayRawBuffer {
  private:
   mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire> refcount_;
-  mozilla::Atomic<size_t, mozilla::SequentiallyConsistent> length_;
+  mozilla::Atomic<uint32_t, mozilla::SequentiallyConsistent> length_;
   Mutex growLock_;
-  uint64_t maxSize_;
+  uint32_t maxSize_;
   size_t mappedSize_;  // Does not include the page for the header
   bool preparedForWasm_;
 
@@ -66,10 +66,10 @@ class SharedArrayRawBuffer {
   }
 
  protected:
-  SharedArrayRawBuffer(uint8_t* buffer, BufferSize length, uint64_t maxSize,
+  SharedArrayRawBuffer(uint8_t* buffer, uint32_t length, uint32_t maxSize,
                        size_t mappedSize, bool preparedForWasm)
       : refcount_(1),
-        length_(length.get()),
+        length_(length),
         growLock_(mutexid::SharedArrayGrow),
         maxSize_(maxSize),
         mappedSize_(mappedSize),
@@ -94,7 +94,7 @@ class SharedArrayRawBuffer {
 
   // max must be Something for wasm, Nothing for other uses
   static SharedArrayRawBuffer* Allocate(
-      BufferSize length, const mozilla::Maybe<uint64_t>& maxSize,
+      uint32_t length, const mozilla::Maybe<uint32_t>& maxSize,
       const mozilla::Maybe<size_t>& mappedSize);
 
   // This may be called from multiple threads.  The caller must take
@@ -116,21 +116,21 @@ class SharedArrayRawBuffer {
         dataPtr - sizeof(SharedArrayRawBuffer));
   }
 
-  BufferSize volatileByteLength() const { return BufferSize(length_); }
+  uint32_t volatileByteLength() const { return length_; }
 
-  uint64_t maxSize() const { return maxSize_; }
+  uint32_t maxSize() const { return maxSize_; }
 
   size_t mappedSize() const { return mappedSize_; }
 
   bool isWasm() const { return preparedForWasm_; }
 
-  void tryGrowMaxSizeInPlace(uint64_t deltaMaxSize);
+  void tryGrowMaxSizeInPlace(uint32_t deltaMaxSize);
 
-  bool wasmGrowToSizeInPlace(const Lock&, BufferSize newLength);
+  bool wasmGrowToSizeInPlace(const Lock&, uint32_t newLength);
 
   uint32_t refcount() const { return refcount_; }
 
-  [[nodiscard]] bool addReference();
+  MOZ_MUST_USE bool addReference();
   void dropReference();
 
   static int32_t liveBuffers();
@@ -169,9 +169,6 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared {
   // greater than the object's length.
   static const uint8_t LENGTH_SLOT = 1;
 
-  static_assert(LENGTH_SLOT == ArrayBufferObject::BYTE_LENGTH_SLOT,
-                "JIT code assumes the same slot is used for the length");
-
   static const uint8_t RESERVED_SLOTS = 2;
 
   static const JSClass class_;
@@ -181,19 +178,15 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   static bool class_constructor(JSContext* cx, unsigned argc, Value* vp);
 
-  static bool isOriginalByteLengthGetter(Native native) {
-    return native == byteLengthGetter;
-  }
-
   // Create a SharedArrayBufferObject with a new SharedArrayRawBuffer.
-  static SharedArrayBufferObject* New(JSContext* cx, BufferSize length,
+  static SharedArrayBufferObject* New(JSContext* cx, uint32_t length,
                                       HandleObject proto = nullptr);
 
   // Create a SharedArrayBufferObject using an existing SharedArrayRawBuffer,
   // recording the given length in the SharedArrayBufferObject.
   static SharedArrayBufferObject* New(JSContext* cx,
                                       SharedArrayRawBuffer* buffer,
-                                      BufferSize length,
+                                      uint32_t length,
                                       HandleObject proto = nullptr);
 
   static void Finalize(JSFreeOp* fop, JSObject* obj);
@@ -203,9 +196,9 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared {
                                      JS::ClassInfo* info);
 
   static void copyData(Handle<SharedArrayBufferObject*> toBuffer,
-                       size_t toIndex,
+                       uint32_t toIndex,
                        Handle<SharedArrayBufferObject*> fromBuffer,
-                       size_t fromIndex, size_t count);
+                       uint32_t fromIndex, uint32_t count);
 
   SharedArrayRawBuffer* rawBufferObject() const;
 
@@ -219,8 +212,8 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared {
     return dataPointerShared().asValue();
   }
 
-  BufferSize byteLength() const {
-    return BufferSize(size_t(getFixedSlot(LENGTH_SLOT).toPrivate()));
+  uint32_t byteLength() const {
+    return getReservedSlot(LENGTH_SLOT).toPrivateUint32();
   }
 
   bool isWasm() const { return rawBufferObject()->isWasm(); }
@@ -234,19 +227,25 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared {
   // Assumes ownership of a reference to |buffer| even in case of failure,
   // i.e. on failure |buffer->dropReference()| is performed.
   static SharedArrayBufferObject* createFromNewRawBuffer(
-      JSContext* cx, SharedArrayRawBuffer* buffer, BufferSize initialSize);
+      JSContext* cx, SharedArrayRawBuffer* buffer, uint32_t initialSize);
 
-  mozilla::Maybe<uint64_t> wasmMaxSize() const {
+  mozilla::Maybe<uint32_t> wasmMaxSize() const {
     return mozilla::Some(rawBufferObject()->maxSize());
   }
 
   size_t wasmMappedSize() const { return rawBufferObject()->mappedSize(); }
 
  private:
-  [[nodiscard]] bool acceptRawBuffer(SharedArrayRawBuffer* buffer,
-                                     BufferSize length);
+  MOZ_MUST_USE bool acceptRawBuffer(SharedArrayRawBuffer* buffer,
+                                    uint32_t length);
   void dropRawBuffer();
 };
+
+bool IsSharedArrayBuffer(HandleValue v);
+bool IsSharedArrayBuffer(HandleObject o);
+bool IsSharedArrayBuffer(JSObject* o);
+
+SharedArrayBufferObject& AsSharedArrayBuffer(HandleObject o);
 
 using RootedSharedArrayBufferObject = Rooted<SharedArrayBufferObject*>;
 using HandleSharedArrayBufferObject = Handle<SharedArrayBufferObject*>;

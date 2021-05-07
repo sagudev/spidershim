@@ -12,9 +12,8 @@ from mozilla.CellHeader import get_header_ptr
 mozilla.prettyprinters.clear_module_printers(__name__)
 
 # JS::SymbolCode enumerators
-PrivateNameSymbol = 0xFFFFFFFD
-InSymbolRegistry = 0xFFFFFFFE
-UniqueSymbol = 0xFFFFFFFF
+InSymbolRegistry = 0xfffffffe
+UniqueSymbol = 0xffffffff
 
 
 @ptr_pretty_printer("JS::Symbol")
@@ -24,14 +23,13 @@ class JSSymbolPtr(mozilla.prettyprinters.Pointer):
         self.value = value
 
     def to_string(self):
-        code = int(self.value["code_"]) & 0xFFFFFFFF
-        desc = str(get_header_ptr(self.value, self.cache.JSString_ptr_t))
+        code = int(self.value['code_']) & 0xffffffff
+        desc = str(get_header_ptr(self.value['headerAndDescription_'],
+                                  self.cache.JSString_ptr_t))
         if code == InSymbolRegistry:
             return "Symbol.for({})".format(desc)
         elif code == UniqueSymbol:
             return "Symbol({})".format(desc)
-        elif code == PrivateNameSymbol:
-            return "#{}".format(desc)
         else:
             # Well-known symbol. Strip off the quotes added by the JSString *
             # pretty-printer.

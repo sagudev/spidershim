@@ -25,7 +25,7 @@ impl<I, P> Filter<I, P>
 where
     I: ParallelIterator,
 {
-    /// Creates a new `Filter` iterator.
+    /// Create a new `Filter` iterator.
     pub(super) fn new(base: I, filter_op: P) -> Self {
         Filter { base, filter_op }
     }
@@ -50,7 +50,7 @@ where
 /// ////////////////////////////////////////////////////////////////////////
 /// Consumer implementation
 
-struct FilterConsumer<'p, C, P> {
+struct FilterConsumer<'p, C, P: 'p> {
     base: C,
     filter_op: &'p P,
 }
@@ -105,7 +105,7 @@ where
     }
 }
 
-struct FilterFolder<'p, C, P> {
+struct FilterFolder<'p, C, P: 'p> {
     base: C,
     filter_op: &'p P,
 }

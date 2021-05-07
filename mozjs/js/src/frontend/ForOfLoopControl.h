@@ -7,7 +7,8 @@
 #ifndef frontend_ForOfLoopControl_h
 #define frontend_ForOfLoopControl_h
 
-#include "mozilla/Maybe.h"  // mozilla::Maybe
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+#include "mozilla/Maybe.h"       // mozilla::Maybe
 
 #include <stdint.h>  // int32_t, uint32_t
 
@@ -15,8 +16,8 @@
 
 #include "frontend/BytecodeControlStructures.h"  // NestableControl, LoopControl
 #include "frontend/BytecodeOffset.h"             // BytecodeOffset
-#include "frontend/IteratorKind.h"               // IteratorKind
 #include "frontend/TryEmitter.h"                 // TryEmitter
+#include "vm/Iteration.h"                        // IteratorKind
 
 namespace js {
 namespace frontend {
@@ -72,17 +73,17 @@ class ForOfLoopControl : public LoopControl {
   ForOfLoopControl(BytecodeEmitter* bce, int32_t iterDepth,
                    bool allowSelfHosted, IteratorKind iterKind);
 
-  [[nodiscard]] bool emitBeginCodeNeedingIteratorClose(BytecodeEmitter* bce);
-  [[nodiscard]] bool emitEndCodeNeedingIteratorClose(BytecodeEmitter* bce);
+  MOZ_MUST_USE bool emitBeginCodeNeedingIteratorClose(BytecodeEmitter* bce);
+  MOZ_MUST_USE bool emitEndCodeNeedingIteratorClose(BytecodeEmitter* bce);
 
-  [[nodiscard]] bool emitIteratorCloseInInnermostScopeWithTryNote(
+  MOZ_MUST_USE bool emitIteratorCloseInInnermostScopeWithTryNote(
       BytecodeEmitter* bce,
       CompletionKind completionKind = CompletionKind::Normal);
-  [[nodiscard]] bool emitIteratorCloseInScope(
+  MOZ_MUST_USE bool emitIteratorCloseInScope(
       BytecodeEmitter* bce, EmitterScope& currentScope,
       CompletionKind completionKind = CompletionKind::Normal);
 
-  [[nodiscard]] bool emitPrepareForNonLocalJumpFromScope(
+  MOZ_MUST_USE bool emitPrepareForNonLocalJumpFromScope(
       BytecodeEmitter* bce, EmitterScope& currentScope, bool isTarget,
       BytecodeOffset* tryNoteStart);
 };

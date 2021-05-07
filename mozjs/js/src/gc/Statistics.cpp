@@ -6,6 +6,7 @@
 
 #include "gc/Statistics.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/TimeStamp.h"
@@ -18,7 +19,6 @@
 #include "debugger/DebugAPI.h"
 #include "gc/GC.h"
 #include "gc/Memory.h"
-#include "js/friend/UsageStatistics.h"  // JS_TELEMETRY_*
 #include "util/Text.h"
 #include "vm/HelperThreads.h"
 #include "vm/Runtime.h"
@@ -83,10 +83,10 @@ JS_PUBLIC_API bool JS::InternalGCReason(JS::GCReason reason) {
   return reason < JS::GCReason::FIRST_FIREFOX_REASON;
 }
 
-const char* js::gcstats::ExplainAbortReason(GCAbortReason reason) {
+const char* js::gcstats::ExplainAbortReason(gc::AbortReason reason) {
   switch (reason) {
 #define SWITCH_REASON(name, _) \
-  case GCAbortReason::name:    \
+  case gc::AbortReason::name:  \
     return #name;
     GC_ABORT_REASONS(SWITCH_REASON)
 
@@ -133,7 +133,6 @@ static FILE* MaybeOpenFileFromEnv(const char* env) {
 struct PhaseKindInfo {
   Phase firstPhase;
   uint8_t telemetryBucket;
-  const char* name;
 };
 
 // PhaseInfo objects form a tree.
@@ -202,14 +201,6 @@ static Phase LookupPhaseWithParent(PhaseKind phaseKind, Phase parentPhase) {
   return Phase::NONE;
 }
 
-static const char* PhaseKindName(PhaseKind kind) {
-  if (kind == PhaseKind::NONE) {
-    return "NONE";
-  }
-
-  return phaseKinds[kind].name;
-}
-
 Phase Statistics::lookupChildPhase(PhaseKind phaseKind) const {
   if (phaseKind == PhaseKind::IMPLICIT_SUSPENSION) {
     return Phase::IMPLICIT_SUSPENSION;
@@ -226,8 +217,8 @@ Phase Statistics::lookupChildPhase(PhaseKind phaseKind) const {
 
   if (phase == Phase::NONE) {
     MOZ_CRASH_UNSAFE_PRINTF(
-        "Child phase kind %s not found under current phase kind %s",
-        PhaseKindName(phaseKind), PhaseKindName(currentPhaseKind()));
+        "Child phase kind %u not found under current phase kind %u",
+        unsigned(phaseKind), unsigned(currentPhaseKind()));
   }
 
   return phase;
@@ -295,8 +286,8 @@ static UniqueChars Join(const FragmentVector& fragments,
   return UniqueChars(joined);
 }
 
-static TimeDuration SumChildTimes(Phase phase,
-                                  const Statistics::PhaseTimes& phaseTimes) {
+static TimeDuration SumChildTimes(
+    Phase phase, const Statistics::PhaseTimeTable& phaseTimes) {
   TimeDuration total = 0;
   for (phase = phases[phase].firstChild; phase != Phase::NONE;
        phase = phases[phase].nextSibling) {
@@ -391,7 +382,7 @@ UniqueChars Statistics::formatCompactSummaryMessage() const {
 }
 
 UniqueChars Statistics::formatCompactSlicePhaseTimes(
-    const PhaseTimes& phaseTimes) const {
+    const PhaseTimeTable& phaseTimes) const {
   static const TimeDuration MaxUnaccountedTime =
       TimeDuration::FromMicroseconds(100);
 
@@ -531,7 +522,7 @@ static bool IncludePhase(TimeDuration duration) {
 }
 
 UniqueChars Statistics::formatDetailedPhaseTimes(
-    const PhaseTimes& phaseTimes) const {
+    const PhaseTimeTable& phaseTimes) const {
   static const TimeDuration MaxUnaccountedChildTime =
       TimeDuration::FromMicroseconds(50);
 
@@ -612,7 +603,7 @@ UniqueChars Statistics::renderNurseryJson() const {
 }
 
 #ifdef DEBUG
-void Statistics::log(const char* fmt, ...) {
+void Statistics::writeLogMessage(const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
   if (gcDebugFile) {
@@ -626,7 +617,8 @@ void Statistics::log(const char* fmt, ...) {
 }
 #endif
 
-UniqueChars Statistics::renderJsonMessage() const {
+UniqueChars Statistics::renderJsonMessage(uint64_t timestamp,
+                                          Statistics::JSONUse use) const {
   /*
    * The format of the JSON message is specified by the GCMajorMarkerPayload
    * type in profiler.firefox.com
@@ -646,10 +638,18 @@ UniqueChars Statistics::renderJsonMessage() const {
   JSONPrinter json(printer);
 
   json.beginObject();
-  json.property("status", "completed");
-  formatJsonDescription(json);
+  json.property("status", "completed");         // JSON Key #1
+  formatJsonDescription(timestamp, json, use);  // #2-22
 
-  json.beginObjectProperty("totals");
+  if (use == Statistics::JSONUse::TELEMETRY) {
+    json.beginListProperty("slices_list");  // #23
+    for (unsigned i = 0; i < slices_.length(); i++) {
+      formatJsonSlice(i, json);
+    }
+    json.endList();
+  }
+
+  json.beginObjectProperty("totals");  // #24
   formatJsonPhaseTimes(phaseTimes, json);
   json.endObject();
 
@@ -658,61 +658,84 @@ UniqueChars Statistics::renderJsonMessage() const {
   return printer.release();
 }
 
-void Statistics::formatJsonDescription(JSONPrinter& json) const {
+void Statistics::formatJsonDescription(uint64_t timestamp, JSONPrinter& json,
+                                       JSONUse use) const {
   // If you change JSON properties here, please update:
+  // Telemetry ping code:
+  //   toolkit/components/telemetry/other/GCTelemetry.jsm
+  // Telemetry documentation:
+  //   toolkit/components/telemetry/docs/data/main-ping.rst
+  // Telemetry tests:
+  //   toolkit/components/telemetry/tests/browser/browser_TelemetryGC.js,
+  //   toolkit/components/telemetry/tests/unit/test_TelemetryGC.js
   // Firefox Profiler:
   //   https://github.com/firefox-devtools/profiler
+  //
+  // Please also number each property to help correctly maintain the Telemetry
+  // ping code
+
+  json.property("timestamp", timestamp);  // # JSON Key #2
 
   TimeDuration total, longest;
   gcDuration(&total, &longest);
-  json.property("max_pause", longest, JSONPrinter::MILLISECONDS);
-  json.property("total_time", total, JSONPrinter::MILLISECONDS);
+  json.property("max_pause", longest, JSONPrinter::MILLISECONDS);  // #3
+  json.property("total_time", total, JSONPrinter::MILLISECONDS);   // #4
   // We might be able to omit reason if profiler.firefox.com was able to retrive
   // it from the first slice.  But it doesn't do this yet.
-  json.property("reason", ExplainGCReason(slices_[0].reason));
-  json.property("zones_collected", zoneStats.collectedZoneCount);
-  json.property("total_zones", zoneStats.zoneCount);
-  json.property("total_compartments", zoneStats.compartmentCount);
-  json.property("minor_gcs", getCount(COUNT_MINOR_GC));
+  json.property("reason", ExplainGCReason(slices_[0].reason));      // #5
+  json.property("zones_collected", zoneStats.collectedZoneCount);   // #6
+  json.property("total_zones", zoneStats.zoneCount);                // #7
+  json.property("total_compartments", zoneStats.compartmentCount);  // #8
+  json.property("minor_gcs", getCount(COUNT_MINOR_GC));             // #9
   uint32_t storebufferOverflows = getCount(COUNT_STOREBUFFER_OVERFLOW);
   if (storebufferOverflows) {
-    json.property("store_buffer_overflows", storebufferOverflows);
+    json.property("store_buffer_overflows", storebufferOverflows);  // #10
   }
-  json.property("slices", slices_.length());
+  json.property("slices", slices_.length());  // #11
 
   const double mmu20 = computeMMU(TimeDuration::FromMilliseconds(20));
   const double mmu50 = computeMMU(TimeDuration::FromMilliseconds(50));
-  json.property("mmu_20ms", int(mmu20 * 100));
-  json.property("mmu_50ms", int(mmu50 * 100));
+  json.property("mmu_20ms", int(mmu20 * 100));  // #12
+  json.property("mmu_50ms", int(mmu50 * 100));  // #13
 
   TimeDuration sccTotal, sccLongest;
   sccDurations(&sccTotal, &sccLongest);
-  json.property("scc_sweep_total", sccTotal, JSONPrinter::MILLISECONDS);
-  json.property("scc_sweep_max_pause", sccLongest, JSONPrinter::MILLISECONDS);
+  json.property("scc_sweep_total", sccTotal, JSONPrinter::MILLISECONDS);  // #14
+  json.property("scc_sweep_max_pause", sccLongest,
+                JSONPrinter::MILLISECONDS);  // #15
 
-  if (nonincrementalReason_ != GCAbortReason::None) {
+  if (nonincrementalReason_ != AbortReason::None) {
     json.property("nonincremental_reason",
-                  ExplainAbortReason(nonincrementalReason_));
+                  ExplainAbortReason(nonincrementalReason_));  // #16
   }
-  json.property("allocated_bytes", preTotalHeapBytes);
-  json.property("post_heap_size", postTotalHeapBytes);
+  json.property("allocated_bytes", preTotalHeapBytes);  // #17
+  if (use == Statistics::JSONUse::PROFILER) {
+    json.property("post_heap_size", postTotalHeapBytes);
+  }
 
   uint32_t addedChunks = getCount(COUNT_NEW_CHUNK);
   if (addedChunks) {
-    json.property("added_chunks", addedChunks);
+    json.property("added_chunks", addedChunks);  // #18
   }
   uint32_t removedChunks = getCount(COUNT_DESTROY_CHUNK);
   if (removedChunks) {
-    json.property("removed_chunks", removedChunks);
+    json.property("removed_chunks", removedChunks);  // #19
   }
-  json.property("major_gc_number", startingMajorGCNumber);
-  json.property("minor_gc_number", startingMinorGCNumber);
-  json.property("slice_number", startingSliceNumber);
+  json.property("major_gc_number", startingMajorGCNumber);  // #20
+  json.property("minor_gc_number", startingMinorGCNumber);  // #21
+  json.property("slice_number", startingSliceNumber);       // #22
 }
 
 void Statistics::formatJsonSliceDescription(unsigned i, const SliceData& slice,
                                             JSONPrinter& json) const {
   // If you change JSON properties here, please update:
+  // Telemetry ping code:
+  //   toolkit/components/telemetry/other/GCTelemetry.jsm
+  // Telemetry documentation:
+  //   toolkit/components/telemetry/docs/data/main-ping.rst
+  // Telemetry tests:
+  //   toolkit/components/telemetry/tests/browser/browser_TelemetryGC.js,
+  //   toolkit/components/telemetry/tests/unit/test_TelemetryGC.js
   // Firefox Profiler:
   //   https://github.com/firefox-devtools/profiler
   //
@@ -720,27 +743,27 @@ void Statistics::formatJsonSliceDescription(unsigned i, const SliceData& slice,
   slice.budget.describe(budgetDescription, sizeof(budgetDescription) - 1);
   TimeStamp originTime = TimeStamp::ProcessCreation();
 
-  json.property("slice", i);
-  json.property("pause", slice.duration(), JSONPrinter::MILLISECONDS);
-  json.property("reason", ExplainGCReason(slice.reason));
-  json.property("initial_state", gc::StateName(slice.initialState));
-  json.property("final_state", gc::StateName(slice.finalState));
-  json.property("budget", budgetDescription);
-  json.property("major_gc_number", startingMajorGCNumber);
+  json.property("slice", i);  // JSON Property #1
+  json.property("pause", slice.duration(), JSONPrinter::MILLISECONDS);  // #2
+  json.property("reason", ExplainGCReason(slice.reason));               // #3
+  json.property("initial_state", gc::StateName(slice.initialState));    // #4
+  json.property("final_state", gc::StateName(slice.finalState));        // #5
+  json.property("budget", budgetDescription);                           // #6
+  json.property("major_gc_number", startingMajorGCNumber);              // #7
   if (slice.trigger) {
     Trigger trigger = slice.trigger.value();
-    json.property("trigger_amount", trigger.amount);
-    json.property("trigger_threshold", trigger.threshold);
+    json.property("trigger_amount", trigger.amount);        // #8
+    json.property("trigger_threshold", trigger.threshold);  // #9
   }
   int64_t numFaults = slice.endFaults - slice.startFaults;
   if (numFaults != 0) {
-    json.property("page_faults", numFaults);
+    json.property("page_faults", numFaults);  // #10
   }
   json.property("start_timestamp", slice.start - originTime,
-                JSONPrinter::SECONDS);
+                JSONPrinter::SECONDS);  // #11
 }
 
-void Statistics::formatJsonPhaseTimes(const PhaseTimes& phaseTimes,
+void Statistics::formatJsonPhaseTimes(const PhaseTimeTable& phaseTimes,
                                       JSONPrinter& json) const {
   for (auto phase : AllPhases()) {
     TimeDuration ownTime = phaseTimes[phase];
@@ -754,8 +777,7 @@ Statistics::Statistics(GCRuntime* gc)
     : gc(gc),
       gcTimerFile(nullptr),
       gcDebugFile(nullptr),
-      nonincrementalReason_(GCAbortReason::None),
-      creationTime_(ReallyNow()),
+      nonincrementalReason_(gc::AbortReason::None),
       allocsSinceMinorGC({0, 0}),
       preTotalHeapBytes(0),
       postTotalHeapBytes(0),
@@ -882,7 +904,7 @@ TimeDuration Statistics::getMaxGCPauseSinceClear() {
 // Sum up the time for a phase, including instances of the phase with different
 // parents.
 static TimeDuration SumPhase(PhaseKind phaseKind,
-                             const Statistics::PhaseTimes& times) {
+                             const Statistics::PhaseTimeTable& times) {
   TimeDuration sum;
   for (PhaseIter phase(phaseKind); !phase.done(); phase.next()) {
     sum += times[phase];
@@ -891,8 +913,8 @@ static TimeDuration SumPhase(PhaseKind phaseKind,
 }
 
 static bool CheckSelfTime(Phase parent, Phase child,
-                          const Statistics::PhaseTimes& times,
-                          const Statistics::PhaseTimes& selfTimes,
+                          const Statistics::PhaseTimeTable& times,
+                          const Statistics::PhaseTimeTable& selfTimes,
                           TimeDuration childTime) {
   if (selfTimes[parent] < childTime) {
     fprintf(
@@ -908,7 +930,10 @@ static bool CheckSelfTime(Phase parent, Phase child,
   return true;
 }
 
-static PhaseKind FindLongestPhaseKind(const Statistics::PhaseKindTimes& times) {
+using PhaseKindTimes =
+    EnumeratedArray<PhaseKind, PhaseKind::LIMIT, TimeDuration>;
+
+static PhaseKind FindLongestPhaseKind(const PhaseKindTimes& times) {
   TimeDuration longestTime;
   PhaseKind phaseKind = PhaseKind::NONE;
   for (auto i : MajorGCPhaseKinds()) {
@@ -922,9 +947,9 @@ static PhaseKind FindLongestPhaseKind(const Statistics::PhaseKindTimes& times) {
 }
 
 static PhaseKind LongestPhaseSelfTimeInMajorGC(
-    const Statistics::PhaseTimes& times) {
+    const Statistics::PhaseTimeTable& times) {
   // Start with total times per expanded phase, including children's times.
-  Statistics::PhaseTimes selfTimes(times);
+  Statistics::PhaseTimeTable selfTimes(times);
 
   // We have the total time spent in each phase, including descendant times.
   // Loop over the children and subtract their times from their parent's self
@@ -949,9 +974,30 @@ static PhaseKind LongestPhaseSelfTimeInMajorGC(
   }
 
   // Sum expanded phases corresponding to the same phase.
-  Statistics::PhaseKindTimes phaseKindTimes;
+  PhaseKindTimes phaseKindTimes;
   for (auto i : AllPhaseKinds()) {
     phaseKindTimes[i] = SumPhase(i, selfTimes);
+  }
+
+  return FindLongestPhaseKind(phaseKindTimes);
+}
+
+static TimeDuration PhaseMax(PhaseKind phaseKind,
+                             const Statistics::PhaseTimeTable& times) {
+  TimeDuration max;
+  for (PhaseIter phase(phaseKind); !phase.done(); phase.next()) {
+    max = std::max(max, times[phase]);
+  }
+
+  return max;
+}
+
+static PhaseKind LongestParallelPhaseKind(
+    const Statistics::PhaseTimeTable& times) {
+  // Find longest time for each phase kind.
+  PhaseKindTimes phaseKindTimes;
+  for (auto i : AllPhaseKinds()) {
+    phaseKindTimes[i] = PhaseMax(i, times);
   }
 
   return FindLongestPhaseKind(phaseKindTimes);
@@ -978,7 +1024,7 @@ void Statistics::beginGC(JSGCInvocationKind kind,
   slices_.clearAndFree();
   sccTimes.clearAndFree();
   gckind = kind;
-  nonincrementalReason_ = GCAbortReason::None;
+  nonincrementalReason_ = gc::AbortReason::None;
 
   preTotalHeapBytes = gc->heapSize.bytes();
 
@@ -994,7 +1040,7 @@ void Statistics::beginGC(JSGCInvocationKind kind,
 
 void Statistics::measureInitialHeapSize() {
   MOZ_ASSERT(preCollectedHeapBytes == 0);
-  for (GCZonesIter zone(gc); !zone.done(); zone.next()) {
+  for (GCZonesIter zone(gc, WithAtoms); !zone.done(); zone.next()) {
     preCollectedHeapBytes += zone->gcHeapSize.bytes();
   }
 }
@@ -1027,14 +1073,17 @@ void Statistics::sendGCTelemetry() {
   double markRate = markCount / t(markTotal);
   runtime->addTelemetry(JS_TELEMETRY_GC_PREPARE_MS, t(prepareTotal));
   runtime->addTelemetry(JS_TELEMETRY_GC_MARK_MS, t(markTotal));
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_RATE, markRate);
   runtime->addTelemetry(JS_TELEMETRY_GC_MARK_RATE_2, markRate);
   runtime->addTelemetry(JS_TELEMETRY_GC_SWEEP_MS, t(phaseTimes[Phase::SWEEP]));
   if (gc->didCompactZones()) {
     runtime->addTelemetry(JS_TELEMETRY_GC_COMPACT_MS,
                           t(phaseTimes[Phase::COMPACT]));
   }
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_ROOTS_MS, t(markRootsTotal));
   runtime->addTelemetry(JS_TELEMETRY_GC_MARK_ROOTS_US,
                         markRootsTotal.ToMicroseconds());
+  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_GRAY_MS, t(markGrayTotal));
   runtime->addTelemetry(JS_TELEMETRY_GC_MARK_GRAY_MS_2, t(markGrayTotal));
   runtime->addTelemetry(JS_TELEMETRY_GC_MARK_WEAK_MS, t(markWeakTotal));
   runtime->addTelemetry(JS_TELEMETRY_GC_NON_INCREMENTAL, nonincremental());
@@ -1075,30 +1124,28 @@ void Statistics::sendGCTelemetry() {
     }
   }
 
-  if (!lastSlice.wasReset()) {
-    size_t bytesSurvived = 0;
-    for (ZonesIter zone(runtime, WithAtoms); !zone.done(); zone.next()) {
-      if (zone->wasCollected()) {
-        bytesSurvived += zone->gcHeapSize.retainedBytes();
-      }
+  size_t bytesSurvived = 0;
+  for (ZonesIter zone(runtime, WithAtoms); !zone.done(); zone.next()) {
+    if (zone->wasCollected()) {
+      bytesSurvived += zone->gcHeapSize.retainedBytes();
     }
+  }
 
-    MOZ_ASSERT(preCollectedHeapBytes >= bytesSurvived);
-    double survialRate =
-        100.0 * double(bytesSurvived) / double(preCollectedHeapBytes);
-    runtime->addTelemetry(JS_TELEMETRY_GC_TENURED_SURVIVAL_RATE,
-                          uint32_t(survialRate));
+  MOZ_ASSERT(preCollectedHeapBytes >= bytesSurvived);
+  double survialRate =
+      100.0 * double(bytesSurvived) / double(preCollectedHeapBytes);
+  runtime->addTelemetry(JS_TELEMETRY_GC_TENURED_SURVIVAL_RATE,
+                        uint32_t(survialRate));
 
-    // Calculate 'effectiveness' in MB / second, on main thread only for now.
-    if (!runtime->parentRuntime) {
-      size_t bytesFreed = preCollectedHeapBytes - bytesSurvived;
-      TimeDuration clampedTotal =
-          TimeDuration::Max(total, TimeDuration::FromMilliseconds(1));
-      double effectiveness =
-          (double(bytesFreed) / BYTES_PER_MB) / clampedTotal.ToSeconds();
-      runtime->addTelemetry(JS_TELEMETRY_GC_EFFECTIVENESS,
-                            uint32_t(effectiveness));
-    }
+  // Calculate 'effectiveness' in MB / second, on main thread only for now.
+  if (!runtime->parentRuntime) {
+    size_t bytesFreed = preCollectedHeapBytes - bytesSurvived;
+    TimeDuration clampedTotal =
+        TimeDuration::Max(total, TimeDuration::FromMilliseconds(1));
+    double effectiveness =
+        (double(bytesFreed) / BYTES_PER_MB) / clampedTotal.ToSeconds();
+    runtime->addTelemetry(JS_TELEMETRY_GC_EFFECTIVENESS,
+                          uint32_t(effectiveness));
   }
 }
 
@@ -1120,10 +1167,9 @@ void Statistics::endNurseryCollection(JS::GCReason reason) {
   allocsSinceMinorGC = {0, 0};
 }
 
-Statistics::SliceData::SliceData(const SliceBudget& budget,
-                                 Maybe<Trigger> trigger, JS::GCReason reason,
-                                 TimeStamp start, size_t startFaults,
-                                 gc::State initialState)
+Statistics::SliceData::SliceData(SliceBudget budget, Maybe<Trigger> trigger,
+                                 JS::GCReason reason, TimeStamp start,
+                                 size_t startFaults, gc::State initialState)
     : budget(budget),
       reason(reason),
       trigger(trigger),
@@ -1132,8 +1178,8 @@ Statistics::SliceData::SliceData(const SliceBudget& budget,
       startFaults(startFaults) {}
 
 void Statistics::beginSlice(const ZoneGCStats& zoneStats,
-                            JSGCInvocationKind gckind,
-                            const SliceBudget& budget, JS::GCReason reason) {
+                            JSGCInvocationKind gckind, SliceBudget budget,
+                            JS::GCReason reason) {
   MOZ_ASSERT(phaseStack.empty() ||
              (phaseStack.length() == 1 && phaseStack[0] == Phase::MUTATOR));
 
@@ -1176,7 +1222,7 @@ void Statistics::beginSlice(const ZoneGCStats& zoneStats,
     (*sliceCallback)(cx, JS::GC_SLICE_BEGIN, desc);
   }
 
-  log("begin slice");
+  writeLogMessage("begin slice");
 }
 
 void Statistics::endSlice() {
@@ -1189,7 +1235,7 @@ void Statistics::endSlice() {
     slice.endFaults = GetPageFaultCount();
     slice.finalState = gc->state();
 
-    log("end slice");
+    writeLogMessage("end slice");
 
     sendSliceTelemetry(slice);
 
@@ -1263,7 +1309,8 @@ void Statistics::sendSliceTelemetry(const SliceData& slice) {
   runtime->addTelemetry(JS_TELEMETRY_GC_SLICE_MS, t(sliceTime));
 
   if (slice.budget.isTimeBudget()) {
-    int64_t budget_ms = slice.budget.timeBudget();
+    int64_t budget_ms = slice.budget.timeBudget.budget;
+    runtime->addTelemetry(JS_TELEMETRY_GC_BUDGET_MS, budget_ms);
     runtime->addTelemetry(JS_TELEMETRY_GC_BUDGET_MS_2, budget_ms);
     if (IsCurrentlyAnimating(runtime->lastAnimationTime, slice.end)) {
       runtime->addTelemetry(JS_TELEMETRY_GC_ANIMATION_MS, t(sliceTime));
@@ -1279,7 +1326,7 @@ void Statistics::sendSliceTelemetry(const SliceData& slice) {
       // longest task.
       if (longest == PhaseKind::JOIN_PARALLEL_TASKS) {
         PhaseKind longestParallel =
-            FindLongestPhaseKind(slice.maxParallelTimes);
+            LongestParallelPhaseKind(slice.maxParallelTimes);
         reportLongestPhaseInMajorGC(longestParallel, JS_TELEMETRY_GC_SLOW_TASK);
       }
     }
@@ -1398,7 +1445,7 @@ void Statistics::recordPhaseBegin(Phase phase) {
 
   phaseStack.infallibleAppend(phase);
   phaseStartTimes[phase] = now;
-  log("begin: %s", phases[phase].path);
+  writeLogMessage("begin: %s", phases[phase].path);
 }
 
 void Statistics::recordPhaseEnd(Phase phase) {
@@ -1453,7 +1500,7 @@ void Statistics::recordPhaseEnd(Phase phase) {
 
 #ifdef DEBUG
   phaseEndTimes[phase] = now;
-  log("end: %s", phases[phase].path);
+  writeLogMessage("end: %s", phases[phase].path);
 #endif
 }
 
@@ -1482,7 +1529,8 @@ void Statistics::recordParallelPhase(PhaseKind phaseKind,
 
   // Record the maximum task time for each phase. Don't record times for parent
   // phases.
-  TimeDuration& time = slices_.back().maxParallelTimes[phaseKind];
+  Phase phase = lookupChildPhase(phaseKind);
+  TimeDuration& time = slices_.back().maxParallelTimes[phase];
   time = std::max(time, duration);
 }
 
@@ -1553,7 +1601,7 @@ void Statistics::printProfileHeader() {
     return;
   }
 
-  fprintf(stderr, "MajorGC: Timestamp  Reason               States FSNR ");
+  fprintf(stderr, "MajorGC:               Reason States FSNR ");
   fprintf(stderr, " %6s", "budget");
   fprintf(stderr, " %6s", "total");
 #define PRINT_PROFILE_HEADER(name, text, phase) fprintf(stderr, " %6s", text);
@@ -1575,21 +1623,20 @@ void Statistics::printSliceProfile() {
 
   maybePrintProfileHeaders();
 
-  TimeDuration ts = slice.end - creationTime();
-
   bool shrinking = gckind == GC_SHRINK;
-  bool reset = slice.resetReason != GCAbortReason::None;
-  bool nonIncremental = nonincrementalReason_ != GCAbortReason::None;
+  bool reset = slice.resetReason != AbortReason::None;
+  bool nonIncremental = nonincrementalReason_ != AbortReason::None;
   bool full = zoneStats.isFullCollection();
 
-  fprintf(stderr, "MajorGC: %10.6f %-20.20s %1d -> %1d %1s%1s%1s%1s ",
-          ts.ToSeconds(), ExplainGCReason(slice.reason),
-          int(slice.initialState), int(slice.finalState), full ? "F" : "",
-          shrinking ? "S" : "", nonIncremental ? "N" : "", reset ? "R" : "");
+  fprintf(stderr, "MajorGC: %20s %1d -> %1d %1s%1s%1s%1s ",
+          ExplainGCReason(slice.reason), int(slice.initialState),
+          int(slice.finalState), full ? "F" : "", shrinking ? "S" : "",
+          nonIncremental ? "N" : "", reset ? "R" : "");
 
   if (!nonIncremental && !slice.budget.isUnlimited() &&
       slice.budget.isTimeBudget()) {
-    fprintf(stderr, " %6" PRIi64, slice.budget.timeBudget());
+    fprintf(stderr, " %6" PRIi64,
+            static_cast<int64_t>(slice.budget.timeBudget.budget));
   } else {
     fprintf(stderr, "       ");
   }
@@ -1609,8 +1656,7 @@ void Statistics::printSliceProfile() {
 
 void Statistics::printTotalProfileTimes() {
   if (enableProfiling_) {
-    fprintf(stderr,
-            "MajorGC TOTALS: %7" PRIu64 " slices:                             ",
+    fprintf(stderr, "MajorGC TOTALS: %7" PRIu64 " slices:                  ",
             sliceCount_);
     printProfileTimes(totalTimes_);
   }

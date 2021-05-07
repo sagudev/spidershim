@@ -7,17 +7,18 @@
 #ifndef jit_mips_shared_Assembler_mips_shared_h
 #define jit_mips_shared_Assembler_mips_shared_h
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Sprintf.h"
 
 #include "jit/CompactBuffer.h"
 #include "jit/JitCode.h"
+#include "jit/JitRealm.h"
 #include "jit/JitSpewer.h"
 #include "jit/mips-shared/Architecture-mips-shared.h"
 #include "jit/shared/Assembler-shared.h"
 #include "jit/shared/IonAssemblerBuffer.h"
-#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
@@ -819,6 +820,10 @@ class AssemblerMIPSShared : public AssemblerShared {
   static Condition InvertCondition(Condition cond);
   static DoubleCondition InvertCondition(DoubleCondition cond);
 
+  void writeRelocation(BufferOffset src) {
+    jumpRelocations_.writeUnsigned(src.getOffset());
+  }
+
   // As opposed to x86/x64 version, the data relocation has to be executed
   // before to recover the pointer, and not after.
   void writeDataRelocation(ImmGCPtr ptr) {
@@ -1238,7 +1243,7 @@ class AssemblerMIPSShared : public AssemblerShared {
   void addPendingJump(BufferOffset src, ImmPtr target, RelocationKind kind) {
     enoughMemory_ &= jumps_.append(RelativePatch(src, target.value, kind));
     if (kind == RelocationKind::JITCODE) {
-      jumpRelocations_.writeUnsigned(src.getOffset());
+      writeRelocation(src);
     }
   }
 

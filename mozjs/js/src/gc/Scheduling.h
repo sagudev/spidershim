@@ -108,9 +108,9 @@
  *  Correctness reasons:
  *
  *   3) Do a GC now because correctness depends on some GC property. For
- *      example, CC_FORCED is where the embedding requires the mark bits to be
- *      set correctly. Also, EVICT_NURSERY where we need to work on the tenured
- *      heap.
+ *      example, CC_WAITING is where the embedding requires the mark bits
+ *      to be set correct. Also, EVICT_NURSERY where we need to work on the
+ *      tenured heap.
  *
  *   4) Do a GC because we are shutting down: e.g. SHUTDOWN_CC or DESTROY_*.
  *
@@ -318,7 +318,6 @@
 #include "js/HeapAPI.h"
 #include "js/SliceBudget.h"
 #include "threading/ProtectedData.h"
-#include "util/DifferentialTesting.h"
 
 namespace js {
 
@@ -390,13 +389,10 @@ static const uint32_t MinEmptyChunkCount = 1;
 static const uint32_t MaxEmptyChunkCount = 30;
 
 /* JSGC_SLICE_TIME_BUDGET_MS */
-static const int64_t DefaultTimeBudgetMS = 0;  // Unlimited by default.
+static const int64_t DefaultTimeBudgetMS = SliceBudget::UnlimitedTimeBudget;
 
-/* JSGC_INCREMENTAL_ENABLED */
-static const bool IncrementalGCEnabled = false;
-
-/* JSGC_PER_ZONE_GC_ENABLED */
-static const bool PerZoneGCEnabled = false;
+/* JSGC_MODE */
+static const JSGCMode Mode = JSGC_MODE_ZONE_INCREMENTAL;
 
 /* JSGC_COMPACTING_ENABLED */
 static const bool CompactingEnabled = true;
@@ -410,20 +406,11 @@ static const uint32_t NurseryFreeThresholdForIdleCollection = ChunkSize / 4;
 /* JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION_PERCENT */
 static const double NurseryFreeThresholdForIdleCollectionFraction = 0.25;
 
-/* JSGC_NURSERY_TIMEOUT_FOR_IDLE_COLLECTION_MS */
-static const uint32_t NurseryTimeoutForIdleCollectionMS = 5000;
-
 /* JSGC_PRETENURE_THRESHOLD */
 static const double PretenureThreshold = 0.6;
 
 /* JSGC_PRETENURE_GROUP_THRESHOLD */
 static const double PretenureGroupThreshold = 3000;
-
-/* JSGC_PRETENURE_STRING_THRESHOLD */
-static const double PretenureStringThreshold = 0.55;
-
-/* JSGC_STOP_PRETENURE_STRING_THRESHOLD */
-static const double StopPretenureStringThreshold = 0.9;
 
 /* JSGC_MIN_LAST_DITCH_GC_PERIOD */
 static const auto MinLastDitchGCPeriod = 60;  // in seconds
@@ -433,12 +420,6 @@ static const size_t MallocThresholdBase = 38 * 1024 * 1024;
 
 /* JSGC_MALLOC_GROWTH_FACTOR */
 static const double MallocGrowthFactor = 1.5;
-
-/* JSGC_HELPER_THREAD_RATIO */
-static const double HelperThreadRatio = 0.5;
-
-/* JSGC_MAX_HELPER_THREADS */
-static const size_t MaxHelperThreads = 8;
 
 }  // namespace TuningDefaults
 
@@ -544,9 +525,6 @@ class GCSchedulingTunables {
   UnprotectedData<uint32_t> nurseryFreeThresholdForIdleCollection_;
   UnprotectedData<double> nurseryFreeThresholdForIdleCollectionFraction_;
 
-  /* See JSGC_NURSERY_TIMEOUT_FOR_IDLE_COLLECTION_MS. */
-  MainThreadData<mozilla::TimeDuration> nurseryTimeoutForIdleCollection_;
-
   /*
    * JSGC_PRETENURE_THRESHOLD
    *
@@ -564,23 +542,6 @@ class GCSchedulingTunables {
    * object group are tenured, then that group will be pretenured.
    */
   UnprotectedData<uint32_t> pretenureGroupThreshold_;
-
-  /*
-   * JSGC_PRETENURE_STRING_THRESHOLD
-   *
-   * If the percentage of the tenured strings exceeds this threshold, string
-   * will be allocated in tenured heap instead. (Default is allocated in
-   * nursery.)
-   */
-  MainThreadData<double> pretenureStringThreshold_;
-
-  /*
-   * JSGC_STOP_PRETENURE_STRING_THRESHOLD
-   *
-   * If the finalization rate of the tenured strings exceeds this threshold,
-   * string will be allocated in nursery.
-   */
-  MainThreadData<double> stopPretenureStringThreshold_;
 
   /*
    * JSGC_MIN_LAST_DITCH_GC_PERIOD
@@ -640,17 +601,10 @@ class GCSchedulingTunables {
   double nurseryFreeThresholdForIdleCollectionFraction() const {
     return nurseryFreeThresholdForIdleCollectionFraction_;
   }
-  mozilla::TimeDuration nurseryTimeoutForIdleCollection() const {
-    return nurseryTimeoutForIdleCollection_;
-  }
 
   bool attemptPretenuring() const { return pretenureThreshold_ < 1.0; }
   double pretenureThreshold() const { return pretenureThreshold_; }
   uint32_t pretenureGroupThreshold() const { return pretenureGroupThreshold_; }
-  double pretenureStringThreshold() const { return pretenureStringThreshold_; }
-  double stopPretenureStringThreshold() const {
-    return stopPretenureStringThreshold_;
-  }
 
   mozilla::TimeDuration minLastDitchGCPeriod() const {
     return minLastDitchGCPeriod_;
@@ -659,8 +613,8 @@ class GCSchedulingTunables {
   size_t mallocThresholdBase() const { return mallocThresholdBase_; }
   double mallocGrowthFactor() const { return mallocGrowthFactor_; }
 
-  [[nodiscard]] bool setParameter(JSGCParamKey key, uint32_t value,
-                                  const AutoLockGC& lock);
+  MOZ_MUST_USE bool setParameter(JSGCParamKey key, uint32_t value,
+                                 const AutoLockGC& lock);
   void resetParameter(JSGCParamKey key, const AutoLockGC& lock);
 
  private:
@@ -696,18 +650,18 @@ class GCSchedulingState {
   void updateHighFrequencyMode(const mozilla::TimeStamp& lastGCTime,
                                const mozilla::TimeStamp& currentTime,
                                const GCSchedulingTunables& tunables) {
-    if (js::SupportDifferentialTesting()) {
-      return;
-    }
-
+#ifndef JS_MORE_DETERMINISTIC
     inHighFrequencyGCMode_ =
         !lastGCTime.IsNull() &&
         lastGCTime + tunables.highFrequencyThreshold() > currentTime;
+#endif
   }
 };
 
+enum class TriggerKind { None, Incremental, NonIncremental };
+
 struct TriggerResult {
-  bool shouldTrigger;
+  TriggerKind kind;
   size_t usedBytes;
   size_t thresholdBytes;
 };

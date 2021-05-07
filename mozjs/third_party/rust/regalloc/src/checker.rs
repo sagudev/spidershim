@@ -57,12 +57,12 @@
 
 use crate::analysis_data_flow::get_san_reg_sets_for_insn;
 use crate::data_structures::{
-    BlockIx, InstIx, Map, RealReg, RealRegUniverse, Reg, RegSets, SpillSlot, VirtualReg, Writable,
+    BlockIx, InstIx, InstPoint, Map, Point, RealReg, RealRegUniverse, Reg, RegSets, RegUsageMapper,
+    SpillSlot, VirtualReg, Writable,
 };
-use crate::inst_stream::{ExtPoint, InstExtPoint, InstToInsertAndExtPoint};
-use crate::{Function, RegUsageMapper};
+use crate::inst_stream::InstToInsertAndPoint;
+use crate::Function;
 
-use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 use std::default::Default;
 use std::hash::Hash;
@@ -93,25 +93,6 @@ pub enum CheckerError {
         real_reg: RealReg,
         inst: InstIx,
     },
-    UnknownValueInSlot {
-        slot: SpillSlot,
-        expected: Reg,
-        inst: InstIx,
-    },
-    IncorrectValueInSlot {
-        slot: SpillSlot,
-        expected: Reg,
-        actual: Reg,
-        inst: InstIx,
-    },
-    StackMapSpecifiesNonRefSlot {
-        inst: InstIx,
-        slot: SpillSlot,
-    },
-    StackMapSpecifiesUndefinedSlot {
-        inst: InstIx,
-        slot: SpillSlot,
-    },
 }
 
 /// Abstract state for a storage slot (real register or spill slot).
@@ -128,9 +109,7 @@ enum CheckerValue {
     /// Reg: this storage slot has a value that originated as a def into
     /// the given register, either implicitly (RealRegs at beginning of
     /// function) or explicitly (as an instruction's def).
-    ///
-    /// The boolean flag indicates whether the value is reference-typed.
-    Reg(Reg, bool),
+    Reg(Reg),
 }
 
 impl Default for CheckerValue {
@@ -147,9 +126,7 @@ impl CheckerValue {
             (_, &CheckerValue::Unknown) => *self,
             (&CheckerValue::Conflicted, _) => *self,
             (_, &CheckerValue::Conflicted) => *other,
-            (&CheckerValue::Reg(r1, ref1), &CheckerValue::Reg(r2, ref2)) if r1 == r2 => {
-                CheckerValue::Reg(r1, ref1 || ref2)
-            }
+            _ if *self == *other => *self,
             _ => CheckerValue::Conflicted,
         }
     }
@@ -196,7 +173,7 @@ impl CheckerState {
         for &(rreg, _) in &ru.regs {
             state
                 .reg_values
-                .insert(rreg, CheckerValue::Reg(rreg.to_reg(), false));
+                .insert(rreg, CheckerValue::Reg(rreg.to_reg()));
         }
         state
     }
@@ -236,7 +213,7 @@ impl CheckerState {
                                 inst: inst_ix,
                             });
                         }
-                        CheckerValue::Reg(r, _) if r != orig => {
+                        CheckerValue::Reg(r) if r != orig => {
                             return Err(CheckerError::IncorrectValueInReg {
                                 actual: r,
                                 expected: orig,
@@ -248,74 +225,9 @@ impl CheckerState {
                     }
                 }
             }
-            &Inst::ChangeSpillSlotOwnership {
-                inst_ix,
-                slot,
-                from_reg,
-                ..
-            } => {
-                let val = self
-                    .spill_slots
-                    .get(&slot)
-                    .cloned()
-                    .unwrap_or(Default::default());
-                debug!("checker: inst {:?}: slot value {:?}", inst, val);
-                match val {
-                    CheckerValue::Unknown | CheckerValue::Conflicted => {
-                        return Err(CheckerError::UnknownValueInSlot {
-                            slot,
-                            expected: from_reg,
-                            inst: inst_ix,
-                        });
-                    }
-                    CheckerValue::Reg(r, _) if r != from_reg => {
-                        return Err(CheckerError::IncorrectValueInSlot {
-                            slot,
-                            expected: from_reg,
-                            actual: r,
-                            inst: inst_ix,
-                        });
-                    }
-                    _ => {}
-                }
-            }
-            &Inst::Safepoint { inst_ix, ref slots } => {
-                self.check_stackmap(inst_ix, slots)?;
-            }
             _ => {}
         }
         Ok(())
-    }
-
-    fn check_stackmap(&self, inst: InstIx, slots: &Vec<SpillSlot>) -> Result<(), CheckerError> {
-        // N.B.: it's OK for the stackmap to omit a slot that has a ref value in
-        // it; it might be dead. We simply update such a slot's value to
-        // 'undefined' in the transfer function.
-        for &slot in slots {
-            match self.spill_slots.get(&slot) {
-                Some(CheckerValue::Reg(_, false)) => {
-                    return Err(CheckerError::StackMapSpecifiesNonRefSlot { inst, slot });
-                }
-                Some(CheckerValue::Reg(_, true)) => {
-                    // OK.
-                }
-                _ => {
-                    return Err(CheckerError::StackMapSpecifiesUndefinedSlot { inst, slot });
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn update_stackmap(&mut self, slots: &Vec<SpillSlot>) {
-        for (&slot, val) in &mut self.spill_slots {
-            if let &mut CheckerValue::Reg(_, true) = val {
-                let in_stackmap = slots.binary_search(&slot).is_ok();
-                if !in_stackmap {
-                    *val = CheckerValue::Unknown;
-                }
-            }
-        }
     }
 
     /// Update according to instruction.
@@ -324,18 +236,13 @@ impl CheckerState {
             &Inst::Op {
                 ref defs_orig,
                 ref defs,
-                ref defs_reftyped,
                 ..
             } => {
                 // For each def, set the symbolic value of the mapped RealReg to a
                 // symbol corresponding to the original def.
                 assert!(defs_orig.len() == defs.len());
-                for i in 0..defs.len() {
-                    let orig = defs_orig[i];
-                    let mapped = defs[i];
-                    let reftyped = defs_reftyped[i];
-                    self.reg_values
-                        .insert(mapped, CheckerValue::Reg(orig, reftyped));
+                for (orig, mapped) in defs_orig.iter().cloned().zip(defs.iter().cloned()) {
+                    self.reg_values.insert(mapped, CheckerValue::Reg(orig));
                 }
             }
             &Inst::Move { into, from } => {
@@ -345,18 +252,6 @@ impl CheckerState {
                     .cloned()
                     .unwrap_or(Default::default());
                 self.reg_values.insert(into.to_reg(), val);
-            }
-            &Inst::ChangeSpillSlotOwnership { slot, to_reg, .. } => {
-                let reftyped = if let Some(val) = self.spill_slots.get(&slot) {
-                    match val {
-                        &CheckerValue::Reg(_, reftyped) => reftyped,
-                        _ => false,
-                    }
-                } else {
-                    false
-                };
-                self.spill_slots
-                    .insert(slot, CheckerValue::Reg(to_reg, reftyped));
             }
             &Inst::Spill { into, from } => {
                 let val = self
@@ -373,9 +268,6 @@ impl CheckerState {
                     .cloned()
                     .unwrap_or(Default::default());
                 self.reg_values.insert(into.to_reg(), val);
-            }
-            &Inst::Safepoint { ref slots, .. } => {
-                self.update_stackmap(slots);
             }
         }
     }
@@ -396,15 +288,6 @@ pub(crate) enum Inst {
         into: Writable<RealReg>,
         from: RealReg,
     },
-    /// A spillslot ghost move (between vregs) resulting from an user-program
-    /// move whose source and destination regs are both vregs that are currently
-    /// spilled.
-    ChangeSpillSlotOwnership {
-        inst_ix: InstIx,
-        slot: SpillSlot,
-        from_reg: Reg,
-        to_reg: Reg,
-    },
     /// A regular instruction with fixed use and def slots. Contains both
     /// the original registers (as given to the regalloc) and the allocated ones.
     Op {
@@ -413,12 +296,6 @@ pub(crate) enum Inst {
         uses_orig: Vec<Reg>,
         defs: Vec<RealReg>,
         uses: Vec<RealReg>,
-        defs_reftyped: Vec<bool>,
-    },
-    /// A safepoint, with a list of expected slots.
-    Safepoint {
-        inst_ix: InstIx,
-        slots: Vec<SpillSlot>,
     },
 }
 
@@ -428,7 +305,6 @@ pub(crate) struct Checker {
     bb_in: Map<BlockIx, CheckerState>,
     bb_succs: Map<BlockIx, Vec<BlockIx>>,
     bb_insts: Map<BlockIx, Vec<Inst>>,
-    reftyped_vregs: FxHashSet<VirtualReg>,
 }
 
 fn map_regs<F: Fn(VirtualReg) -> Option<RealReg>>(
@@ -465,30 +341,24 @@ impl Checker {
     /// Create a new checker for the given function, initializing CFG info immediately.
     /// The client should call the `add_*()` methods to add abstract instructions to each
     /// BB before invoking `run()` to check for errors.
-    pub(crate) fn new<F: Function>(
-        f: &F,
-        ru: &RealRegUniverse,
-        reftyped_vregs: &[VirtualReg],
-    ) -> Checker {
+    pub(crate) fn new<F: Function>(f: &F, ru: &RealRegUniverse) -> Checker {
         let mut bb_in = Map::default();
         let mut bb_succs = Map::default();
         let mut bb_insts = Map::default();
 
         for block in f.blocks() {
             bb_in.insert(block, Default::default());
-            bb_succs.insert(block, f.block_succs(block).to_vec());
+            bb_succs.insert(block, f.block_succs(block));
             bb_insts.insert(block, vec![]);
         }
 
         bb_in.insert(f.entry_block(), CheckerState::entry_state(ru));
 
-        let reftyped_vregs = reftyped_vregs.iter().cloned().collect::<FxHashSet<_>>();
         Checker {
             bb_entry: f.entry_block(),
             bb_in,
             bb_succs,
             bb_insts,
-            reftyped_vregs,
         }
     }
 
@@ -505,12 +375,12 @@ impl Checker {
     /// registers. The `SanitizedInstRegUses` must be the pre-allocation state;
     /// the `mapper` must be provided to give the virtual -> real mappings at
     /// the program points immediately before and after this instruction.
-    pub(crate) fn add_op<RUM: RegUsageMapper>(
+    pub(crate) fn add_op(
         &mut self,
         block: BlockIx,
         inst_ix: InstIx,
         regsets: &RegSets,
-        mapper: &RUM,
+        mapper: &RegUsageMapper,
     ) -> Result<(), CheckerErrors> {
         debug!(
             "add_op: block {} inst {} regsets {:?}",
@@ -531,10 +401,6 @@ impl Checker {
         let defs_orig = defs_set.to_vec();
         let uses = map_regs(inst_ix, &uses_orig[..], &|vreg| mapper.get_use(vreg))?;
         let defs = map_regs(inst_ix, &defs_orig[..], &|vreg| mapper.get_def(vreg))?;
-        let defs_reftyped = defs_orig
-            .iter()
-            .map(|reg| reg.is_virtual() && self.reftyped_vregs.contains(&reg.to_virtual_reg()))
-            .collect();
         let insts = self.bb_insts.get_mut(&block).unwrap();
         let op = Inst::Op {
             inst_ix,
@@ -542,7 +408,6 @@ impl Checker {
             defs_orig,
             uses,
             defs,
-            defs_reftyped,
         };
         debug!("add_op: adding {:?}", op);
         insts.push(op);
@@ -608,17 +473,15 @@ impl Checker {
     /// Find any errors, returning `Err(CheckerErrors)` with all errors found
     /// or `Ok(())` otherwise.
     pub(crate) fn run(mut self) -> Result<(), CheckerErrors> {
-        debug!("Checker: full body is:\n{:?}", self.bb_insts);
         self.analyze();
         self.find_errors()
     }
 }
 
-/// A wrapper around `Checker` that assists its use with `InstToInsertAndExtPoint`s and
-/// `Function` together.
+/// A wrapper around `Checker` that assists its use with `InstsAndPoints` and `Function` together.
 pub(crate) struct CheckerContext {
     checker: Checker,
-    checker_inst_map: Map<InstExtPoint, Vec<Inst>>,
+    checker_inst_map: Map<InstPoint, Vec<Inst>>,
 }
 
 impl CheckerContext {
@@ -627,32 +490,20 @@ impl CheckerContext {
     pub(crate) fn new<F: Function>(
         f: &F,
         ru: &RealRegUniverse,
-        insts_to_add: &Vec<InstToInsertAndExtPoint>,
-        safepoint_insns: &[InstIx],
-        stackmaps: &[Vec<SpillSlot>],
-        reftyped_vregs: &[VirtualReg],
+        insts_to_add: &Vec<InstToInsertAndPoint>,
     ) -> CheckerContext {
-        assert!(safepoint_insns.len() == stackmaps.len());
-        let mut checker_inst_map: Map<InstExtPoint, Vec<Inst>> = Map::default();
-        for &InstToInsertAndExtPoint { ref inst, ref iep } in insts_to_add {
+        let mut checker_inst_map: Map<InstPoint, Vec<Inst>> = Map::default();
+        for &InstToInsertAndPoint {
+            ref inst,
+            ref point,
+        } in insts_to_add
+        {
             let checker_insts = checker_inst_map
-                .entry(iep.clone())
+                .entry(point.clone())
                 .or_insert_with(|| vec![]);
             checker_insts.push(inst.to_checker_inst());
         }
-        for (iix, slots) in safepoint_insns.iter().zip(stackmaps.iter()) {
-            let iep = InstExtPoint::new(*iix, ExtPoint::Use);
-            let mut slots = slots.clone();
-            slots.sort();
-            checker_inst_map
-                .entry(iep)
-                .or_insert_with(|| vec![])
-                .push(Inst::Safepoint {
-                    inst_ix: *iix,
-                    slots,
-                });
-        }
-        let checker = Checker::new(f, ru, reftyped_vregs);
+        let checker = Checker::new(f, ru);
         CheckerContext {
             checker,
             checker_inst_map,
@@ -661,50 +512,42 @@ impl CheckerContext {
 
     /// Update the checker with the given instruction and the given pre- and post-maps. Instructions
     /// within a block must be visited in program order.
-    pub(crate) fn handle_insn<F: Function, RUM: RegUsageMapper>(
+    pub(crate) fn handle_insn<F: Function>(
         &mut self,
         ru: &RealRegUniverse,
         func: &F,
         bix: BlockIx,
         iix: InstIx,
-        mapper: &RUM,
+        mapper: &RegUsageMapper,
     ) -> Result<(), CheckerErrors> {
         let empty = vec![];
-        let mut skip_inst = false;
+        let pre_point = InstPoint {
+            iix,
+            pt: Point::Reload,
+        };
+        let post_point = InstPoint {
+            iix,
+            pt: Point::Spill,
+        };
 
-        debug!("CheckerContext::handle_insn: inst {:?}", iix,);
-
-        for &pre_point in &[ExtPoint::Reload, ExtPoint::SpillBefore, ExtPoint::Use] {
-            let pre_point = InstExtPoint::new(iix, pre_point);
-            for checker_inst in self.checker_inst_map.get(&pre_point).unwrap_or(&empty) {
-                debug!("at inst {:?}: pre checker_inst: {:?}", iix, checker_inst);
-                self.checker.add_inst(bix, checker_inst.clone());
-                if let Inst::ChangeSpillSlotOwnership { .. } = checker_inst {
-                    // Unlike spills/reloads/moves inserted by the regalloc, ChangeSpillSlotOwnership
-                    // pseudo-insts replace the instruction itself.
-                    skip_inst = true;
-                }
-            }
+        for checker_inst in self.checker_inst_map.get(&pre_point).unwrap_or(&empty) {
+            debug!("at inst {:?}: pre checker_inst: {:?}", iix, checker_inst);
+            self.checker.add_inst(bix, checker_inst.clone());
         }
 
-        if !skip_inst {
-            let regsets = get_san_reg_sets_for_insn::<F>(func.get_insn(iix), ru)
-                .expect("only existing real registers at this point");
-            assert!(regsets.is_sanitized());
+        let regsets = get_san_reg_sets_for_insn::<F>(func.get_insn(iix), ru)
+            .expect("only existing real registers at this point");
+        assert!(regsets.is_sanitized());
 
-            debug!(
-                "at inst {:?}: regsets {:?} mapper {:?}",
-                iix, regsets, mapper
-            );
-            self.checker.add_op(bix, iix, &regsets, mapper)?;
-        }
+        debug!(
+            "at inst {:?}: regsets {:?} mapper {:?}",
+            iix, regsets, mapper
+        );
+        self.checker.add_op(bix, iix, &regsets, mapper)?;
 
-        for &post_point in &[ExtPoint::ReloadAfter, ExtPoint::Spill] {
-            let post_point = InstExtPoint::new(iix, post_point);
-            for checker_inst in self.checker_inst_map.get(&post_point).unwrap_or(&empty) {
-                debug!("at inst {:?}: post checker_inst: {:?}", iix, checker_inst);
-                self.checker.add_inst(bix, checker_inst.clone());
-            }
+        for checker_inst in self.checker_inst_map.get(&post_point).unwrap_or(&empty) {
+            debug!("at inst {:?}: post checker_inst: {:?}", iix, checker_inst);
+            self.checker.add_inst(bix, checker_inst.clone());
         }
 
         Ok(())

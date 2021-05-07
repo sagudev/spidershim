@@ -1,3 +1,7 @@
+extern crate rand;
+extern crate rand_xorshift;
+extern crate rayon;
+
 use rand::distributions::Standard;
 use rand::{Rng, SeedableRng};
 use rand_xorshift::XorShiftRng;
@@ -11,7 +15,7 @@ fn seeded_rng() -> XorShiftRng {
 
 #[test]
 pub fn execute_strings() {
-    let rng = seeded_rng();
+    let mut rng = seeded_rng();
     let s: String = rng.sample_iter::<char, _>(&Standard).take(1024).collect();
 
     let par_chars: String = s.par_chars().collect();

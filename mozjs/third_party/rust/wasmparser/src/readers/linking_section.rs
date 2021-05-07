@@ -14,7 +14,7 @@
  */
 
 use super::{
-    BinaryReader, LinkingType, Range, Result, SectionIteratorLimited, SectionReader,
+    BinaryReader, LinkingType, Result, SectionIteratorLimited, SectionReader,
     SectionWithLimitedItems,
 };
 
@@ -56,9 +56,6 @@ impl<'a> SectionReader for LinkingSectionReader<'a> {
     }
     fn original_position(&self) -> usize {
         LinkingSectionReader::original_position(self)
-    }
-    fn range(&self) -> Range {
-        self.reader.range()
     }
 }
 

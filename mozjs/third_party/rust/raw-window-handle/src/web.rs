@@ -8,7 +8,7 @@
 ///     ..WebHandle::empty()
 /// };
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebHandle {
     /// An ID value inserted into the data attributes of the canvas element as 'raw-handle'
     ///

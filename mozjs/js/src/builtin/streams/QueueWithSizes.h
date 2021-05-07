@@ -10,6 +10,7 @@
 #define builtin_streams_QueueWithSizes_h
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
 #include "jstypes.h"        // JS_PUBLIC_API
 #include "js/RootingAPI.h"  // JS::{,Mutable}Handle
@@ -25,7 +26,7 @@ class StreamController;
 /**
  * Streams spec, 6.2.1. DequeueValue ( container ) nothrow
  */
-[[nodiscard]] extern bool DequeueValue(
+extern MOZ_MUST_USE bool DequeueValue(
     JSContext* cx, JS::Handle<StreamController*> unwrappedContainer,
     JS::MutableHandle<JS::Value> chunk);
 
@@ -38,14 +39,14 @@ extern void DequeueValue(StreamController* unwrappedContainer, JSContext* cx);
 /**
  * Streams spec, 6.2.2. EnqueueValueWithSize ( container, value, size ) throws
  */
-[[nodiscard]] extern bool EnqueueValueWithSize(
+extern MOZ_MUST_USE bool EnqueueValueWithSize(
     JSContext* cx, JS::Handle<StreamController*> unwrappedContainer,
     JS::Handle<JS::Value> value, JS::Handle<JS::Value> sizeVal);
 
 /**
  * Streams spec, 6.2.4. ResetQueue ( container ) nothrow
  */
-[[nodiscard]] extern bool ResetQueue(
+extern MOZ_MUST_USE bool ResetQueue(
     JSContext* cx, JS::Handle<StreamController*> unwrappedContainer);
 
 inline bool QueueIsEmpty(ListObject* unwrappedQueue) {

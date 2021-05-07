@@ -48,7 +48,7 @@ info: |
     Result: Throw a TypeError exception.
 
 includes: [testBigIntTypedArray.js]
-features: [align-detached-buffer-semantics-with-web-reality, BigInt, TypedArray]
+features: [BigInt, TypedArray]
 ---*/
 
 testWithBigIntTypedArrayConstructors(function(TA) {
@@ -56,31 +56,31 @@ testWithBigIntTypedArrayConstructors(function(TA) {
 
   assert.throws(TypeError, function() {
     typedArray[0] = 1;
-  }, '`typedArray[0] = 1` throws TypeError');
+  }, "abrupt completion from Number: 1");
 
   assert.throws(TypeError, function() {
     typedArray[0] = Math.pow(2, 63);
-  }, '`typedArray[0] = Math.pow(2, 63)` throws TypeError');
+  }, "abrupt completion from Number: 2**63");
 
   assert.throws(TypeError, function() {
     typedArray[0] = +0;
-  }, '`typedArray[0] = +0` throws TypeError');
+  }, "abrupt completion from Number: +0");
 
   assert.throws(TypeError, function() {
     typedArray[0] = -0;
-  }, '`typedArray[0] = -0` throws TypeError');
+  }, "abrupt completion from Number: -0");
 
   assert.throws(TypeError, function() {
     typedArray[0] = Infinity;
-  }, '`typedArray[0] = Infinity` throws TypeError');
+  }, "abrupt completion from Number: Infinity");
 
   assert.throws(TypeError, function() {
     typedArray[0] = -Infinity;
-  }, '`typedArray[0] = -Infinity` throws TypeError');
+  }, "abrupt completion from Number: -Infinity");
 
   assert.throws(TypeError, function() {
     typedArray[0] = NaN;
-  }, '`typedArray[0] = NaN` throws TypeError');
+  }, "abrupt completion from Number: NaN");
 
 });
 

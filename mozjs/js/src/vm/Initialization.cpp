@@ -15,7 +15,6 @@
 #include "jstypes.h"
 
 #include "builtin/AtomicsObject.h"
-#include "builtin/TestingFunctions.h"
 #include "ds/MemoryProtectionExceptionHandler.h"
 #include "gc/Statistics.h"
 #include "jit/AtomicOperations.h"
@@ -29,7 +28,6 @@
 #  include "unicode/utypes.h"
 #endif  // JS_HAS_INTL_API
 #include "util/Poison.h"
-#include "vm/ArrayBufferObject.h"
 #include "vm/BigIntType.h"
 #include "vm/DateTime.h"
 #include "vm/HelperThreads.h"
@@ -63,7 +61,7 @@ static void CheckMessageParameterCounts() {
   // parameters.
 #  define MSG_DEF(name, count, exception, format) \
     MOZ_ASSERT(MessageParameterCount(format) == count);
-#  include "js/friend/ErrorNumbers.msg"
+#  include "js.msg"
 #  undef MSG_DEF
 }
 #endif /* DEBUG */
@@ -135,6 +133,8 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
 
   PRMJ_NowInit();
 
+  js::SliceBudget::Init();
+
   // The first invocation of `ProcessCreation` creates a temporary thread
   // and crashes if that fails, i.e. because we're out of memory. To prevent
   // that from happening at some later time, get it out of the way during
@@ -157,11 +157,7 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
   js::oom::InitLargeAllocLimit();
 #endif
 
-#if defined(JS_GC_ALLOW_EXTRA_POISONING)
-  if (getenv("JSGC_EXTRA_POISONING")) {
-    js::gExtraPoisoningEnabled = true;
-  }
-#endif
+  js::gDisablePoisoning = bool(getenv("JSGC_DISABLE_POISONING"));
 
   js::InitMallocAllocator();
 
@@ -205,7 +201,6 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
   RETURN_IF_FAIL(js::CreateHelperThreadsState());
   RETURN_IF_FAIL(FutexThread::initialize());
   RETURN_IF_FAIL(js::gcstats::Statistics::initialize());
-  RETURN_IF_FAIL(js::InitTestingFunctions());
 
 #ifdef JS_SIMULATOR
   RETURN_IF_FAIL(js::jit::SimulatorProcess::initialize());

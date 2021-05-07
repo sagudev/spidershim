@@ -15,16 +15,15 @@
 #ifndef mozilla_PodOperations_h
 #define mozilla_PodOperations_h
 
-#include "mozilla/Assertions.h"
+#include "mozilla/Array.h"
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 
+#include <algorithm>
 #include <stdint.h>
 #include <string.h>
 
 namespace mozilla {
-
-template <typename T, size_t Length>
-class Array;
 
 template <typename T>
 class NotNull;

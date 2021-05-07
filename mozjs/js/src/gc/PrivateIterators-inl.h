@@ -47,19 +47,21 @@ class GrayObjectIter : public ZoneAllCellIter<js::gc::TenuredCell> {
 };
 
 class GCZonesIter {
-  AllZonesIter zone;
+  ZonesIter zone;
 
  public:
-  explicit GCZonesIter(GCRuntime* gc) : zone(gc) {
+  explicit GCZonesIter(GCRuntime* gc, ZoneSelector selector = WithAtoms)
+      : zone(gc, selector) {
     MOZ_ASSERT(JS::RuntimeHeapIsBusy());
     MOZ_ASSERT_IF(gc->atomsZone->wasGCStarted(),
                   !gc->rt->hasHelperThreadZones());
 
-    if (!done() && !zone->wasGCStarted()) {
+    if (!done() && !zone->isCollectingFromAnyThread()) {
       next();
     }
   }
-  explicit GCZonesIter(JSRuntime* rt) : GCZonesIter(&rt->gc) {}
+  explicit GCZonesIter(JSRuntime* rt, ZoneSelector selector = WithAtoms)
+      : GCZonesIter(&rt->gc, selector) {}
 
   bool done() const { return zone.done(); }
 
@@ -67,7 +69,7 @@ class GCZonesIter {
     MOZ_ASSERT(!done());
     do {
       zone.next();
-    } while (!zone.done() && !zone->wasGCStarted());
+    } while (!zone.done() && !zone->isCollectingFromAnyThread());
   }
 
   JS::Zone* get() const {
@@ -86,19 +88,31 @@ using GCRealmsIter = CompartmentsOrRealmsIterT<GCZonesIter, RealmsInZoneIter>;
 /* Iterates over all zones in the current sweep group. */
 class SweepGroupZonesIter {
   JS::Zone* current;
+  ZoneSelector selector;
 
  public:
-  explicit SweepGroupZonesIter(GCRuntime* gc)
-      : current(gc->getCurrentSweepGroup()) {
+  explicit SweepGroupZonesIter(GCRuntime* gc, ZoneSelector selector = WithAtoms)
+      : selector(selector) {
     MOZ_ASSERT(CurrentThreadIsPerformingGC());
+    current = gc->getCurrentSweepGroup();
+    maybeSkipAtomsZone();
   }
-  explicit SweepGroupZonesIter(JSRuntime* rt) : SweepGroupZonesIter(&rt->gc) {}
+  explicit SweepGroupZonesIter(JSRuntime* rt, ZoneSelector selector = WithAtoms)
+      : SweepGroupZonesIter(&rt->gc, selector) {}
+
+  void maybeSkipAtomsZone() {
+    if (selector == SkipAtoms && current && current->isAtomsZone()) {
+      current = current->nextNodeInGroup();
+      MOZ_ASSERT_IF(current, !current->isAtomsZone());
+    }
+  }
 
   bool done() const { return !current; }
 
   void next() {
     MOZ_ASSERT(!done());
     current = current->nextNodeInGroup();
+    maybeSkipAtomsZone();
   }
 
   JS::Zone* get() const {
@@ -138,7 +152,7 @@ class ArenaFreeCellIter {
     return !thing;
   }
 
-  TenuredCell* get() const {
+  TenuredCell* getCell() const {
     MOZ_ASSERT(!done());
     return reinterpret_cast<TenuredCell*>(uintptr_t(arena) + thing);
   }
@@ -156,9 +170,6 @@ class ArenaFreeCellIter {
 
     MOZ_ASSERT(thing < ArenaSize);
   }
-
-  operator TenuredCell*() const { return get(); }
-  TenuredCell* operator->() const { return get(); }
 };
 
 }  // namespace gc

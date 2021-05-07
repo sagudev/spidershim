@@ -12,16 +12,18 @@
 #include "jit/MIRGenerator.h"
 
 #include "js/Utility.h"
-#include "vm/HelperThreadTask.h"
 
 namespace js {
+
+class CompilerConstraintList;
+
 namespace jit {
 
 class CodeGenerator;
-class WarpSnapshot;
+class MRootList;
 
 // IonCompileTask represents a single off-thread Ion compilation task.
-class IonCompileTask final : public HelperThreadTask,
+class IonCompileTask final : public RunnableTask,
                              public mozilla::LinkedListElement<IonCompileTask> {
   MIRGenerator& mirGen_;
 
@@ -31,45 +33,47 @@ class IonCompileTask final : public HelperThreadTask,
   // performed by FinishOffThreadTask().
   CodeGenerator* backgroundCodegen_ = nullptr;
 
+  CompilerConstraintList* constraints_ = nullptr;
+  MRootList* rootList_ = nullptr;
   WarpSnapshot* snapshot_ = nullptr;
 
+  // script->hasIonScript() at the start of the compilation. Used to avoid
+  // calling hasIonScript() from background compilation threads.
+  bool scriptHasIonScript_;
+
  public:
-  explicit IonCompileTask(MIRGenerator& mirGen, WarpSnapshot* snapshot);
+  explicit IonCompileTask(MIRGenerator& mirGen, bool scriptHasIonScript,
+                          CompilerConstraintList* constraints,
+                          WarpSnapshot* snapshot);
 
   JSScript* script() { return mirGen_.outerInfo().script(); }
   MIRGenerator& mirGen() { return mirGen_; }
   TempAllocator& alloc() { return mirGen_.alloc(); }
-  WarpSnapshot* snapshot() { return snapshot_; }
+  bool scriptHasIonScript() const { return scriptHasIonScript_; }
+  CompilerConstraintList* constraints() { return constraints_; }
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf);
   void trace(JSTracer* trc);
 
+  void setRootList(MRootList& rootList) {
+    MOZ_ASSERT(!rootList_);
+    rootList_ = &rootList;
+  }
   CodeGenerator* backgroundCodegen() const { return backgroundCodegen_; }
   void setBackgroundCodegen(CodeGenerator* codegen) {
     backgroundCodegen_ = codegen;
   }
 
   ThreadType threadType() override { return THREAD_TYPE_ION; }
-  void runTask();
-  void runHelperThreadTask(AutoLockHelperThreadState& locked) override;
-};
-
-class IonFreeTask : public HelperThreadTask {
- public:
-  explicit IonFreeTask(IonCompileTask* task) : task_(task) {}
-  IonCompileTask* compileTask() { return task_; }
-
-  ThreadType threadType() override { return THREAD_TYPE_ION_FREE; }
-  void runHelperThreadTask(AutoLockHelperThreadState& locked) override;
-
- private:
-  IonCompileTask* task_;
+  void runTask() override;
 };
 
 void AttachFinishedCompilations(JSContext* cx);
 void FinishOffThreadTask(JSRuntime* runtime, IonCompileTask* task,
                          const AutoLockHelperThreadState& lock);
 void FreeIonCompileTask(IonCompileTask* task);
+
+MOZ_MUST_USE bool CreateMIRRootList(IonCompileTask& task);
 
 }  // namespace jit
 }  // namespace js

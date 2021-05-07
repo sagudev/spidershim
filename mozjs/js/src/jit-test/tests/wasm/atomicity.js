@@ -17,7 +17,7 @@ const NUMAGENTS = NUMWORKERS + 1;
 
 // Need at least one thread per agent.
 
-if (!wasmThreadsEnabled() || helperThreadCount() < NUMWORKERS) {
+if (!wasmThreadsSupported() || helperThreadCount() < NUMWORKERS) {
     if (DEBUG > 0)
         print("Threads not supported");
     quit(0);

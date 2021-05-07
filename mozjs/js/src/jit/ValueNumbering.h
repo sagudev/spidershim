@@ -9,7 +9,6 @@
 
 #include "jit/JitAllocPolicy.h"
 #include "js/HashTable.h"
-#include "js/Vector.h"
 
 namespace js {
 namespace jit {
@@ -45,7 +44,7 @@ class ValueNumberer {
 
     Ptr findLeader(const MDefinition* def) const;
     AddPtr findLeaderForAdd(MDefinition* def);
-    [[nodiscard]] bool add(AddPtr p, MDefinition* def);
+    MOZ_MUST_USE bool add(AddPtr p, MDefinition* def);
     void overwrite(AddPtr p, MDefinition* def);
     void forget(const MDefinition* def);
     void clear();
@@ -72,37 +71,36 @@ class ValueNumberer {
 
   enum UseRemovedOption { DontSetUseRemoved, SetUseRemoved };
 
-  [[nodiscard]] bool handleUseReleased(MDefinition* def,
-                                       UseRemovedOption useRemovedOption);
-  [[nodiscard]] bool discardDefsRecursively(MDefinition* def);
-  [[nodiscard]] bool releaseResumePointOperands(MResumePoint* resume);
-  [[nodiscard]] bool releaseAndRemovePhiOperands(MPhi* phi);
-  [[nodiscard]] bool releaseOperands(MDefinition* def);
-  [[nodiscard]] bool discardDef(MDefinition* def);
-  [[nodiscard]] bool processDeadDefs();
+  MOZ_MUST_USE bool handleUseReleased(MDefinition* def,
+                                      UseRemovedOption useRemovedOption);
+  MOZ_MUST_USE bool discardDefsRecursively(MDefinition* def);
+  MOZ_MUST_USE bool releaseResumePointOperands(MResumePoint* resume);
+  MOZ_MUST_USE bool releaseAndRemovePhiOperands(MPhi* phi);
+  MOZ_MUST_USE bool releaseOperands(MDefinition* def);
+  MOZ_MUST_USE bool discardDef(MDefinition* def);
+  MOZ_MUST_USE bool processDeadDefs();
 
-  [[nodiscard]] bool fixupOSROnlyLoop(MBasicBlock* block,
-                                      MBasicBlock* backedge);
-  [[nodiscard]] bool removePredecessorAndDoDCE(MBasicBlock* block,
-                                               MBasicBlock* pred,
-                                               size_t predIndex);
-  [[nodiscard]] bool removePredecessorAndCleanUp(MBasicBlock* block,
-                                                 MBasicBlock* pred);
+  MOZ_MUST_USE bool fixupOSROnlyLoop(MBasicBlock* block, MBasicBlock* backedge);
+  MOZ_MUST_USE bool removePredecessorAndDoDCE(MBasicBlock* block,
+                                              MBasicBlock* pred,
+                                              size_t predIndex);
+  MOZ_MUST_USE bool removePredecessorAndCleanUp(MBasicBlock* block,
+                                                MBasicBlock* pred);
 
   MDefinition* simplified(MDefinition* def) const;
   MDefinition* leader(MDefinition* def);
   bool hasLeader(const MPhi* phi, const MBasicBlock* phiBlock) const;
   bool loopHasOptimizablePhi(MBasicBlock* header) const;
 
-  [[nodiscard]] bool visitDefinition(MDefinition* def);
-  [[nodiscard]] bool visitControlInstruction(MBasicBlock* block);
-  [[nodiscard]] bool visitUnreachableBlock(MBasicBlock* block);
-  [[nodiscard]] bool visitBlock(MBasicBlock* block);
-  [[nodiscard]] bool visitDominatorTree(MBasicBlock* root);
-  [[nodiscard]] bool visitGraph();
+  MOZ_MUST_USE bool visitDefinition(MDefinition* def);
+  MOZ_MUST_USE bool visitControlInstruction(MBasicBlock* block);
+  MOZ_MUST_USE bool visitUnreachableBlock(MBasicBlock* block);
+  MOZ_MUST_USE bool visitBlock(MBasicBlock* block);
+  MOZ_MUST_USE bool visitDominatorTree(MBasicBlock* root);
+  MOZ_MUST_USE bool visitGraph();
 
-  [[nodiscard]] bool insertOSRFixups();
-  [[nodiscard]] bool cleanupOSRFixups();
+  MOZ_MUST_USE bool insertOSRFixups();
+  MOZ_MUST_USE bool cleanupOSRFixups();
 
  public:
   ValueNumberer(MIRGenerator* mir, MIRGraph& graph);
@@ -112,7 +110,7 @@ class ValueNumberer {
   // Optimize the graph, performing expression simplification and
   // canonicalization, eliminating statically fully-redundant expressions,
   // deleting dead instructions, and removing unreachable blocks.
-  [[nodiscard]] bool run(UpdateAliasAnalysisFlag updateAliasAnalysis);
+  MOZ_MUST_USE bool run(UpdateAliasAnalysisFlag updateAliasAnalysis);
 };
 
 }  // namespace jit

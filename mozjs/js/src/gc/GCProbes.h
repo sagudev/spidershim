@@ -17,6 +17,9 @@
 #include "gc/Heap.h"
 
 namespace js {
+
+class ObjectGroup;
+
 namespace gc {
 namespace gcprobes {
 
@@ -33,6 +36,7 @@ inline void MajorGCStart() {}
 inline void TenuredFinalize(gc::Cell* thing) {
 }  // May be called off main thread.
 inline void MajorGCEnd() {}
+inline void TypeNewScript(ObjectGroup* group) {}
 
 }  // namespace gcprobes
 }  // namespace gc

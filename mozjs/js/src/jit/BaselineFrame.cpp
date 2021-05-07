@@ -12,9 +12,8 @@
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
 #include "vm/EnvironmentObject.h"
-#include "vm/JSContext.h"
 
-#include "jit/JSJitFrameIter-inl.h"
+#include "jit/JitFrames-inl.h"
 #include "vm/Stack-inl.h"
 
 using namespace js;
@@ -101,10 +100,6 @@ void BaselineFrame::trace(JSTracer* trc, const JSJitFrameIter& frameIterator) {
   }
 }
 
-bool BaselineFrame::uninlineIsProfilerSamplingEnabled(JSContext* cx) {
-  return cx->isProfilerSamplingEnabled();
-}
-
 bool BaselineFrame::initFunctionEnvironmentObjects(JSContext* cx) {
   return js::InitFunctionEnvironmentObjects(cx, this);
 }
@@ -115,17 +110,18 @@ bool BaselineFrame::pushVarEnvironment(JSContext* cx, HandleScope scope) {
 
 void BaselineFrame::setInterpreterFields(JSScript* script, jsbytecode* pc) {
   uint32_t pcOffset = script->pcToOffset(pc);
+  JitScript* jitScript = script->jitScript();
   interpreterScript_ = script;
   interpreterPC_ = pc;
-  MOZ_ASSERT(icScript_);
-  interpreterICEntry_ = icScript_->interpreterICEntryFromPCOffset(pcOffset);
+  interpreterICEntry_ = jitScript->interpreterICEntryFromPCOffset(pcOffset);
 }
 
 void BaselineFrame::setInterpreterFieldsForPrologue(JSScript* script) {
+  JitScript* jitScript = script->jitScript();
   interpreterScript_ = script;
   interpreterPC_ = script->code();
-  if (icScript_->numICEntries() > 0) {
-    interpreterICEntry_ = &icScript_->icEntry(0);
+  if (jitScript->numICEntries() > 0) {
+    interpreterICEntry_ = &jitScript->icEntry(0);
   } else {
     // If the script does not have any ICEntries (possible for non-function
     // scripts) the interpreterICEntry_ field won't be used. Just set it to
@@ -151,8 +147,6 @@ bool BaselineFrame::initForOsr(InterpreterFrame* fp, uint32_t numStackValues) {
   if (fp->hasReturnValue()) {
     setReturnValue(fp->returnValue());
   }
-
-  icScript_ = fp->script()->jitScript()->icScript();
 
   JSContext* cx =
       fp->script()->runtimeFromMainThread()->mainContextFromOwnThread();

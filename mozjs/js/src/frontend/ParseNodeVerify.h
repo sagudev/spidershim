@@ -22,17 +22,17 @@ namespace frontend {
 // If the ParseNode is actually bad, we crash.
 
 #ifdef DEBUG
-[[nodiscard]] extern bool CheckParseTree(JSContext* cx, const LifoAlloc& alloc,
-                                         ParseNode* pn);
+extern MOZ_MUST_USE bool CheckParseTree(JSContext* cx, const LifoAlloc& alloc,
+                                        ParseNode* pn);
 #else
-[[nodiscard]] inline bool CheckParseTree(JSContext* cx, const LifoAlloc& alloc,
-                                         ParseNode* pn) {
+inline MOZ_MUST_USE bool CheckParseTree(JSContext* cx, const LifoAlloc& alloc,
+                                        ParseNode* pn) {
   return true;
 }
 #endif
 
-[[nodiscard]] inline bool CheckParseTree(JSContext* cx, const LifoAlloc& alloc,
-                                         SyntaxParseHandler::Node pn) {
+inline MOZ_MUST_USE bool CheckParseTree(JSContext* cx, const LifoAlloc& alloc,
+                                        SyntaxParseHandler::Node pn) {
   return true;
 }
 

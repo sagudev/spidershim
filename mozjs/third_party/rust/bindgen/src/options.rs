@@ -1,6 +1,5 @@
 use bindgen::{
-    builder, AliasVariation, Builder, CodegenConfig, EnumVariation,
-    MacroTypeVariation, RustTarget, DEFAULT_ANON_FIELDS_PREFIX,
+    builder, AliasVariation, Builder, CodegenConfig, EnumVariation, RustTarget,
     RUST_TARGET_STRINGS,
 };
 use clap::{App, Arg};
@@ -88,13 +87,6 @@ where
                 .takes_value(true)
                 .multiple(true)
                 .number_of_values(1),
-            Arg::with_name("default-macro-constant-type")
-                .long("default-macro-constant-type")
-                .help("The default signed/unsigned type for C macro constants.")
-                .value_name("variant")
-                .default_value("unsigned")
-                .possible_values(&["signed", "unsigned"])
-                .multiple(false),
             Arg::with_name("default-alias-style")
                 .long("default-alias-style")
                 .help("The default style of code used to generate typedefs.")
@@ -242,12 +234,6 @@ where
                 )
                 .value_name("prefix")
                 .takes_value(true),
-            Arg::with_name("anon-fields-prefix")
-                .long("anon-fields-prefix")
-                .help("Use the given prefix for the anon fields.")
-                .value_name("prefix")
-                .default_value(DEFAULT_ANON_FIELDS_PREFIX)
-                .takes_value(true),
             Arg::with_name("time-phases")
                 .long("time-phases")
                 .help("Time the different bindgen phases and print to stderr"),
@@ -281,15 +267,6 @@ where
                      names like \"bar\" instead of \"foo_bar\" for a nested \
                      definition \"struct foo { struct bar { } b; };\"."
                 ),
-            Arg::with_name("disable-untagged-union")
-                .long("disable-untagged-union")
-                .help(
-                    "Disable support for native Rust unions.",
-                ),
-            Arg::with_name("disable-header-comment")
-                .long("disable-header-comment")
-                .help("Suppress insertion of bindgen's version identifier into generated bindings.")
-                .multiple(true),
             Arg::with_name("ignore-functions")
                 .long("ignore-functions")
                 .help(
@@ -444,20 +421,6 @@ where
                 .takes_value(true)
                 .multiple(true)
                 .number_of_values(1),
-            Arg::with_name("no-debug")
-                .long("no-debug")
-                .help("Avoid deriving Debug for types matching <regex>.")
-                .value_name("regex")
-                .takes_value(true)
-                .multiple(true)
-                .number_of_values(1),
-            Arg::with_name("no-default")
-                .long("no-default")
-                .help("Avoid deriving/implement Default for types matching <regex>.")
-                .value_name("regex")
-                .takes_value(true)
-                .multiple(true)
-                .number_of_values(1),
             Arg::with_name("no-hash")
                 .long("no-hash")
                 .help("Avoid deriving Hash for types matching <regex>.")
@@ -478,11 +441,7 @@ where
                 .long("wasm-import-module-name")
                 .value_name("name")
                 .takes_value(true)
-                .help("The name to be used in a #[link(wasm_import_module = ...)] statement"),
-            Arg::with_name("dynamic-loading")
-                .long("dynamic-loading")
-                .takes_value(true)
-                .help("Use dynamic loading mode with the given library name."),
+                .help("The name to be used in a #[link(wasm_import_module = ...)] statement")
         ]) // .args()
         .get_matches_from(args);
 
@@ -539,11 +498,6 @@ where
         for regex in constified_mods {
             builder = builder.constified_enum_module(regex);
         }
-    }
-
-    if let Some(variant) = matches.value_of("default-macro-constant-type") {
-        builder = builder
-            .default_macro_constant_type(MacroTypeVariation::from_str(variant)?)
     }
 
     if let Some(variant) = matches.value_of("default-alias-style") {
@@ -664,10 +618,6 @@ where
         builder = builder.ctypes_prefix(prefix);
     }
 
-    if let Some(prefix) = matches.value_of("anon-fields-prefix") {
-        builder = builder.anon_fields_prefix(prefix);
-    }
-
     if let Some(what_to_generate) = matches.value_of("generate") {
         let mut config = CodegenConfig::empty();
         for what in what_to_generate.split(",") {
@@ -715,14 +665,6 @@ where
 
     if matches.is_present("disable-nested-struct-naming") {
         builder = builder.disable_nested_struct_naming();
-    }
-
-    if matches.is_present("disable-untagged-union") {
-        builder = builder.disable_untagged_union();
-    }
-
-    if matches.is_present("disable-header-comment") {
-        builder = builder.disable_header_comment();
     }
 
     if matches.is_present("ignore-functions") {
@@ -872,26 +814,10 @@ where
         }
     }
 
-    if let Some(no_debug) = matches.values_of("no-debug") {
-        for regex in no_debug {
-            builder = builder.no_debug(regex);
-        }
-    }
-
-    if let Some(no_default) = matches.values_of("no-default") {
-        for regex in no_default {
-            builder = builder.no_default(regex);
-        }
-    }
-
     if let Some(no_hash) = matches.values_of("no-hash") {
         for regex in no_hash {
             builder = builder.no_hash(regex);
         }
-    }
-
-    if let Some(dynamic_library_name) = matches.value_of("dynamic-loading") {
-        builder = builder.dynamic_library_name(dynamic_library_name);
     }
 
     let verbose = matches.is_present("verbose");

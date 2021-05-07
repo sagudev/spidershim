@@ -37,13 +37,13 @@ namespace wasm {
 class Code;
 class CodeRange;
 class DebugFrame;
-class TypeIdDesc;
+class FuncTypeIdDesc;
 class Instance;
 class ModuleSegment;
 
 struct CallableOffsets;
 struct FuncOffsets;
-class Frame;
+struct Frame;
 
 using RegisterState = JS::ProfilingFrameIterator::RegisterState;
 
@@ -65,7 +65,6 @@ class WasmFrameIter {
   const CodeRange* codeRange_;
   unsigned lineOrBytecode_;
   Frame* fp_;
-  const TlsData* tls_;
   uint8_t* unwoundIonCallerFP_;
   jit::FrameType unwoundIonFrameType_;
   Unwind unwind_;
@@ -96,7 +95,6 @@ class WasmFrameIter {
   jit::FrameType unwoundIonFrameType() const;
   uint8_t* unwoundIonCallerFP() const { return unwoundIonCallerFP_; }
   Frame* frame() const { return fp_; }
-  const TlsData* tls() const { return tls_; }
 
   // Returns the address of the next instruction that will execute in this
   // frame, once control returns to this frame.
@@ -172,7 +170,7 @@ class ExitReason {
 class ProfilingFrameIterator {
   const Code* code_;
   const CodeRange* codeRange_;
-  uint8_t* callerFP_;
+  Frame* callerFP_;
   void* callerPC_;
   void* stackAddress_;
   uint8_t* unwoundIonCallerFP_;
@@ -229,21 +227,16 @@ void GenerateJitExitEpilogue(jit::MacroAssembler& masm, unsigned framePushed,
 void GenerateJitEntryPrologue(jit::MacroAssembler& masm, Offsets* offsets);
 
 void GenerateFunctionPrologue(jit::MacroAssembler& masm,
-                              const TypeIdDesc& funcTypeId,
+                              const FuncTypeIdDesc& funcTypeId,
                               const mozilla::Maybe<uint32_t>& tier1FuncIndex,
                               FuncOffsets* offsets);
 void GenerateFunctionEpilogue(jit::MacroAssembler& masm, unsigned framePushed,
                               FuncOffsets* offsets);
 
-// Iterates through frames for either possible cross-instance call or an entry
-// stub to obtain tls that corresponds to the passed fp.
-const TlsData* GetNearestEffectiveTls(const Frame* fp);
-TlsData* GetNearestEffectiveTls(Frame* fp);
-
 // Describes register state and associated code at a given call frame.
 
 struct UnwindState {
-  uint8_t* fp;
+  Frame* fp;
   void* pc;
   const Code* code;
   const CodeRange* codeRange;
@@ -263,6 +256,19 @@ struct UnwindState {
 
 bool StartUnwinding(const RegisterState& registers, UnwindState* unwindState,
                     bool* unwoundCaller);
+
+// Bit set as the lowest bit of a frame pointer, used in two different mutually
+// exclusive situations:
+// - either it's a low bit tag in a FramePointer value read from the
+// Frame::callerFP of an inner wasm frame. This indicates the previous call
+// frame has been set up by a JIT caller that directly called into a wasm
+// function's body. This is only stored in Frame::callerFP for a wasm frame
+// called from JIT code, and thus it can not appear in a JitActivation's
+// exitFP.
+// - or it's the low big tag set when exiting wasm code in JitActivation's
+// exitFP.
+
+constexpr uintptr_t ExitOrJitEntryFPTag = 0x1;
 
 }  // namespace wasm
 }  // namespace js

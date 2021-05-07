@@ -2,11 +2,9 @@
 
 use super::context::{BindgenContext, ItemId};
 use super::function::FunctionSig;
-use super::item::Item;
 use super::traversal::{Trace, Tracer};
 use super::ty::TypeKind;
-use crate::clang;
-use crate::parse::ClangItemParser;
+use clang;
 use clang_sys::CXChildVisit_Continue;
 use clang_sys::CXCursor_ObjCCategoryDecl;
 use clang_sys::CXCursor_ObjCClassMethodDecl;
@@ -14,7 +12,6 @@ use clang_sys::CXCursor_ObjCClassRef;
 use clang_sys::CXCursor_ObjCInstanceMethodDecl;
 use clang_sys::CXCursor_ObjCProtocolDecl;
 use clang_sys::CXCursor_ObjCProtocolRef;
-use clang_sys::CXCursor_ObjCSuperClassRef;
 use clang_sys::CXCursor_TemplateTypeParameter;
 use proc_macro2::{Ident, Span, TokenStream};
 
@@ -34,11 +31,7 @@ pub struct ObjCInterface {
     /// The list of template names almost always, ObjectType or KeyType
     pub template_names: Vec<String>,
 
-    /// The list of protocols that this interface conforms to.
-    pub conforms_to: Vec<ItemId>,
-
-    /// The direct parent for this interface.
-    pub parent_class: Option<ItemId>,
+    conforms_to: Vec<ItemId>,
 
     /// List of the methods defined in this interfae
     methods: Vec<ObjCMethod>,
@@ -70,7 +63,6 @@ impl ObjCInterface {
             category: None,
             is_protocol: false,
             template_names: Vec::new(),
-            parent_class: None,
             conforms_to: Vec::new(),
             methods: Vec::new(),
             class_methods: Vec::new(),
@@ -85,15 +77,15 @@ impl ObjCInterface {
 
     /// Formats the name for rust
     /// Can be like NSObject, but with categories might be like NSObject_NSCoderMethods
-    /// and protocols are like PNSObject
+    /// and protocols are like protocol_NSObject
     pub fn rust_name(&self) -> String {
         if let Some(ref cat) = self.category {
             format!("{}_{}", self.name(), cat)
         } else {
             if self.is_protocol {
-                format!("P{}", self.name())
+                format!("protocol_{}", self.name())
             } else {
-                format!("I{}", self.name().to_owned())
+                self.name().to_owned()
             }
         }
     }
@@ -106,16 +98,6 @@ impl ObjCInterface {
     /// List of the methods defined in this interface
     pub fn methods(&self) -> &Vec<ObjCMethod> {
         &self.methods
-    }
-
-    /// Is this a protocol?
-    pub fn is_protocol(&self) -> bool {
-        self.is_protocol
-    }
-
-    /// Is this a category?
-    pub fn is_category(&self) -> bool {
-        self.category.is_some()
     }
 
     /// List of the class methods defined in this interface
@@ -147,13 +129,13 @@ impl ObjCInterface {
                 }
                 CXCursor_ObjCProtocolRef => {
                     // Gather protocols this interface conforms to
-                    let needle = format!("P{}", c.spelling());
+                    let needle = format!("protocol_{}", c.spelling());
                     let items_map = ctx.items();
                     debug!("Interface {} conforms to {}, find the item", interface.name, needle);
 
                     for (id, item) in items_map
                     {
-                        if let Some(ty) = item.as_type() {
+                       if let Some(ty) = item.as_type() {
                             match *ty.kind() {
                                 TypeKind::ObjCInterface(ref protocol) => {
                                     if protocol.is_protocol
@@ -186,10 +168,6 @@ impl ObjCInterface {
                     let name = c.spelling();
                     interface.template_names.push(name);
                 }
-                CXCursor_ObjCSuperClassRef => {
-                    let item = Item::from_ty_or_ref(c.cur_type(), c, None, ctx);
-                    interface.parent_class = Some(item.into());
-                },
                 _ => {}
             }
             CXChildVisit_Continue

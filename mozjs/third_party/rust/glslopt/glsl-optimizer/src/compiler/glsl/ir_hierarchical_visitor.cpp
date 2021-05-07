@@ -37,7 +37,8 @@ ir_hierarchical_visitor::ir_hierarchical_visitor()
 ir_visitor_status
 ir_hierarchical_visitor::visit(ir_rvalue *ir)
 {
-   call_enter_leave_callbacks(ir);
+   if (this->callback_enter != NULL)
+      this->callback_enter(ir, this->data_enter);
 
    return visit_continue;
 }
@@ -45,7 +46,8 @@ ir_hierarchical_visitor::visit(ir_rvalue *ir)
 ir_visitor_status
 ir_hierarchical_visitor::visit(ir_variable *ir)
 {
-   call_enter_leave_callbacks(ir);
+   if (this->callback_enter != NULL)
+      this->callback_enter(ir, this->data_enter);
 
    return visit_continue;
 }
@@ -53,7 +55,8 @@ ir_hierarchical_visitor::visit(ir_variable *ir)
 ir_visitor_status
 ir_hierarchical_visitor::visit(ir_constant *ir)
 {
-   call_enter_leave_callbacks(ir);
+   if (this->callback_enter != NULL)
+      this->callback_enter(ir, this->data_enter);
 
    return visit_continue;
 }
@@ -61,7 +64,8 @@ ir_hierarchical_visitor::visit(ir_constant *ir)
 ir_visitor_status
 ir_hierarchical_visitor::visit(ir_loop_jump *ir)
 {
-   call_enter_leave_callbacks(ir);
+   if (this->callback_enter != NULL)
+      this->callback_enter(ir, this->data_enter);
 
    return visit_continue;
 }
@@ -87,7 +91,8 @@ ir_hierarchical_visitor::visit(ir_typedecl_statement *ir)
 ir_visitor_status
 ir_hierarchical_visitor::visit(ir_dereference_variable *ir)
 {
-   call_enter_leave_callbacks(ir);
+   if (this->callback_enter != NULL)
+      this->callback_enter(ir, this->data_enter);
 
    return visit_continue;
 }
@@ -95,7 +100,8 @@ ir_hierarchical_visitor::visit(ir_dereference_variable *ir)
 ir_visitor_status
 ir_hierarchical_visitor::visit(ir_barrier *ir)
 {
-   call_enter_leave_callbacks(ir);
+   if (this->callback_enter != NULL)
+      this->callback_enter(ir, this->data_enter);
 
    return visit_continue;
 }
@@ -394,14 +400,6 @@ ir_hierarchical_visitor::run(exec_list *instructions)
    visit_list_elements(this, instructions);
 }
 
-void
-ir_hierarchical_visitor::call_enter_leave_callbacks(class ir_instruction *ir)
-{
-   if (this->callback_enter != NULL)
-      this->callback_enter(ir, this->data_enter);
-   if (this->callback_leave != NULL)
-      this->callback_leave(ir, this->data_leave);
-}
 
 void
 visit_tree(ir_instruction *ir,

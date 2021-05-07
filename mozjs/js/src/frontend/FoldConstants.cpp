@@ -7,21 +7,14 @@
 #include "frontend/FoldConstants.h"
 
 #include "mozilla/FloatingPoint.h"
-#include "mozilla/Maybe.h"  // mozilla::Maybe
-#include "mozilla/Range.h"
 
 #include "jslibmath.h"
-#include "jsmath.h"
 #include "jsnum.h"
 
 #include "frontend/ParseNode.h"
 #include "frontend/ParseNodeVisitor.h"
 #include "frontend/Parser.h"
-#include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
 #include "js/Conversions.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
-#include "js/Vector.h"
-#include "util/StringBuffer.h"  // StringBuffer
 #include "vm/StringType.h"
 
 using namespace js;
@@ -35,16 +28,10 @@ using mozilla::IsNegative;
 using mozilla::NegativeInfinity;
 using mozilla::PositiveInfinity;
 
-struct FoldInfo {
-  JSContext* cx;
-  ParserAtomsTable& parserAtoms;
-  FullParseHandler* handler;
-};
-
 // Don't use ReplaceNode directly, because we want the constant folder to keep
 // the attributes isInParens and isDirectRHSAnonFunction of the old node being
 // replaced.
-[[nodiscard]] inline bool TryReplaceNode(ParseNode** pnp, ParseNode* pn) {
+inline MOZ_MUST_USE bool TryReplaceNode(ParseNode** pnp, ParseNode* pn) {
   // convenience check: can call TryReplaceNode(pnp, alloc_parsenode())
   // directly, without having to worry about alloc returning null.
   if (!pn) {
@@ -163,12 +150,10 @@ restart:
     case ParseNodeKind::ImportDecl:
     case ParseNodeKind::ImportSpecList:
     case ParseNodeKind::ImportSpec:
-    case ParseNodeKind::ImportNamespaceSpec:
     case ParseNodeKind::ExportFromStmt:
     case ParseNodeKind::ExportDefaultStmt:
     case ParseNodeKind::ExportSpecList:
     case ParseNodeKind::ExportSpec:
-    case ParseNodeKind::ExportNamespaceSpec:
     case ParseNodeKind::ExportStmt:
     case ParseNodeKind::ExportBatchSpecStmt:
     case ParseNodeKind::CallImportExpr:
@@ -431,7 +416,6 @@ restart:
     case ParseNodeKind::ForIn:
     case ParseNodeKind::ForOf:
     case ParseNodeKind::ForHead:
-    case ParseNodeKind::DefaultConstructor:
     case ParseNodeKind::ClassMethod:
     case ParseNodeKind::ClassField:
     case ParseNodeKind::ClassMemberList:
@@ -463,19 +447,19 @@ restart:
  * Fold from one constant type to another.
  * XXX handles only strings and numbers for now
  */
-static bool FoldType(FoldInfo info, ParseNode** pnp, ParseNodeKind kind) {
+static bool FoldType(JSContext* cx, FullParseHandler* handler, ParseNode** pnp,
+                     ParseNodeKind kind) {
   const ParseNode* pn = *pnp;
   if (!pn->isKind(kind)) {
     switch (kind) {
       case ParseNodeKind::NumberExpr:
         if (pn->isKind(ParseNodeKind::StringExpr)) {
           double d;
-          auto atom = pn->as<NameNode>().atom();
-          if (!info.parserAtoms.toNumber(info.cx, atom, &d)) {
+          if (!StringToNumber(cx, pn->as<NameNode>().atom(), &d)) {
             return false;
           }
-          if (!TryReplaceNode(
-                  pnp, info.handler->newNumber(d, NoDecimal, pn->pn_pos))) {
+          if (!TryReplaceNode(pnp,
+                              handler->newNumber(d, NoDecimal, pn->pn_pos))) {
             return false;
           }
         }
@@ -483,13 +467,12 @@ static bool FoldType(FoldInfo info, ParseNode** pnp, ParseNodeKind kind) {
 
       case ParseNodeKind::StringExpr:
         if (pn->isKind(ParseNodeKind::NumberExpr)) {
-          TaggedParserAtomIndex atom =
-              pn->as<NumericLiteral>().toAtom(info.cx, info.parserAtoms);
+          JSAtom* atom = pn->as<NumericLiteral>().toAtom(cx);
           if (!atom) {
             return false;
           }
-          if (!TryReplaceNode(
-                  pnp, info.handler->newStringLiteral(atom, pn->pn_pos))) {
+          if (!TryReplaceNode(pnp,
+                              handler->newStringLiteral(atom, pn->pn_pos))) {
             return false;
           }
         }
@@ -529,10 +512,7 @@ static Truthiness Boolish(ParseNode* pn) {
 
     case ParseNodeKind::StringExpr:
     case ParseNodeKind::TemplateStringExpr:
-      return (pn->as<NameNode>().atom() ==
-              TaggedParserAtomIndex::WellKnown::empty())
-                 ? Falsy
-                 : Truthy;
+      return (pn->as<NameNode>().atom()->length() > 0) ? Truthy : Falsy;
 
     case ParseNodeKind::TrueExpr:
     case ParseNodeKind::Function:
@@ -562,7 +542,8 @@ static Truthiness Boolish(ParseNode* pn) {
   }
 }
 
-static bool SimplifyCondition(FoldInfo info, ParseNode** nodePtr) {
+static bool SimplifyCondition(JSContext* cx, FullParseHandler* handler,
+                              ParseNode** nodePtr) {
   // Conditions fold like any other expression, but then they sometimes can be
   // further folded to constants. *nodePtr should already have been
   // constant-folded.
@@ -574,8 +555,8 @@ static bool SimplifyCondition(FoldInfo info, ParseNode** nodePtr) {
     // that appears on a method list corrupts the method list. However,
     // methods are M's in statements of the form 'this.foo = M;', which we
     // never fold, so we're okay.
-    if (!TryReplaceNode(nodePtr, info.handler->newBooleanLiteral(
-                                     t == Truthy, node->pn_pos))) {
+    if (!TryReplaceNode(
+            nodePtr, handler->newBooleanLiteral(t == Truthy, node->pn_pos))) {
       return false;
     }
   }
@@ -583,32 +564,33 @@ static bool SimplifyCondition(FoldInfo info, ParseNode** nodePtr) {
   return true;
 }
 
-static bool FoldTypeOfExpr(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldTypeOfExpr(JSContext* cx, FullParseHandler* handler,
+                           ParseNode** nodePtr) {
   UnaryNode* node = &(*nodePtr)->as<UnaryNode>();
   MOZ_ASSERT(node->isKind(ParseNodeKind::TypeOfExpr));
   ParseNode* expr = node->kid();
 
   // Constant-fold the entire |typeof| if given a constant with known type.
-  TaggedParserAtomIndex result;
+  RootedPropertyName result(cx);
   if (expr->isKind(ParseNodeKind::StringExpr) ||
       expr->isKind(ParseNodeKind::TemplateStringExpr)) {
-    result = TaggedParserAtomIndex::WellKnown::string();
+    result = cx->names().string;
   } else if (expr->isKind(ParseNodeKind::NumberExpr)) {
-    result = TaggedParserAtomIndex::WellKnown::number();
+    result = cx->names().number;
   } else if (expr->isKind(ParseNodeKind::BigIntExpr)) {
-    result = TaggedParserAtomIndex::WellKnown::bigint();
+    result = cx->names().bigint;
   } else if (expr->isKind(ParseNodeKind::NullExpr)) {
-    result = TaggedParserAtomIndex::WellKnown::object();
+    result = cx->names().object;
   } else if (expr->isKind(ParseNodeKind::TrueExpr) ||
              expr->isKind(ParseNodeKind::FalseExpr)) {
-    result = TaggedParserAtomIndex::WellKnown::boolean();
+    result = cx->names().boolean;
   } else if (expr->is<FunctionNode>()) {
-    result = TaggedParserAtomIndex::WellKnown::function();
+    result = cx->names().function;
   }
 
   if (result) {
     if (!TryReplaceNode(nodePtr,
-                        info.handler->newStringLiteral(result, node->pn_pos))) {
+                        handler->newStringLiteral(result, node->pn_pos))) {
       return false;
     }
   }
@@ -616,7 +598,8 @@ static bool FoldTypeOfExpr(FoldInfo info, ParseNode** nodePtr) {
   return true;
 }
 
-static bool FoldDeleteExpr(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldDeleteExpr(JSContext* cx, FullParseHandler* handler,
+                           ParseNode** nodePtr) {
   UnaryNode* node = &(*nodePtr)->as<UnaryNode>();
 
   MOZ_ASSERT(node->isKind(ParseNodeKind::DeleteExpr));
@@ -626,7 +609,7 @@ static bool FoldDeleteExpr(FoldInfo info, ParseNode** nodePtr) {
   // For effectless expressions, eliminate the expression evaluation.
   if (IsEffectless(expr)) {
     if (!TryReplaceNode(nodePtr,
-                        info.handler->newBooleanLiteral(true, node->pn_pos))) {
+                        handler->newBooleanLiteral(true, node->pn_pos))) {
       return false;
     }
   }
@@ -634,7 +617,8 @@ static bool FoldDeleteExpr(FoldInfo info, ParseNode** nodePtr) {
   return true;
 }
 
-static bool FoldDeleteElement(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldDeleteElement(JSContext* cx, FullParseHandler* handler,
+                              ParseNode** nodePtr) {
   UnaryNode* node = &(*nodePtr)->as<UnaryNode>();
   MOZ_ASSERT(node->isKind(ParseNodeKind::DeleteElemExpr));
   ParseNode* expr = node->kid();
@@ -650,7 +634,7 @@ static bool FoldDeleteElement(FoldInfo info, ParseNode** nodePtr) {
   if (expr->isKind(ParseNodeKind::DotExpr)) {
     // newDelete will detect and use DeletePropExpr
     if (!TryReplaceNode(nodePtr,
-                        info.handler->newDelete(node->pn_pos.begin, expr))) {
+                        handler->newDelete(node->pn_pos.begin, expr))) {
       return false;
     }
     MOZ_ASSERT((*nodePtr)->getKind() == ParseNodeKind::DeletePropExpr);
@@ -659,11 +643,12 @@ static bool FoldDeleteElement(FoldInfo info, ParseNode** nodePtr) {
   return true;
 }
 
-static bool FoldNot(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldNot(JSContext* cx, FullParseHandler* handler,
+                    ParseNode** nodePtr) {
   UnaryNode* node = &(*nodePtr)->as<UnaryNode>();
   MOZ_ASSERT(node->isKind(ParseNodeKind::NotExpr));
 
-  if (!SimplifyCondition(info, node->unsafeKidReference())) {
+  if (!SimplifyCondition(cx, handler, node->unsafeKidReference())) {
     return false;
   }
 
@@ -673,8 +658,8 @@ static bool FoldNot(FoldInfo info, ParseNode** nodePtr) {
       expr->isKind(ParseNodeKind::FalseExpr)) {
     bool newval = !expr->isKind(ParseNodeKind::TrueExpr);
 
-    if (!TryReplaceNode(
-            nodePtr, info.handler->newBooleanLiteral(newval, node->pn_pos))) {
+    if (!TryReplaceNode(nodePtr,
+                        handler->newBooleanLiteral(newval, node->pn_pos))) {
       return false;
     }
   }
@@ -682,7 +667,8 @@ static bool FoldNot(FoldInfo info, ParseNode** nodePtr) {
   return true;
 }
 
-static bool FoldUnaryArithmetic(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldUnaryArithmetic(JSContext* cx, FullParseHandler* handler,
+                                ParseNode** nodePtr) {
   UnaryNode* node = &(*nodePtr)->as<UnaryNode>();
   MOZ_ASSERT(node->isKind(ParseNodeKind::BitNotExpr) ||
                  node->isKind(ParseNodeKind::PosExpr) ||
@@ -707,7 +693,7 @@ static bool FoldUnaryArithmetic(FoldInfo info, ParseNode** nodePtr) {
     }
 
     if (!TryReplaceNode(nodePtr,
-                        info.handler->newNumber(d, NoDecimal, node->pn_pos))) {
+                        handler->newNumber(d, NoDecimal, node->pn_pos))) {
       return false;
     }
   }
@@ -715,7 +701,7 @@ static bool FoldUnaryArithmetic(FoldInfo info, ParseNode** nodePtr) {
   return true;
 }
 
-static bool FoldAndOrCoalesce(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldAndOrCoalesce(JSContext* cx, ParseNode** nodePtr) {
   ListNode* node = &(*nodePtr)->as<ListNode>();
 
   MOZ_ASSERT(node->isKind(ParseNodeKind::AndExpr) ||
@@ -792,9 +778,10 @@ static bool FoldAndOrCoalesce(FoldInfo info, ParseNode** nodePtr) {
   return true;
 }
 
-static bool Fold(FoldInfo info, ParseNode** pnp);
+static bool Fold(JSContext* cx, FullParseHandler* handler, ParseNode** pnp);
 
-static bool FoldConditional(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldConditional(JSContext* cx, FullParseHandler* handler,
+                            ParseNode** nodePtr) {
   ParseNode** nextNode = nodePtr;
 
   do {
@@ -808,15 +795,15 @@ static bool FoldConditional(FoldInfo info, ParseNode** nodePtr) {
     MOZ_ASSERT(node->isKind(ParseNodeKind::ConditionalExpr));
 
     ParseNode** expr = node->unsafeKid1Reference();
-    if (!Fold(info, expr)) {
+    if (!Fold(cx, handler, expr)) {
       return false;
     }
-    if (!SimplifyCondition(info, expr)) {
+    if (!SimplifyCondition(cx, handler, expr)) {
       return false;
     }
 
     ParseNode** ifTruthy = node->unsafeKid2Reference();
-    if (!Fold(info, ifTruthy)) {
+    if (!Fold(cx, handler, ifTruthy)) {
       return false;
     }
 
@@ -833,7 +820,7 @@ static bool FoldConditional(FoldInfo info, ParseNode** nodePtr) {
       MOZ_ASSERT((*ifFalsy)->is<TernaryNode>());
       nextNode = ifFalsy;
     } else {
-      if (!Fold(info, ifFalsy)) {
+      if (!Fold(cx, handler, ifFalsy)) {
         return false;
       }
     }
@@ -859,7 +846,8 @@ static bool FoldConditional(FoldInfo info, ParseNode** nodePtr) {
   return true;
 }
 
-static bool FoldIf(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldIf(JSContext* cx, FullParseHandler* handler,
+                   ParseNode** nodePtr) {
   ParseNode** nextNode = nodePtr;
 
   do {
@@ -872,15 +860,15 @@ static bool FoldIf(FoldInfo info, ParseNode** nodePtr) {
     MOZ_ASSERT(node->isKind(ParseNodeKind::IfStmt));
 
     ParseNode** expr = node->unsafeKid1Reference();
-    if (!Fold(info, expr)) {
+    if (!Fold(cx, handler, expr)) {
       return false;
     }
-    if (!SimplifyCondition(info, expr)) {
+    if (!SimplifyCondition(cx, handler, expr)) {
       return false;
     }
 
     ParseNode** consequent = node->unsafeKid2Reference();
-    if (!Fold(info, consequent)) {
+    if (!Fold(cx, handler, consequent)) {
       return false;
     }
 
@@ -895,7 +883,7 @@ static bool FoldIf(FoldInfo info, ParseNode** nodePtr) {
         MOZ_ASSERT((*alternative)->is<TernaryNode>());
         nextNode = alternative;
       } else {
-        if (!Fold(info, alternative)) {
+        if (!Fold(cx, handler, alternative)) {
           return false;
         }
       }
@@ -925,8 +913,7 @@ static bool FoldIf(FoldInfo info, ParseNode** nodePtr) {
       // A declaration that hoists outside the discarded arm prevents the
       // |if| from being folded away.
       bool containsHoistedDecls;
-      if (!ContainsHoistedDeclaration(info.cx, discarded,
-                                      &containsHoistedDecls)) {
+      if (!ContainsHoistedDeclaration(cx, discarded, &containsHoistedDecls)) {
         return false;
       }
 
@@ -941,8 +928,7 @@ static bool FoldIf(FoldInfo info, ParseNode** nodePtr) {
       // If there's no replacement node, we have a constantly-false |if|
       // with no |else|.  Replace the entire thing with an empty
       // statement list.
-      if (!TryReplaceNode(nodePtr,
-                          info.handler->newStatementList(node->pn_pos))) {
+      if (!TryReplaceNode(nodePtr, handler->newStatementList(node->pn_pos))) {
         return false;
       }
     } else {
@@ -991,7 +977,8 @@ static double ComputeBinary(ParseNodeKind kind, double left, double right) {
   return int32_t((kind == ParseNodeKind::LshExpr) ? uint32_t(i) << j : i >> j);
 }
 
-static bool FoldBinaryArithmetic(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldBinaryArithmetic(JSContext* cx, FullParseHandler* handler,
+                                 ParseNode** nodePtr) {
   ListNode* node = &(*nodePtr)->as<ListNode>();
   MOZ_ASSERT(node->isKind(ParseNodeKind::SubExpr) ||
              node->isKind(ParseNodeKind::MulExpr) ||
@@ -1005,7 +992,7 @@ static bool FoldBinaryArithmetic(FoldInfo info, ParseNode** nodePtr) {
   // Fold each operand to a number if possible.
   ParseNode** listp = node->unsafeHeadReference();
   for (; *listp; listp = &(*listp)->pn_next) {
-    if (!FoldType(info, listp, ParseNodeKind::NumberExpr)) {
+    if (!FoldType(cx, handler, listp, ParseNodeKind::NumberExpr)) {
       return false;
     }
   }
@@ -1029,7 +1016,7 @@ static bool FoldBinaryArithmetic(FoldInfo info, ParseNode** nodePtr) {
                                (*next)->as<NumericLiteral>().value());
 
       TokenPos pos((*elem)->pn_pos.begin, (*next)->pn_pos.end);
-      if (!TryReplaceNode(elem, info.handler->newNumber(d, NoDecimal, pos))) {
+      if (!TryReplaceNode(elem, handler->newNumber(d, NoDecimal, pos))) {
         return false;
       }
 
@@ -1051,7 +1038,8 @@ static bool FoldBinaryArithmetic(FoldInfo info, ParseNode** nodePtr) {
   return true;
 }
 
-static bool FoldExponentiation(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldExponentiation(JSContext* cx, FullParseHandler* handler,
+                               ParseNode** nodePtr) {
   ListNode* node = &(*nodePtr)->as<ListNode>();
   MOZ_ASSERT(node->isKind(ParseNodeKind::PowExpr));
   MOZ_ASSERT(node->count() >= 2);
@@ -1059,7 +1047,7 @@ static bool FoldExponentiation(FoldInfo info, ParseNode** nodePtr) {
   // Fold each operand, ideally into a number.
   ParseNode** listp = node->unsafeHeadReference();
   for (; *listp; listp = &(*listp)->pn_next) {
-    if (!FoldType(info, listp, ParseNodeKind::NumberExpr)) {
+    if (!FoldType(cx, handler, listp, ParseNodeKind::NumberExpr)) {
       return false;
     }
   }
@@ -1085,30 +1073,31 @@ static bool FoldExponentiation(FoldInfo info, ParseNode** nodePtr) {
   double d1 = base->as<NumericLiteral>().value();
   double d2 = exponent->as<NumericLiteral>().value();
 
-  return TryReplaceNode(nodePtr, info.handler->newNumber(
-                                     ecmaPow(d1, d2), NoDecimal, node->pn_pos));
+  return TryReplaceNode(
+      nodePtr, handler->newNumber(ecmaPow(d1, d2), NoDecimal, node->pn_pos));
 }
 
-static bool FoldElement(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldElement(JSContext* cx, FullParseHandler* handler,
+                        ParseNode** nodePtr) {
   PropertyByValue* elem = &(*nodePtr)->as<PropertyByValue>();
 
   ParseNode* expr = &elem->expression();
   ParseNode* key = &elem->key();
-  TaggedParserAtomIndex name;
+  PropertyName* name = nullptr;
   if (key->isKind(ParseNodeKind::StringExpr)) {
-    auto keyIndex = key->as<NameNode>().atom();
+    JSAtom* atom = key->as<NameNode>().atom();
     uint32_t index;
-    if (info.parserAtoms.isIndex(keyIndex, &index)) {
+
+    if (atom->isIndex(&index)) {
       // Optimization 1: We have something like expr["100"]. This is
       // equivalent to expr[100] which is faster.
-      if (!TryReplaceNode(
-              elem->unsafeRightReference(),
-              info.handler->newNumber(index, NoDecimal, key->pn_pos))) {
+      if (!TryReplaceNode(elem->unsafeRightReference(),
+                          handler->newNumber(index, NoDecimal, key->pn_pos))) {
         return false;
       }
       key = &elem->key();
     } else {
-      name = keyIndex;
+      name = atom->asPropertyName();
     }
   } else if (key->isKind(ParseNodeKind::NumberExpr)) {
     auto* numeric = &key->as<NumericLiteral>();
@@ -1117,10 +1106,11 @@ static bool FoldElement(FoldInfo info, ParseNode** nodePtr) {
       // Optimization 2: We have something like expr[3.14]. The number
       // isn't an array index, so it converts to a string ("3.14"),
       // enabling optimization 3 below.
-      name = numeric->toAtom(info.cx, info.parserAtoms);
-      if (!name) {
+      JSAtom* atom = numeric->toAtom(cx);
+      if (!atom) {
         return false;
       }
+      name = atom->asPropertyName();
     }
   }
 
@@ -1132,19 +1122,20 @@ static bool FoldElement(FoldInfo info, ParseNode** nodePtr) {
   // Optimization 3: We have expr["foo"] where foo is not an index.  Convert
   // to a property access (like expr.foo) that optimizes better downstream.
 
-  NameNode* propertyNameExpr = info.handler->newPropertyName(name, key->pn_pos);
+  NameNode* propertyNameExpr = handler->newPropertyName(name, key->pn_pos);
   if (!propertyNameExpr) {
     return false;
   }
-  if (!TryReplaceNode(
-          nodePtr, info.handler->newPropertyAccess(expr, propertyNameExpr))) {
+  if (!TryReplaceNode(nodePtr,
+                      handler->newPropertyAccess(expr, propertyNameExpr))) {
     return false;
   }
 
   return true;
 }
 
-static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
+static bool FoldAdd(JSContext* cx, FullParseHandler* handler,
+                    ParseNode** nodePtr) {
   ListNode* node = &(*nodePtr)->as<ListNode>();
 
   MOZ_ASSERT(node->isKind(ParseNodeKind::AddExpr));
@@ -1168,8 +1159,8 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
       double right = (*next)->as<NumericLiteral>().value();
       TokenPos pos((*current)->pn_pos.begin, (*next)->pn_pos.end);
 
-      if (!TryReplaceNode(
-              current, info.handler->newNumber(left + right, NoDecimal, pos))) {
+      if (!TryReplaceNode(current,
+                          handler->newNumber(left + right, NoDecimal, pos))) {
         return false;
       }
 
@@ -1191,7 +1182,7 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
     // the list: (x + 1 + "2" !== x + "12") when x is a number.
     if ((*current)->isKind(ParseNodeKind::NumberExpr) &&
         (*next)->isKind(ParseNodeKind::StringExpr)) {
-      if (!FoldType(info, current, ParseNodeKind::StringExpr)) {
+      if (!FoldType(cx, handler, current, ParseNodeKind::StringExpr)) {
         return false;
       }
       next = &(*current)->pn_next;
@@ -1213,19 +1204,19 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
       break;
     }
 
+    RootedString combination(cx);
+    RootedString tmp(cx);
     do {
-      // Concat all strings.
+      // Create a rope of the current string and all succeeding
+      // constants that we can convert to strings, then atomize it
+      // and replace them all with that fresh string.
       MOZ_ASSERT((*current)->isKind(ParseNodeKind::StringExpr));
 
-      // To avoid unnecessarily copy when there's no strings after the
-      // first item, lazily construct StringBuffer and append the first item.
-      mozilla::Maybe<StringBuffer> accum;
-      TaggedParserAtomIndex firstAtom;
-      firstAtom = (*current)->as<NameNode>().atom();
+      combination = (*current)->as<NameNode>().atom();
 
       do {
         // Try folding the next operand to a string.
-        if (!FoldType(info, next, ParseNodeKind::StringExpr)) {
+        if (!FoldType(cx, handler, next, ParseNodeKind::StringExpr)) {
           return false;
         }
 
@@ -1234,14 +1225,10 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
           break;
         }
 
-        if (!accum) {
-          accum.emplace(info.cx);
-          if (!accum->append(info.parserAtoms, firstAtom)) {
-            return false;
-          }
-        }
-        // Append this string and remove the node.
-        if (!accum->append(info.parserAtoms, (*next)->as<NameNode>().atom())) {
+        // Add this string to the combination and remove the node.
+        tmp = (*next)->as<NameNode>().atom();
+        combination = ConcatStrings<CanGC>(cx, combination, tmp);
+        if (!combination) {
           return false;
         }
 
@@ -1251,17 +1238,13 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
         node->unsafeDecrementCount();
       } while (*next);
 
-      // Replace with concatenation if we multiple nodes.
-      if (accum) {
-        auto combination = accum->finishParserAtom(info.parserAtoms);
-        if (!combination) {
-          return false;
-        }
-
-        // Replace |current|'s string with the entire combination.
-        MOZ_ASSERT((*current)->isKind(ParseNodeKind::StringExpr));
-        (*current)->as<NameNode>().setAtom(combination);
+      // Replace |current|'s string with the entire combination.
+      MOZ_ASSERT((*current)->isKind(ParseNodeKind::StringExpr));
+      combination = AtomizeString(cx, combination);
+      if (!combination) {
+        return false;
       }
+      (*current)->as<NameNode>().setAtom(&combination->asAtom());
 
       // If we're out of nodes, we're done.
       if (!*next) {
@@ -1281,7 +1264,7 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
       do {
         current = next;
 
-        if (!FoldType(info, current, ParseNodeKind::StringExpr)) {
+        if (!FoldType(cx, handler, current, ParseNodeKind::StringExpr)) {
           return false;
         }
         next = &(*current)->pn_next;
@@ -1306,106 +1289,99 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
 class FoldVisitor : public RewritingParseNodeVisitor<FoldVisitor> {
   using Base = RewritingParseNodeVisitor;
 
-  JSContext* cx;
-  ParserAtomsTable& parserAtoms;
   FullParseHandler* handler;
 
-  FoldInfo info() const { return FoldInfo{cx, parserAtoms, handler}; }
-
  public:
-  explicit FoldVisitor(JSContext* cx, ParserAtomsTable& parserAtoms,
-                       FullParseHandler* handler)
-      : RewritingParseNodeVisitor(cx),
-        cx(cx),
-        parserAtoms(parserAtoms),
-        handler(handler) {}
+  explicit FoldVisitor(JSContext* cx, FullParseHandler* handler)
+      : RewritingParseNodeVisitor(cx), handler(handler) {}
 
   bool visitElemExpr(ParseNode*& pn) {
-    return Base::visitElemExpr(pn) && FoldElement(info(), &pn);
+    return Base::visitElemExpr(pn) && FoldElement(cx_, handler, &pn);
   }
 
   bool visitTypeOfExpr(ParseNode*& pn) {
-    return Base::visitTypeOfExpr(pn) && FoldTypeOfExpr(info(), &pn);
+    return Base::visitTypeOfExpr(pn) && FoldTypeOfExpr(cx_, handler, &pn);
   }
 
   bool visitDeleteExpr(ParseNode*& pn) {
-    return Base::visitDeleteExpr(pn) && FoldDeleteExpr(info(), &pn);
+    return Base::visitDeleteExpr(pn) && FoldDeleteExpr(cx_, handler, &pn);
   }
 
   bool visitDeleteElemExpr(ParseNode*& pn) {
-    return Base::visitDeleteElemExpr(pn) && FoldDeleteElement(info(), &pn);
+    return Base::visitDeleteElemExpr(pn) &&
+           FoldDeleteElement(cx_, handler, &pn);
   }
 
   bool visitNotExpr(ParseNode*& pn) {
-    return Base::visitNotExpr(pn) && FoldNot(info(), &pn);
+    return Base::visitNotExpr(pn) && FoldNot(cx_, handler, &pn);
   }
 
   bool visitBitNotExpr(ParseNode*& pn) {
-    return Base::visitBitNotExpr(pn) && FoldUnaryArithmetic(info(), &pn);
+    return Base::visitBitNotExpr(pn) && FoldUnaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitPosExpr(ParseNode*& pn) {
-    return Base::visitPosExpr(pn) && FoldUnaryArithmetic(info(), &pn);
+    return Base::visitPosExpr(pn) && FoldUnaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitNegExpr(ParseNode*& pn) {
-    return Base::visitNegExpr(pn) && FoldUnaryArithmetic(info(), &pn);
+    return Base::visitNegExpr(pn) && FoldUnaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitPowExpr(ParseNode*& pn) {
-    return Base::visitPowExpr(pn) && FoldExponentiation(info(), &pn);
+    return Base::visitPowExpr(pn) && FoldExponentiation(cx_, handler, &pn);
   }
 
   bool visitMulExpr(ParseNode*& pn) {
-    return Base::visitMulExpr(pn) && FoldBinaryArithmetic(info(), &pn);
+    return Base::visitMulExpr(pn) && FoldBinaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitDivExpr(ParseNode*& pn) {
-    return Base::visitDivExpr(pn) && FoldBinaryArithmetic(info(), &pn);
+    return Base::visitDivExpr(pn) && FoldBinaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitModExpr(ParseNode*& pn) {
-    return Base::visitModExpr(pn) && FoldBinaryArithmetic(info(), &pn);
+    return Base::visitModExpr(pn) && FoldBinaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitAddExpr(ParseNode*& pn) {
-    return Base::visitAddExpr(pn) && FoldAdd(info(), &pn);
+    return Base::visitAddExpr(pn) && FoldAdd(cx_, handler, &pn);
   }
 
   bool visitSubExpr(ParseNode*& pn) {
-    return Base::visitSubExpr(pn) && FoldBinaryArithmetic(info(), &pn);
+    return Base::visitSubExpr(pn) && FoldBinaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitLshExpr(ParseNode*& pn) {
-    return Base::visitLshExpr(pn) && FoldBinaryArithmetic(info(), &pn);
+    return Base::visitLshExpr(pn) && FoldBinaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitRshExpr(ParseNode*& pn) {
-    return Base::visitRshExpr(pn) && FoldBinaryArithmetic(info(), &pn);
+    return Base::visitRshExpr(pn) && FoldBinaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitUrshExpr(ParseNode*& pn) {
-    return Base::visitUrshExpr(pn) && FoldBinaryArithmetic(info(), &pn);
+    return Base::visitUrshExpr(pn) && FoldBinaryArithmetic(cx_, handler, &pn);
   }
 
   bool visitAndExpr(ParseNode*& pn) {
     // Note that this does result in the unfortunate fact that dead arms of this
     // node get constant folded. The same goes for visitOr and visitCoalesce.
-    return Base::visitAndExpr(pn) && FoldAndOrCoalesce(info(), &pn);
+    return Base::visitAndExpr(pn) && FoldAndOrCoalesce(cx_, &pn);
   }
 
   bool visitOrExpr(ParseNode*& pn) {
-    return Base::visitOrExpr(pn) && FoldAndOrCoalesce(info(), &pn);
+    return Base::visitOrExpr(pn) && FoldAndOrCoalesce(cx_, &pn);
   }
 
   bool visitCoalesceExpr(ParseNode*& pn) {
-    return Base::visitCoalesceExpr(pn) && FoldAndOrCoalesce(info(), &pn);
+    return Base::visitCoalesceExpr(pn) && FoldAndOrCoalesce(cx_, &pn);
   }
 
   bool visitConditionalExpr(ParseNode*& pn) {
     // Don't call base-class visitConditional because FoldConditional processes
     // pn's child nodes specially to save stack space.
-    return FoldConditional(info(), &pn);
+    return FoldConditional(cx_, handler, &pn);
   }
 
  private:
@@ -1470,7 +1446,7 @@ class FoldVisitor : public RewritingParseNodeVisitor<FoldVisitor> {
   bool visitIfStmt(ParseNode*& pn) {
     // Don't call base-class visitIf because FoldIf processes pn's child nodes
     // specially to save stack space.
-    return FoldIf(info(), &pn);
+    return FoldIf(cx_, handler, &pn);
   }
 
   bool visitForStmt(ParseNode*& pn) {
@@ -1483,7 +1459,7 @@ class FoldVisitor : public RewritingParseNodeVisitor<FoldVisitor> {
       TernaryNode& head = stmt.left()->as<TernaryNode>();
       ParseNode** test = head.unsafeKid2Reference();
       if (*test) {
-        if (!SimplifyCondition(info(), test)) {
+        if (!SimplifyCondition(cx_, handler, test)) {
           return false;
         }
         if ((*test)->isKind(ParseNodeKind::TrueExpr)) {
@@ -1498,13 +1474,13 @@ class FoldVisitor : public RewritingParseNodeVisitor<FoldVisitor> {
   bool visitWhileStmt(ParseNode*& pn) {
     BinaryNode& node = pn->as<BinaryNode>();
     return Base::visitWhileStmt(pn) &&
-           SimplifyCondition(info(), node.unsafeLeftReference());
+           SimplifyCondition(cx_, handler, node.unsafeLeftReference());
   }
 
   bool visitDoWhileStmt(ParseNode*& pn) {
     BinaryNode& node = pn->as<BinaryNode>();
     return Base::visitDoWhileStmt(pn) &&
-           SimplifyCondition(info(), node.unsafeRightReference());
+           SimplifyCondition(cx_, handler, node.unsafeRightReference());
   }
 
   bool visitFunction(ParseNode*& pn) {
@@ -1563,19 +1539,15 @@ class FoldVisitor : public RewritingParseNodeVisitor<FoldVisitor> {
   }
 };
 
-static bool Fold(JSContext* cx, ParserAtomsTable& parserAtoms,
-                 FullParseHandler* handler, ParseNode** pnp) {
-  FoldVisitor visitor(cx, parserAtoms, handler);
+bool Fold(JSContext* cx, FullParseHandler* handler, ParseNode** pnp) {
+  FoldVisitor visitor(cx, handler);
   return visitor.visit(*pnp);
 }
-static bool Fold(FoldInfo info, ParseNode** pnp) {
-  return Fold(info.cx, info.parserAtoms, info.handler, pnp);
-}
 
-bool frontend::FoldConstants(JSContext* cx, ParserAtomsTable& parserAtoms,
-                             ParseNode** pnp, FullParseHandler* handler) {
+bool frontend::FoldConstants(JSContext* cx, ParseNode** pnp,
+                             FullParseHandler* handler) {
   AutoTraceLog traceLog(TraceLoggerForCurrentThread(cx),
                         TraceLogger_BytecodeFoldConstants);
 
-  return Fold(cx, parserAtoms, handler, pnp);
+  return Fold(cx, handler, pnp);
 }

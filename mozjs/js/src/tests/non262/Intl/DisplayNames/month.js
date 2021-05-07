@@ -1,6 +1,4 @@
-// |reftest| skip-if(!this.hasOwnProperty('Intl')||!this.hasOwnProperty('addIntlExtras'))
-
-addMozIntlDisplayNames(this);
+// |reftest| skip-if(!this.hasOwnProperty('Intl')||(!this.Intl.DisplayNames&&!this.hasOwnProperty('addIntlExtras')))
 
 const tests = {
   "en": {
@@ -78,31 +76,6 @@ for (let [locale, localeTests] of Object.entries(tests)) {
   assertThrowsInstanceOf(() => dn.of(-1), RangeError);
   assertThrowsInstanceOf(() => dn.of(0), RangeError);
   assertThrowsInstanceOf(() => dn.of(14), RangeError);
-}
-
-// Test fallback behaviour.
-{
-  let dn1 = new Intl.DisplayNames("en", {type: "month"});
-  let dn2 = new Intl.DisplayNames("en", {type: "month", fallback: "code"});
-  let dn3 = new Intl.DisplayNames("en", {type: "month", fallback: "none"});
-
-  assertEq(dn1.resolvedOptions().fallback, "code");
-  assertEq(dn2.resolvedOptions().fallback, "code");
-  assertEq(dn3.resolvedOptions().fallback, "none");
-
-  assertEq(dn1.resolvedOptions().calendar, "gregory");
-  assertEq(dn2.resolvedOptions().calendar, "gregory");
-  assertEq(dn3.resolvedOptions().calendar, "gregory");
-
-  // The Gregorian calendar doesn't have a thirteenth month.
-  assertEq(dn1.of("13"), "13");
-  assertEq(dn2.of("13"), "13");
-  assertEq(dn3.of("13"), undefined);
-
-  // The returned fallback is in "canonical" case.
-  assertEq(dn1.of("13.0"), "13");
-  assertEq(dn2.of("13.0"), "13");
-  assertEq(dn3.of("13.0"), undefined);
 }
 
 if (typeof reportCompare === "function")

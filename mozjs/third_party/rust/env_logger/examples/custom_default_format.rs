@@ -19,18 +19,22 @@ If you want to control the logging output completely, see the `custom_logger` ex
 
 #[macro_use]
 extern crate log;
+extern crate env_logger;
 
-use env_logger::{Builder, Env};
+use env_logger::{Env, Builder};
 
 fn init_logger() {
     let env = Env::default()
         .filter("MY_LOG_LEVEL")
         .write_style("MY_LOG_STYLE");
 
-    Builder::from_env(env)
-        .format_level(false)
-        .format_timestamp_nanos()
-        .init();
+    let mut builder = Builder::from_env(env);
+
+    builder
+        .default_format_level(false)
+        .default_format_timestamp_nanos(true);
+
+    builder.init();
 }
 
 fn main() {

@@ -23,6 +23,8 @@ class ArgumentsObject;
 
 namespace jit {
 
+using CalleeToken = void*;
+
 enum class FrameType {
   // A JS frame is analogous to a js::InterpreterFrame, representing one
   // scripted function activation. IonJS frames are used by the optimizing
@@ -284,9 +286,9 @@ class JSJitProfilingFrameIterator {
 
   inline JitFrameLayout* framePtr() const;
   inline JSScript* frameScript() const;
-  [[nodiscard]] bool tryInitWithPC(void* pc);
-  [[nodiscard]] bool tryInitWithTable(JitcodeGlobalTable* table, void* pc,
-                                      bool forLastCallSite);
+  MOZ_MUST_USE bool tryInitWithPC(void* pc);
+  MOZ_MUST_USE bool tryInitWithTable(JitcodeGlobalTable* table, void* pc,
+                                     bool forLastCallSite);
 
   void moveToCppEntryFrame();
   void moveToWasmFrame(CommonFrameLayout* frame);
@@ -340,7 +342,7 @@ class RInstructionResults {
 
   ~RInstructionResults();
 
-  [[nodiscard]] bool init(JSContext* cx, uint32_t numResults);
+  MOZ_MUST_USE bool init(JSContext* cx, uint32_t numResults);
   bool isInitialized() const;
   size_t length() const;
 
@@ -439,8 +441,8 @@ class SnapshotIterator {
   Value fromInstructionResult(uint32_t index) const;
 
   Value allocationValue(const RValueAllocation& a, ReadMethod rm = RM_Normal);
-  [[nodiscard]] bool allocationReadable(const RValueAllocation& a,
-                                        ReadMethod rm = RM_Normal);
+  MOZ_MUST_USE bool allocationReadable(const RValueAllocation& a,
+                                       ReadMethod rm = RM_Normal);
   void writeAllocationValuePayload(const RValueAllocation& a, const Value& v);
   void warnUnreadableAllocation();
 
@@ -467,7 +469,7 @@ class SnapshotIterator {
     return snapshot_.numAllocationsRead() < numAllocations();
   }
 
-  JitFrameLayout* frame() { return fp_; };
+  int32_t readOuterNumActualArgs() const;
 
   // Used by recover instruction to store the value back into the instruction
   // results array.
@@ -476,7 +478,7 @@ class SnapshotIterator {
  public:
   // Exhibits frame properties contained in the snapshot.
   uint32_t pcOffset() const;
-  [[nodiscard]] inline bool resumeAfter() const {
+  inline MOZ_MUST_USE bool resumeAfter() const {
     // Inline frames are inlined on calls, which are considered as being
     // resumed on the Call as baseline will push the pc once we return from
     // the call.
@@ -506,12 +508,12 @@ class SnapshotIterator {
   // recover instructions. This vector should be registered before the
   // beginning of the iteration. This function is in charge of allocating
   // enough space for all instructions results, and return false iff it fails.
-  [[nodiscard]] bool initInstructionResults(MaybeReadFallback& fallback);
+  MOZ_MUST_USE bool initInstructionResults(MaybeReadFallback& fallback);
 
  protected:
   // This function is used internally for computing the result of the recover
   // instructions.
-  [[nodiscard]] bool computeInstructionResults(
+  MOZ_MUST_USE bool computeInstructionResults(
       JSContext* cx, RInstructionResults* results) const;
 
  public:
@@ -565,7 +567,7 @@ class SnapshotIterator {
     // Assumes that the common frame arguments have already been read.
     if (script->argumentsHasVarBinding()) {
       if (argsObj) {
-        Value v = maybeRead(fallback);
+        Value v = read();
         if (v.isObject()) {
           *argsObj = &v.toObject().as<ArgumentsObject>();
         }

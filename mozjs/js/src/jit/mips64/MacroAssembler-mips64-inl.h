@@ -56,10 +56,6 @@ void MacroAssembler::move32To64SignExtend(Register src, Register64 dest) {
   ma_sll(dest.reg, src, Imm32(0));
 }
 
-void MacroAssembler::move32SignExtendToPtr(Register src, Register dest) {
-  ma_sll(dest, src, Imm32(0));
-}
-
 void MacroAssembler::move32ZeroExtendToPtr(Register src, Register dest) {
   ma_dext(dest, src, Imm32(0), Imm32(32));
 }
@@ -73,8 +69,6 @@ void MacroAssembler::load32SignExtendToPtr(const Address& src, Register dest) {
 
 // ===============================================================
 // Logical instructions
-
-void MacroAssembler::notPtr(Register reg) { ma_not(reg, reg); }
 
 void MacroAssembler::andPtr(Register src, Register dest) { ma_and(dest, src); }
 
@@ -241,15 +235,6 @@ void MacroAssembler::sub64(Imm64 imm, Register64 dest) {
   as_dsubu(dest.reg, dest.reg, ScratchRegister);
 }
 
-void MacroAssembler::mulPtr(Register rhs, Register srcDest) {
-#ifdef MIPSR6
-  as_dmulu(srcDest, srcDest, rhs);
-#else
-  as_dmultu(srcDest, rhs);
-  as_mflo(srcDest);
-#endif
-}
-
 void MacroAssembler::mul64(Imm64 imm, const Register64& dest) {
   MOZ_ASSERT(dest.reg != ScratchRegister);
   mov(ImmWord(imm.value), ScratchRegister);
@@ -315,10 +300,6 @@ void MacroAssembler::lshiftPtr(Imm32 imm, Register dest) {
   ma_dsll(dest, dest, imm);
 }
 
-void MacroAssembler::lshiftPtr(Register shift, Register dest) {
-  ma_dsll(dest, dest, shift);
-}
-
 void MacroAssembler::lshift64(Imm32 imm, Register64 dest) {
   MOZ_ASSERT(0 <= imm.value && imm.value < 64);
   ma_dsll(dest.reg, dest.reg, imm);
@@ -331,10 +312,6 @@ void MacroAssembler::lshift64(Register shift, Register64 dest) {
 void MacroAssembler::rshiftPtr(Imm32 imm, Register dest) {
   MOZ_ASSERT(0 <= imm.value && imm.value < 64);
   ma_dsrl(dest, dest, imm);
-}
-
-void MacroAssembler::rshiftPtr(Register shift, Register dest) {
-  ma_dsrl(dest, dest, shift);
 }
 
 void MacroAssembler::rshift64(Imm32 imm, Register64 dest) {
@@ -726,23 +703,13 @@ inline void MacroAssembler::cmpPtrSet(Assembler::Condition cond, Address lhs,
 template <>
 inline void MacroAssembler::cmpPtrSet(Assembler::Condition cond, Register lhs,
                                       Address rhs, Register dest) {
-  MOZ_ASSERT(lhs != ScratchRegister);
   loadPtr(rhs, ScratchRegister);
   cmpPtrSet(cond, lhs, ScratchRegister, dest);
 }
 
 template <>
-inline void MacroAssembler::cmpPtrSet(Assembler::Condition cond, Address lhs,
-                                      Register rhs, Register dest) {
-  MOZ_ASSERT(rhs != ScratchRegister);
-  loadPtr(lhs, ScratchRegister);
-  cmpPtrSet(cond, ScratchRegister, rhs, dest);
-}
-
-template <>
 inline void MacroAssembler::cmp32Set(Assembler::Condition cond, Register lhs,
                                      Address rhs, Register dest) {
-  MOZ_ASSERT(lhs != ScratchRegister);
   load32(rhs, ScratchRegister);
   cmp32Set(cond, lhs, ScratchRegister, dest);
 }
@@ -750,29 +717,8 @@ inline void MacroAssembler::cmp32Set(Assembler::Condition cond, Register lhs,
 template <>
 inline void MacroAssembler::cmp32Set(Assembler::Condition cond, Address lhs,
                                      Register rhs, Register dest) {
-  MOZ_ASSERT(rhs != ScratchRegister);
   load32(lhs, ScratchRegister);
   cmp32Set(cond, ScratchRegister, rhs, dest);
-}
-
-void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs, Register rhs,
-                                   Register src, Register dest) {
-  Register scratch = ScratchRegister;
-  MOZ_ASSERT(src != scratch && dest != scratch);
-  cmpPtrSet(cond, lhs, rhs, scratch);
-#ifdef MIPSR6
-  as_selnez(src, src, scratch);
-  as_seleqz(dest, dest, scratch);
-  as_or(dest, dest, src);
-#else
-  as_movn(dest, src, scratch);
-#endif
-}
-
-void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs,
-                                   const Address& rhs, Register src,
-                                   Register dest) {
-  MOZ_CRASH("NYI");
 }
 
 void MacroAssemblerMIPS64Compat::incrementInt32Value(const Address& addr) {

@@ -63,11 +63,6 @@ impl ConstantData {
         self.0.is_empty()
     }
 
-    /// Return the data as a slice.
-    pub fn as_slice(&self) -> &[u8] {
-        self.0.as_slice()
-    }
-
     /// Convert the data to a vector.
     pub fn into_vec(self) -> Vec<u8> {
         self.0
@@ -171,7 +166,7 @@ pub type ConstantOffset = u32;
 /// function body); because the function is not yet compiled when constants are inserted,
 /// [`set_offset`](crate::ir::ConstantPool::set_offset) must be called once a constant's offset
 /// from the beginning of the function is known (see
-/// `relaxation` in `relaxation.rs`).
+/// [`relaxation.rs`](crate::binemit::relaxation)).
 #[derive(Clone)]
 pub struct ConstantPoolEntry {
     data: ConstantData,

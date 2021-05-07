@@ -82,7 +82,12 @@ inline void js::Nursery::setForwardingPointer(void* oldData, void* newData,
 inline void js::Nursery::setDirectForwardingPointer(void* oldData,
                                                     void* newData) {
   MOZ_ASSERT(isInside(oldData));
-  MOZ_ASSERT(!isInside(newData));
+
+  // Bug 1196210: If a zero-capacity header lands in the last 2 words of a
+  // jemalloc chunk abutting the start of a nursery chunk, the (invalid)
+  // newData pointer will appear to be "inside" the nursery.
+  MOZ_ASSERT(!isInside(newData) ||
+             (uintptr_t(newData) & js::gc::ChunkMask) == 0);
 
   new (oldData) BufferRelocationOverlay{newData};
 }
@@ -96,8 +101,7 @@ namespace js {
 template <typename T>
 static inline T* AllocateObjectBuffer(JSContext* cx, uint32_t count) {
   size_t nbytes = RoundUp(count * sizeof(T), sizeof(Value));
-  auto* buffer =
-      static_cast<T*>(cx->nursery().allocateBuffer(cx->zone(), nbytes));
+  T* buffer = static_cast<T*>(cx->nursery().allocateBuffer(cx->zone(), nbytes));
   if (!buffer) {
     ReportOutOfMemory(cx);
   }
@@ -111,7 +115,7 @@ static inline T* AllocateObjectBuffer(JSContext* cx, JSObject* obj,
     return cx->pod_malloc<T>(count);
   }
   size_t nbytes = RoundUp(count * sizeof(T), sizeof(Value));
-  auto* buffer = static_cast<T*>(cx->nursery().allocateBuffer(obj, nbytes));
+  T* buffer = static_cast<T*>(cx->nursery().allocateBuffer(obj, nbytes));
   if (!buffer) {
     ReportOutOfMemory(cx);
   }
@@ -123,64 +127,52 @@ template <typename T>
 static inline T* ReallocateObjectBuffer(JSContext* cx, JSObject* obj,
                                         T* oldBuffer, uint32_t oldCount,
                                         uint32_t newCount) {
-  T* buffer;
   if (cx->isHelperThreadContext()) {
-    buffer = obj->zone()->pod_realloc<T>(oldBuffer, oldCount, newCount);
-  } else {
-    buffer = static_cast<T*>(cx->nursery().reallocateBuffer(
-        obj->zone(), obj, oldBuffer, oldCount * sizeof(T),
-        newCount * sizeof(T)));
+    return obj->zone()->pod_realloc<T>(oldBuffer, oldCount, newCount);
   }
-
+  T* buffer = static_cast<T*>(cx->nursery().reallocateBuffer(
+      obj->zone(), obj, oldBuffer, oldCount * sizeof(T), newCount * sizeof(T)));
   if (!buffer) {
     ReportOutOfMemory(cx);
   }
-
   return buffer;
 }
 
 static inline JS::BigInt::Digit* AllocateBigIntDigits(JSContext* cx,
                                                       JS::BigInt* bi,
                                                       uint32_t length) {
-  JS::BigInt::Digit* digits;
   if (cx->isHelperThreadContext()) {
-    digits = cx->pod_malloc<JS::BigInt::Digit>(length);
-  } else {
-    size_t nbytes = RoundUp(length * sizeof(JS::BigInt::Digit), sizeof(Value));
-    digits = static_cast<JS::BigInt::Digit*>(
-        cx->nursery().allocateBuffer(bi, nbytes));
+    return cx->pod_malloc<JS::BigInt::Digit>(length);
   }
-
+  size_t nbytes = RoundUp(length * sizeof(JS::BigInt::Digit), sizeof(Value));
+  auto* digits =
+      static_cast<JS::BigInt::Digit*>(cx->nursery().allocateBuffer(bi, nbytes));
   if (!digits) {
     ReportOutOfMemory(cx);
   }
-
   return digits;
 }
 
 static inline JS::BigInt::Digit* ReallocateBigIntDigits(
     JSContext* cx, JS::BigInt* bi, JS::BigInt::Digit* oldDigits,
     uint32_t oldLength, uint32_t newLength) {
-  JS::BigInt::Digit* digits;
   if (cx->isHelperThreadContext()) {
     MOZ_ASSERT(!cx->nursery().isInside(oldDigits));
-    digits = bi->zone()->pod_realloc<JS::BigInt::Digit>(oldDigits, oldLength,
-                                                        newLength);
-  } else {
-    size_t oldBytes =
-        RoundUp(oldLength * sizeof(JS::BigInt::Digit), sizeof(Value));
-    size_t newBytes =
-        RoundUp(newLength * sizeof(JS::BigInt::Digit), sizeof(Value));
-
-    digits = static_cast<JS::BigInt::Digit*>(cx->nursery().reallocateBuffer(
-        bi->zone(), bi, oldDigits, oldBytes, newBytes));
+    return bi->zone()->pod_realloc<JS::BigInt::Digit>(oldDigits, oldLength,
+                                                      newLength);
   }
 
-  if (!digits) {
+  size_t oldBytes =
+      RoundUp(oldLength * sizeof(JS::BigInt::Digit), sizeof(Value));
+  size_t newBytes =
+      RoundUp(newLength * sizeof(JS::BigInt::Digit), sizeof(Value));
+
+  auto* buffer = static_cast<JS::BigInt::Digit*>(cx->nursery().reallocateBuffer(
+      bi->zone(), bi, oldDigits, oldBytes, newBytes));
+  if (!buffer) {
     ReportOutOfMemory(cx);
   }
-
-  return digits;
+  return buffer;
 }
 
 }  // namespace js

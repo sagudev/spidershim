@@ -1,5 +1,7 @@
 // Exercise ModuleDeclarationInstantiation() operation.
 
+load(libdir + "dummyModuleResolveHook.js");
+
 function testModuleEnvironment(module, expected) {
     var actual = getModuleEnvironmentNames(module).sort();
     assertEq(actual.length, expected.length);
@@ -13,8 +15,8 @@ let m = parseModule("");
 m.declarationInstantiation();
 testModuleEnvironment(m, []);
 
-let a = registerModule('a', parseModule("var x = 1; export { x };"));
-let b = registerModule('b', parseModule("import { x as y } from 'a';"));
+let a = moduleRepo['a'] = parseModule("var x = 1; export { x };");
+let b = moduleRepo['b'] = parseModule("import { x as y } from 'a';");
 
 a.declarationInstantiation();
 b.declarationInstantiation();

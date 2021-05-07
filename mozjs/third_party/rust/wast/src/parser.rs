@@ -63,7 +63,7 @@
 //! This module is heavily inspired by [`syn`](https://docs.rs/syn) so you can
 //! likely also draw inspiration from the excellent examples in the `syn` crate.
 
-use crate::lexer::{Float, Integer, Lexer, Token};
+use crate::lexer::{Comment, Float, Integer, Lexer, Source, Token};
 use crate::{Error, Span};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -251,16 +251,6 @@ pub trait Peek {
     /// being too big).
     fn peek(cursor: Cursor<'_>) -> bool;
 
-    /// The same as `peek`, except it checks the token immediately following
-    /// the current token.
-    fn peek2(mut cursor: Cursor<'_>) -> bool {
-        if cursor.advance_token().is_some() {
-            Self::peek(cursor)
-        } else {
-            false
-        }
-    }
-
     /// Returns a human-readable name of this token to display when generating
     /// errors about this token missing.
     fn display() -> &'static str;
@@ -279,11 +269,10 @@ pub struct ParseBuffer<'a> {
     // list of tokens from the tokenized source (including whitespace and
     // comments), and the second element is how to skip this token, if it can be
     // skipped.
-    tokens: Box<[(Token<'a>, Cell<NextTokenAt>)]>,
+    tokens: Box<[(Source<'a>, Cell<NextTokenAt>)]>,
     input: &'a str,
     cur: Cell<usize>,
     known_annotations: RefCell<HashMap<String, usize>>,
-    depth: Cell<usize>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -343,7 +332,6 @@ impl ParseBuffer<'_> {
         let ret = ParseBuffer {
             tokens: tokens.into_boxed_slice(),
             cur: Cell::new(0),
-            depth: Cell::new(0),
             input,
             known_annotations: Default::default(),
         };
@@ -359,6 +347,7 @@ impl ParseBuffer<'_> {
     // delimiters. This is required since while parsing we generally skip
     // annotations and there's no real opportunity to return a parse error.
     fn validate_annotations(&self) -> Result<()> {
+        use crate::lexer::Source::*;
         use crate::lexer::Token::*;
         enum State {
             None,
@@ -369,13 +358,13 @@ impl ParseBuffer<'_> {
         for token in self.tokens.iter() {
             state = match (&token.0, state) {
                 // From nothing, a `(` starts the search for an annotation
-                (LParen(_), State::None) => State::LParen,
+                (Token(LParen(_)), State::None) => State::LParen,
                 // ... otherwise in nothing we alwyas preserve that state.
                 (_, State::None) => State::None,
 
                 // If the previous state was an `LParen`, we may have an
                 // annotation if the next keyword is reserved
-                (Reserved(s), State::LParen) if s.starts_with("@") && s.len() > 0 => {
+                (Token(Reserved(s)), State::LParen) if s.starts_with("@") && s.len() > 0 => {
                     let offset = self.input_pos(s);
                     State::Annotation {
                         span: Span { offset },
@@ -388,12 +377,12 @@ impl ParseBuffer<'_> {
 
                 // Once we're in an annotation we need to balance parentheses,
                 // so handle the depth changes.
-                (LParen(_), State::Annotation { span, depth }) => State::Annotation {
+                (Token(LParen(_)), State::Annotation { span, depth }) => State::Annotation {
                     span,
                     depth: depth + 1,
                 },
-                (RParen(_), State::Annotation { depth: 1, .. }) => State::None,
-                (RParen(_), State::Annotation { span, depth }) => State::Annotation {
+                (Token(RParen(_)), State::Annotation { depth: 1, .. }) => State::None,
+                (Token(RParen(_)), State::Annotation { span, depth }) => State::Annotation {
                     span,
                     depth: depth - 1,
                 },
@@ -433,8 +422,9 @@ impl<'a> Parser<'a> {
         self.buf.tokens[self.cursor().cur..]
             .iter()
             .any(|(t, _)| match t {
-                Token::Whitespace(_) | Token::LineComment(_) | Token::BlockComment(_) => false,
-                _ => true,
+                Source::Token(_) => true,
+                Source::Comment(_) => false,
+                Source::Whitespace(_) => false,
             })
     }
 
@@ -458,21 +448,21 @@ impl<'a> Parser<'a> {
     /// [spec]: https://webassembly.github.io/spec/core/text/types.html#table-types
     ///
     /// ```text
-    /// tabletype ::= lim:limits et:reftype
+    /// tabletype ::= lim:limits et:elemtype
     /// ```
     ///
     /// so to parse a [`TableType`] we recursively need to parse a [`Limits`]
-    /// and a [`RefType`]
+    /// and a [`TableElemType`]
     ///
     /// ```
     /// # use wast::*;
     /// # use wast::parser::*;
-    /// struct TableType<'a> {
+    /// struct TableType {
     ///     limits: Limits,
-    ///     elem: RefType<'a>,
+    ///     elem: TableElemType,
     /// }
     ///
-    /// impl<'a> Parse<'a> for TableType<'a> {
+    /// impl<'a> Parse<'a> for TableType {
     ///     fn parse(parser: Parser<'a>) -> Result<Self> {
     ///         // parse the `lim` then `et` in sequence
     ///         Ok(TableType {
@@ -485,7 +475,7 @@ impl<'a> Parser<'a> {
     ///
     /// [`Limits`]: crate::ast::Limits
     /// [`TableType`]: crate::ast::TableType
-    /// [`RefType`]: crate::ast::RefType
+    /// [`TableElemType`]: crate::ast::TableElemType
     pub fn parse<T: Parse<'a>>(self) -> Result<T> {
         T::parse(self)
     }
@@ -658,7 +648,6 @@ impl<'a> Parser<'a> {
     /// }
     /// ```
     pub fn parens<T>(self, f: impl FnOnce(Parser<'a>) -> Result<T>) -> Result<T> {
-        self.buf.depth.set(self.buf.depth.get() + 1);
         let before = self.buf.cur.get();
         let res = self.step(|cursor| {
             let mut cursor = match cursor.lparen() {
@@ -673,19 +662,10 @@ impl<'a> Parser<'a> {
                 None => Err(cursor.error("expected `)`")),
             }
         });
-        self.buf.depth.set(self.buf.depth.get() - 1);
         if res.is_err() {
             self.buf.cur.set(before);
         }
         return res;
-    }
-
-    /// Return the depth of nested parens we've parsed so far.
-    ///
-    /// This is a low-level method that is only useful for implementing
-    /// recursion limits in custom parsers.
-    pub fn parens_depth(&self) -> usize {
-        self.buf.depth.get()
     }
 
     fn cursor(self) -> Cursor<'a> {
@@ -727,11 +707,6 @@ impl<'a> Parser<'a> {
     /// Returns the span of the current token
     pub fn cur_span(&self) -> Span {
         self.cursor().cur_span()
-    }
-
-    /// Returns the span of the previous token
-    pub fn prev_span(&self) -> Span {
-        self.cursor().prev_span().unwrap_or(Span::from_offset(0))
     }
 
     /// Registers a new known annotation with this parser to allow parsing
@@ -898,16 +873,6 @@ impl<'a> Cursor<'a> {
         Span { offset }
     }
 
-    /// Returns the span of the previous `Token` token.
-    ///
-    /// Does not take into account whitespace or comments.
-    pub(crate) fn prev_span(&self) -> Option<Span> {
-        let (token, _) = self.parser.buf.tokens.get(self.cur.checked_sub(1)?)?;
-        Some(Span {
-            offset: self.parser.buf.input_pos(token.src()),
-        })
-    }
-
     /// Same as [`Parser::error`], but works with the current token in this
     /// [`Cursor`] instead.
     pub fn error(&self, msg: impl fmt::Display) -> Error {
@@ -1033,7 +998,7 @@ impl<'a> Cursor<'a> {
     /// unknown annotations.
     pub fn string(mut self) -> Option<(&'a [u8], Self)> {
         match self.advance_token()? {
-            Token::String(s) => Some((s.val(), self)),
+            Token::String { val, .. } => Some((&**val, self)),
             _ => None,
         }
     }
@@ -1064,27 +1029,26 @@ impl<'a> Cursor<'a> {
             return None;
         }
         match &self.parser.buf.tokens.get(self.cur.wrapping_sub(1))?.0 {
-            Token::LParen(_) => Some((&token[1..], cursor)),
+            Source::Token(Token::LParen(_)) => Some((&token[1..], cursor)),
             _ => None,
         }
     }
 
     /// Attempts to advance this cursor if the current token is a
-    /// [`Token::LineComment`](crate::lexer::Token) or a
-    /// [`Token::BlockComment`](crate::lexer::Token)
+    /// [`Source::Comment`](crate::lexer::Comment)
     ///
     /// This function will only skip whitespace, no other tokens.
-    pub fn comment(mut self) -> Option<(&'a str, Self)> {
+    pub fn comment(mut self) -> Option<(&'a Comment<'a>, Self)> {
         let comment = loop {
             match &self.parser.buf.tokens.get(self.cur)?.0 {
-                Token::LineComment(c) | Token::BlockComment(c) => {
+                Source::Token(_) => return None,
+                Source::Comment(c) => {
                     self.cur += 1;
                     break c;
                 }
-                Token::Whitespace(_) => {
+                Source::Whitespace(_) => {
                     self.cur += 1;
                 }
-                _ => return None,
             }
         };
         Some((comment, self))
@@ -1103,15 +1067,14 @@ impl<'a> Cursor<'a> {
             // If we're currently pointing at a token, and it's not the start
             // of an annotation, then we return that token and advance
             // ourselves to just after that token.
-            match token {
-                Token::Whitespace(_) | Token::LineComment(_) | Token::BlockComment(_) => {}
-                _ => match self.annotation_start() {
+            if let Source::Token(t) = token {
+                match self.annotation_start() {
                     Some(n) if !is_known_annotation(n) => {}
                     _ => {
                         self.cur += 1;
-                        return Some(token);
+                        return Some(t);
                     }
-                },
+                }
             }
 
             // ... otherwise we need to skip the current token, and possibly
@@ -1149,11 +1112,11 @@ impl<'a> Cursor<'a> {
 
     fn annotation_start(&self) -> Option<&'a str> {
         match self.parser.buf.tokens.get(self.cur).map(|p| &p.0) {
-            Some(Token::LParen(_)) => {}
+            Some(Source::Token(Token::LParen(_))) => {}
             _ => return None,
         }
         let reserved = match self.parser.buf.tokens.get(self.cur + 1).map(|p| &p.0) {
-            Some(Token::Reserved(n)) => n,
+            Some(Source::Token(Token::Reserved(n))) => n,
             _ => return None,
         };
         if reserved.starts_with("@") && reserved.len() > 1 {
@@ -1179,8 +1142,8 @@ impl<'a> Cursor<'a> {
             self.cur += 1;
             while depth > 0 {
                 match &self.parser.buf.tokens.get(self.cur)?.0 {
-                    Token::LParen(_) => depth += 1,
-                    Token::RParen(_) => depth -= 1,
+                    Source::Token(Token::LParen(_)) => depth += 1,
+                    Source::Token(Token::RParen(_)) => depth -= 1,
                     _ => {}
                 }
                 self.cur += 1;
@@ -1195,10 +1158,8 @@ impl<'a> Cursor<'a> {
             // and otherwise we skip all comments/whitespace and otherwise
             // get real intersted once a normal `Token` pops up.
             match token {
-                Token::Whitespace(_) | Token::LineComment(_) | Token::BlockComment(_) => {
-                    self.cur += 1
-                }
-                _ => return Some(self.cur),
+                Source::Token(_) => return Some(self.cur),
+                _ => self.cur += 1,
             }
         }
     }

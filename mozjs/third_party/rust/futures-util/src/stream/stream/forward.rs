@@ -1,37 +1,59 @@
-use crate::stream::Fuse;
+use crate::stream::{StreamExt, Fuse};
 use core::pin::Pin;
 use futures_core::future::{FusedFuture, Future};
-use futures_core::ready;
-use futures_core::stream::Stream;
+use futures_core::stream::{Stream, TryStream};
 use futures_core::task::{Context, Poll};
 use futures_sink::Sink;
-use pin_project_lite::pin_project;
+use pin_utils::{unsafe_pinned, unsafe_unpinned};
 
-pin_project! {
-    /// Future for the [`forward`](super::StreamExt::forward) method.
-    #[project = ForwardProj]
-    #[derive(Debug)]
-    #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct Forward<St, Si, Item> {
-        #[pin]
-        sink: Option<Si>,
-        #[pin]
-        stream: Fuse<St>,
-        buffered_item: Option<Item>,
-    }
+const INVALID_POLL: &str = "polled `Forward` after completion";
+
+/// Future for the [`forward`](super::StreamExt::forward) method.
+#[derive(Debug)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct Forward<St: TryStream, Si> {
+    sink: Option<Si>,
+    stream: Fuse<St>,
+    buffered_item: Option<St::Ok>,
 }
 
-impl<St, Si, Item> Forward<St, Si, Item> {
-    pub(crate) fn new(stream: St, sink: Si) -> Self {
-        Self {
+impl<St: TryStream + Unpin, Si: Unpin> Unpin for Forward<St, Si> {}
+
+impl<St, Si, E> Forward<St, Si>
+where
+    Si: Sink<St::Ok, Error = E>,
+    St: TryStream<Error = E> + Stream,
+{
+    unsafe_pinned!(sink: Option<Si>);
+    unsafe_pinned!(stream: Fuse<St>);
+    unsafe_unpinned!(buffered_item: Option<St::Ok>);
+
+    pub(super) fn new(stream: St, sink: Si) -> Self {
+        Forward {
             sink: Some(sink),
-            stream: Fuse::new(stream),
-            buffered_item: None,
+            stream: stream.fuse(),
+                buffered_item: None,
         }
     }
+
+    fn try_start_send(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        item: St::Ok,
+    ) -> Poll<Result<(), E>> {
+        debug_assert!(self.buffered_item.is_none());
+        {
+            let mut sink = self.as_mut().sink().as_pin_mut().unwrap();
+            if sink.as_mut().poll_ready(cx)?.is_ready() {
+                return Poll::Ready(sink.start_send(item));
+            }
+        }
+        *self.as_mut().buffered_item() = Some(item);
+        Poll::Pending
+    }
 }
 
-impl<St, Si, Item, E> FusedFuture for Forward<St, Si, Item>
+impl<St, Si, Item, E> FusedFuture for Forward<St, Si>
 where
     Si: Sink<Item, Error = E>,
     St: Stream<Item = Result<Item, E>>,
@@ -41,7 +63,7 @@ where
     }
 }
 
-impl<St, Si, Item, E> Future for Forward<St, Si, Item>
+impl<St, Si, Item, E> Future for Forward<St, Si>
 where
     Si: Sink<Item, Error = E>,
     St: Stream<Item = Result<Item, E>>,
@@ -49,31 +71,26 @@ where
     type Output = Result<(), E>;
 
     fn poll(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Self::Output> {
-        let ForwardProj { mut sink, mut stream, buffered_item } = self.project();
-        let mut si = sink.as_mut().as_pin_mut().expect("polled `Forward` after completion");
+        // If we've got an item buffered already, we need to write it to the
+        // sink before we can do anything else
+        if let Some(item) = self.as_mut().buffered_item().take() {
+            ready!(self.as_mut().try_start_send(cx, item))?;
+        }
 
         loop {
-            // If we've got an item buffered already, we need to write it to the
-            // sink before we can do anything else
-            if buffered_item.is_some() {
-                ready!(si.as_mut().poll_ready(cx))?;
-                si.as_mut().start_send(buffered_item.take().unwrap())?;
-            }
-
-            match stream.as_mut().poll_next(cx)? {
-                Poll::Ready(Some(item)) => {
-                    *buffered_item = Some(item);
-                }
+            match self.as_mut().stream().poll_next(cx)? {
+                Poll::Ready(Some(item)) =>
+                   ready!(self.as_mut().try_start_send(cx, item))?,
                 Poll::Ready(None) => {
-                    ready!(si.poll_close(cx))?;
-                    sink.set(None);
+                    ready!(self.as_mut().sink().as_pin_mut().expect(INVALID_POLL).poll_close(cx))?;
+                    self.as_mut().sink().set(None);
                     return Poll::Ready(Ok(()))
                 }
                 Poll::Pending => {
-                    ready!(si.poll_flush(cx))?;
+                    ready!(self.as_mut().sink().as_pin_mut().expect(INVALID_POLL).poll_flush(cx))?;
                     return Poll::Pending
                 }
             }

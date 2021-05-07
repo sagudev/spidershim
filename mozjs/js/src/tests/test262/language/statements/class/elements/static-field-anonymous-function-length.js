@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-fields) skip-if(!xulRuntime.shell) -- requires shell-options
+// |reftest| skip -- class-static-fields-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/static-field-anonymous-function-length.case
 // - src/class-elements/default/cls-decl.template

@@ -7,6 +7,9 @@ esid: sec-parseint-string-radix
 description: Checking parseInt.prototype
 ---*/
 
-assert.sameValue(Object.prototype.hasOwnProperty.call(parseInt, "prototype"), false, 'Object.prototype.hasOwnProperty.call(parseInt, "prototype") must return false');
+//CHECK#1
+if (parseInt.prototype !== undefined) {
+  $ERROR('#1: parseInt.prototype === undefined. Actual: ' + (parseInt.prototype));
+}
 
 reportCompare(0, 0);

@@ -19,6 +19,7 @@
 #include "wasm/WasmSignalHandlers.h"
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/ThreadLocal.h"
 
 #include "threading/Thread.h"
@@ -225,10 +226,6 @@ using mozilla::DebugOnly;
 #  define R13_sig(p) ((p)->thread.__sp)
 #  define R14_sig(p) ((p)->thread.__lr)
 #  define R15_sig(p) ((p)->thread.__pc)
-#  define EPC_sig(p) ((p)->thread.__pc)
-#  define RFP_sig(p) ((p)->thread.__fp)
-#  define R31_sig(p) ((p)->thread.__sp)
-#  define RLR_sig(p) ((p)->thread.__lr)
 #else
 #  error "Don't know how to read/write to the thread state via the mcontext_t."
 #endif
@@ -354,12 +351,6 @@ struct macos_arm_context {
   arm_neon_state_t float_;
 };
 #    define CONTEXT macos_arm_context
-#  elif defined(__aarch64__)
-struct macos_aarch64_context {
-  arm_thread_state64_t thread;
-  arm_neon_state64_t float_;
-};
-#    define CONTEXT macos_aarch64_context
 #  else
 #    error Unsupported architecture
 #  endif
@@ -692,9 +683,9 @@ static bool HandleUnalignedTrap(CONTEXT* context, uint8_t* pc,
 }
 #endif  // WASM_EMULATE_ARM_UNALIGNED_FP_ACCESS
 
-[[nodiscard]] static bool HandleTrap(CONTEXT* context,
-                                     bool isUnalignedSignal = false,
-                                     JSContext* assertCx = nullptr) {
+static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
+                                    bool isUnalignedSignal = false,
+                                    JSContext* assertCx = nullptr) {
   MOZ_ASSERT(sAlreadyHandlingTrap.get());
 
   uint8_t* pc = ContextToPC(context);
@@ -716,9 +707,7 @@ static bool HandleUnalignedTrap(CONTEXT* context, uint8_t* pc,
   // due to this trap occurring in the indirect call prologue, while fp points
   // to the caller's Frame which can be in a different Module. In any case,
   // though, the containing JSContext is the same.
-
-  auto* frame = reinterpret_cast<Frame*>(ContextToFP(context));
-  Instance* instance = GetNearestEffectiveTls(frame)->instance;
+  Instance* instance = ((Frame*)ContextToFP(context))->tls->instance;
   MOZ_RELEASE_ASSERT(&instance->code() == &segment.code() ||
                      trap == Trap::IndirectCallBadSig);
 
@@ -827,11 +816,6 @@ static bool HandleMachException(const ExceptionRequest& request) {
   unsigned int float_state_count = ARM_NEON_STATE_COUNT;
   int thread_state = ARM_THREAD_STATE;
   int float_state = ARM_NEON_STATE;
-#  elif defined(__aarch64__)
-  unsigned int thread_state_count = ARM_THREAD_STATE64_COUNT;
-  unsigned int float_state_count = ARM_NEON_STATE64_COUNT;
-  int thread_state = ARM_THREAD_STATE64;
-  int float_state = ARM_NEON_STATE64;
 #  else
 #    error Unsupported architecture
 #  endif
@@ -878,8 +862,6 @@ static bool HandleMachException(const ExceptionRequest& request) {
 static mach_port_t sMachDebugPort = MACH_PORT_NULL;
 
 static void MachExceptionHandlerThread() {
-  ThisThread::SetName("JS Wasm MachExceptionHandler");
-
   // Taken from mach_exc in /usr/include/mach/mach_exc.defs.
   static const unsigned EXCEPTION_MSG_ID = 2405;
 
@@ -1126,12 +1108,12 @@ static bool EnsureLazyProcessSignalHandlers() {
 }
 
 bool wasm::EnsureFullSignalHandlers(JSContext* cx) {
-  if (cx->wasm().triedToInstallSignalHandlers) {
-    return cx->wasm().haveSignalHandlers;
+  if (cx->wasmTriedToInstallSignalHandlers) {
+    return cx->wasmHaveSignalHandlers;
   }
 
-  cx->wasm().triedToInstallSignalHandlers = true;
-  MOZ_RELEASE_ASSERT(!cx->wasm().haveSignalHandlers);
+  cx->wasmTriedToInstallSignalHandlers = true;
+  MOZ_RELEASE_ASSERT(!cx->wasmHaveSignalHandlers);
 
   {
     auto eagerInstallState = sEagerInstallState.lock();
@@ -1165,7 +1147,7 @@ bool wasm::EnsureFullSignalHandlers(JSContext* cx) {
   }
 #endif
 
-  cx->wasm().haveSignalHandlers = true;
+  cx->wasmHaveSignalHandlers = true;
   return true;
 }
 
@@ -1185,8 +1167,7 @@ bool wasm::MemoryAccessTraps(const RegisterState& regs, uint8_t* addr,
     return false;
   }
 
-  Instance& instance =
-      *GetNearestEffectiveTls(Frame::fromUntaggedWasmExitFP(regs.fp))->instance;
+  Instance& instance = *reinterpret_cast<Frame*>(regs.fp)->tls->instance;
   MOZ_ASSERT(&instance.code() == &segment.code());
 
   if (!instance.memoryAccessInGuardRegion((uint8_t*)addr, numBytes)) {

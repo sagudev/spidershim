@@ -1254,7 +1254,6 @@ impl<'alloc> SourceLocationAccessor for MemberAssignmentTarget<'alloc> {
     fn set_loc(&mut self, start: SourceLocation, end: SourceLocation) {
         match self {
             MemberAssignmentTarget::ComputedMemberAssignmentTarget(content) => { content.set_loc(start, end) }
-            MemberAssignmentTarget::PrivateFieldAssignmentTarget(content) => { content.set_loc(start, end) }
             MemberAssignmentTarget::StaticMemberAssignmentTarget(content) => { content.set_loc(start, end) }
         }
     }
@@ -1262,7 +1261,6 @@ impl<'alloc> SourceLocationAccessor for MemberAssignmentTarget<'alloc> {
     fn get_loc(&self) -> SourceLocation {
         match self {
             MemberAssignmentTarget::ComputedMemberAssignmentTarget(content) => { content.get_loc() }
-            MemberAssignmentTarget::PrivateFieldAssignmentTarget(content) => { content.get_loc() }
             MemberAssignmentTarget::StaticMemberAssignmentTarget(content) => { content.get_loc() }
         }
     }
@@ -1433,17 +1431,12 @@ impl<'alloc> SourceLocationAccessor for OptionalChain<'alloc> {
                 loc.start = start.start;
                 loc.end = end.end;
             }
-            OptionalChain::PrivateFieldExpressionTail { mut loc, .. } => {
-                loc.start = start.start;
-                loc.end = end.end;
-            }
             OptionalChain::CallExpressionTail { mut loc, .. } => {
                 loc.start = start.start;
                 loc.end = end.end;
             }
             OptionalChain::ComputedMemberExpression(content) => { content.set_loc(start, end) }
             OptionalChain::StaticMemberExpression(content) => { content.set_loc(start, end) }
-            OptionalChain::PrivateFieldExpression(content) => { content.set_loc(start, end) }
             OptionalChain::CallExpression(content) => { content.set_loc(start, end) }
         }
     }
@@ -1456,15 +1449,11 @@ impl<'alloc> SourceLocationAccessor for OptionalChain<'alloc> {
             OptionalChain::StaticMemberExpressionTail { loc, .. } => {
                 *loc
             }
-            OptionalChain::PrivateFieldExpressionTail { loc, .. } => {
-                *loc
-            }
             OptionalChain::CallExpressionTail { loc, .. } => {
                 *loc
             }
             OptionalChain::ComputedMemberExpression(content) => { content.get_loc() }
             OptionalChain::StaticMemberExpression(content) => { content.get_loc() }
-            OptionalChain::PrivateFieldExpression(content) => { content.get_loc() }
             OptionalChain::CallExpression(content) => { content.get_loc() }
         }
     }
@@ -1483,17 +1472,6 @@ impl<'alloc> SourceLocationAccessor for Parameter<'alloc> {
             Parameter::Binding(content) => { content.get_loc() }
             Parameter::BindingWithDefault(content) => { content.get_loc() }
         }
-    }
-}
-
-impl<'alloc> SourceLocationAccessor for PrivateFieldAssignmentTarget<'alloc> {
-    fn set_loc(&mut self, start: SourceLocation, end: SourceLocation) {
-        self.loc.start = start.start;
-        self.loc.end = end.end;
-    }
-
-    fn get_loc(&self) -> SourceLocation {
-        self.loc
     }
 }
 

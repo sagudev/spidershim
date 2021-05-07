@@ -7,6 +7,8 @@
 #ifndef builtin_intl_Collator_h
 #define builtin_intl_Collator_h
 
+#include "mozilla/Attributes.h"
+
 #include <stdint.h>
 
 #include "builtin/SelfHostingDefines.h"
@@ -32,7 +34,7 @@ class CollatorObject : public NativeObject {
                 "INTERNALS_SLOT must match self-hosting define for internals "
                 "object slot");
 
-  // Estimated memory use for UCollator (see IcuMemoryUsage).
+  // Estimated memory use for UCollator.
   static constexpr size_t EstimatedMemoryUse = 1128;
 
   UCollator* getCollator() const {
@@ -61,8 +63,8 @@ class CollatorObject : public NativeObject {
  *
  * Usage: collator = intl_Collator(locales, options)
  */
-[[nodiscard]] extern bool intl_Collator(JSContext* cx, unsigned argc,
-                                        JS::Value* vp);
+extern MOZ_MUST_USE bool intl_Collator(JSContext* cx, unsigned argc,
+                                       JS::Value* vp);
 
 /**
  * Returns an array with the collation type identifiers per Unicode
@@ -72,8 +74,8 @@ class CollatorObject : public NativeObject {
  *
  * Usage: collations = intl_availableCollations(locale)
  */
-[[nodiscard]] extern bool intl_availableCollations(JSContext* cx, unsigned argc,
-                                                   JS::Value* vp);
+extern MOZ_MUST_USE bool intl_availableCollations(JSContext* cx, unsigned argc,
+                                                  JS::Value* vp);
 
 /**
  * Compares x and y (which must be String values), and returns a number less
@@ -85,8 +87,8 @@ class CollatorObject : public NativeObject {
  *
  * Usage: result = intl_CompareStrings(collator, x, y)
  */
-[[nodiscard]] extern bool intl_CompareStrings(JSContext* cx, unsigned argc,
-                                              JS::Value* vp);
+extern MOZ_MUST_USE bool intl_CompareStrings(JSContext* cx, unsigned argc,
+                                             JS::Value* vp);
 
 /**
  * Returns true if the given locale sorts upper-case before lower-case
@@ -94,8 +96,8 @@ class CollatorObject : public NativeObject {
  *
  * Usage: result = intl_isUpperCaseFirst(locale)
  */
-[[nodiscard]] extern bool intl_isUpperCaseFirst(JSContext* cx, unsigned argc,
-                                                JS::Value* vp);
+extern MOZ_MUST_USE bool intl_isUpperCaseFirst(JSContext* cx, unsigned argc,
+                                               JS::Value* vp);
 
 }  // namespace js
 

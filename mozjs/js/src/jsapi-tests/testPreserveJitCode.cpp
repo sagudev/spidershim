@@ -8,7 +8,6 @@
 #include "js/CompilationAndEvaluation.h"  // JS::CompileFunction
 #include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "jsapi-tests/tests.h"
-#include "util/Text.h"
 
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
@@ -50,7 +49,7 @@ bool testPreserveJitCode(bool preserveJitCode, unsigned remainingIonScripts) {
 
   CHECK_EQUAL(countIonScripts(global), 0u);
 
-  static constexpr char source[] =
+  static const char source[] =
       "var i = 0;\n"
       "var sum = 0;\n"
       "while (i < 10) {\n"
@@ -58,7 +57,7 @@ bool testPreserveJitCode(bool preserveJitCode, unsigned remainingIonScripts) {
       "    ++i;\n"
       "}\n"
       "return sum;\n";
-  constexpr unsigned length = js_strlen(source);
+  constexpr unsigned length = mozilla::ArrayLength(source) - 1;
 
   JS::SourceText<mozilla::Utf8Unit> srcBuf;
   CHECK(srcBuf.init(cx, source, length, JS::SourceOwnership::Borrowed));

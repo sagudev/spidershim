@@ -10,7 +10,6 @@ use crate::settings::Flags;
 #[cfg(feature = "testing_hooks")]
 use crate::regalloc::RegDiversions;
 
-use core::any::Any;
 use std::borrow::Cow;
 use std::fmt;
 use target_lexicon::Triple;
@@ -127,14 +126,5 @@ impl TargetIsa for TargetIsaAdapter {
 
     fn unsigned_sub_overflow_condition(&self) -> ir::condcodes::IntCC {
         self.backend.unsigned_sub_overflow_condition()
-    }
-
-    #[cfg(feature = "unwind")]
-    fn create_systemv_cie(&self) -> Option<gimli::write::CommonInformationEntry> {
-        self.backend.create_systemv_cie()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self as &dyn Any
     }
 }

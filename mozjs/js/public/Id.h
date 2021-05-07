@@ -26,12 +26,10 @@
 
 #include "jstypes.h"
 
-#include "js/GCAnnotations.h"
 #include "js/HeapAPI.h"
 #include "js/RootingAPI.h"
-#include "js/TraceKind.h"
-#include "js/TracingAPI.h"
 #include "js/TypeDecls.h"
+#include "js/Utility.h"
 
 // All jsids with the low bit set are integer ids. This means the other type
 // tags must all be even.
@@ -94,21 +92,14 @@ struct PropertyKey {
     return reinterpret_cast<JS::Symbol*>(asBits ^ JSID_TYPE_SYMBOL);
   }
 
-  js::gc::Cell* toGCThing() const {
-    MOZ_ASSERT(isGCThing());
-    return reinterpret_cast<js::gc::Cell*>(asBits & ~(size_t)JSID_TYPE_MASK);
-  }
-
   GCCellPtr toGCCellPtr() const {
-    js::gc::Cell* thing = toGCThing();
+    void* thing = (void*)(asBits & ~(size_t)JSID_TYPE_MASK);
     if (isString()) {
       return JS::GCCellPtr(thing, JS::TraceKind::String);
     }
     MOZ_ASSERT(isSymbol());
     return JS::GCCellPtr(thing, JS::TraceKind::Symbol);
   }
-
-  bool isPrivateName() const;
 
   bool isWellKnownSymbol(JS::SymbolCode code) const;
 
@@ -152,17 +143,6 @@ struct PropertyKey {
     MOZ_ASSERT(PropertyKey::isNonIntAtom(str));
     return PropertyKey::fromRawBits(size_t(str) | JSID_TYPE_STRING);
   }
-
-  // Internal API!
-  // All string PropertyKeys are actually atomized.
-  MOZ_ALWAYS_INLINE bool isAtom() const { return isString(); }
-
-  MOZ_ALWAYS_INLINE bool isAtom(JSAtom* atom) const {
-    MOZ_ASSERT(PropertyKey::isNonIntAtom(atom));
-    return isAtom() && toAtom() == atom;
-  }
-
-  MOZ_ALWAYS_INLINE JSAtom* toAtom() const { return (JSAtom*)toString(); }
 
  private:
   static bool isNonIntAtom(JSAtom* atom);
@@ -244,12 +224,6 @@ struct GCPolicy<jsid> {
     return !id.isGCThing() ||
            js::gc::IsCellPointerValid(id.toGCCellPtr().asCell());
   }
-
-  static bool isTenured(jsid id) {
-    MOZ_ASSERT_IF(id.isGCThing(),
-                  !js::gc::IsInsideNursery(id.toGCCellPtr().asCell()));
-    return true;
-  }
 };
 
 #ifdef DEBUG
@@ -329,16 +303,9 @@ class WrappedPtrOperations<JS::PropertyKey, Wrapper> {
   JSString* toString() const { return id().toString(); }
   JS::Symbol* toSymbol() const { return id().toSymbol(); }
 
-  bool isPrivateName() const { return id().isPrivateName(); }
-
   bool isWellKnownSymbol(JS::SymbolCode code) const {
     return id().isWellKnownSymbol(code);
   }
-
-  // Internal API
-  bool isAtom() const { return id().isAtom(); }
-  bool isAtom(JSAtom* atom) const { return id().isAtom(atom); }
-  JSAtom* toAtom() const { return id().toAtom(); }
 };
 
 }  // namespace js

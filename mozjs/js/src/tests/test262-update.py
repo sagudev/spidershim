@@ -19,37 +19,33 @@ from itertools import chain
 from operator import itemgetter
 
 # Skip all tests which use features not supported in SpiderMonkey.
-UNSUPPORTED_FEATURES = set(
-    [
-        "tail-call-optimization",
-        "Intl.DateTimeFormat-quarter",
-        "Intl.Segmenter",
-        "Atomics.waitAsync",
-        "legacy-regexp",
-    ]
-)
+UNSUPPORTED_FEATURES = set([
+    "tail-call-optimization",
+    "class-fields-private",
+    "class-static-fields-private",
+    "class-methods-private",
+    "class-static-methods-private",
+    "regexp-match-indices",
+    "export-star-as-namespace-from-module",
+    "Intl.DateTimeFormat-quarter",
+    "Intl.DateTimeFormat-datetimestyle",
+    "Intl.DateTimeFormat-formatRange",
+    "Intl.Segmenter",
+    "top-level-await",
+])
 FEATURE_CHECK_NEEDED = {
     "Atomics": "!this.hasOwnProperty('Atomics')",
     "FinalizationRegistry": "!this.hasOwnProperty('FinalizationRegistry')",
     "SharedArrayBuffer": "!this.hasOwnProperty('SharedArrayBuffer')",
     "WeakRef": "!this.hasOwnProperty('WeakRef')",
-    "Array.prototype.at": "!Array.prototype.at",
-    "String.prototype.at": "!String.prototype.at",
-    "TypedArray.prototype.at": "!Int32Array.prototype.at",
 }
-RELEASE_OR_BETA = set(
-    [
-        "Intl.DateTimeFormat-dayPeriod",
-        "Intl.DateTimeFormat-formatRange",
-    ]
-)
-SHELL_OPTIONS = {
-    "class-fields-private": "--enable-private-fields",
-    "class-static-fields-private": "--enable-private-fields",
-    "class-methods-private": "--enable-private-methods",
-    "class-static-methods-private": "--enable-private-methods",
-    "top-level-await": "--enable-top-level-await",
-}
+RELEASE_OR_BETA = set([
+    "Intl.DateTimeFormat-fractionalSecondDigits",
+    "Intl.DateTimeFormat-dayPeriod",
+    "Promise.any",
+    "AggregateError",
+    "logical-assignment-operators",
+])
 
 
 @contextlib.contextmanager
@@ -83,7 +79,7 @@ def tryParseTestFile(test262parser, source, testName):
     Returns the result of test262parser.parseTestRecord() or None if a parser
     error occured.
 
-    See <https://github.com/tc39/test262/blob/main/INTERPRETING.md> for an
+    See <https://github.com/tc39/test262/blob/master/INTERPRETING.md> for an
     overview of the returned test attributes.
     """
     try:
@@ -177,9 +173,7 @@ def addSuffixToFileName(fileName, suffix):
     return filePath + suffix + ext
 
 
-def writeShellAndBrowserFiles(
-    test262OutDir, harnessDir, includesMap, localIncludesMap, relPath
-):
+def writeShellAndBrowserFiles(test262OutDir, harnessDir, includesMap, localIncludesMap, relPath):
     """
     Generate the shell.js and browser.js files for the test harness.
     """
@@ -204,25 +198,19 @@ def writeShellAndBrowserFiles(
 
     def readIncludeFile(filePath):
         with io.open(filePath, "rb") as includeFile:
-            return b"// file: %s\n%s" % (
-                os.path.basename(filePath).encode("utf-8"),
-                includeFile.read(),
-            )
+            return b"// file: %s\n%s" % (os.path.basename(filePath).encode("utf-8"),
+                                         includeFile.read())
 
     localIncludes = localIncludesMap[relPath] if relPath in localIncludesMap else []
 
     # Concatenate all includes files.
-    includeSource = b"\n".join(
-        map(
-            readIncludeFile,
-            chain(
-                # The requested include files.
-                map(partial(os.path.join, harnessDir), sorted(findIncludes())),
-                # And additional local include files.
-                map(partial(os.path.join, os.getcwd()), sorted(localIncludes)),
-            ),
-        )
-    )
+    includeSource = b"\n".join(map(readIncludeFile, chain(
+        # The requested include files.
+        map(partial(os.path.join, harnessDir), sorted(findIncludes())),
+
+        # And additional local include files.
+        map(partial(os.path.join, os.getcwd()), sorted(localIncludes))
+    )))
 
     # Write the concatenated include sources to shell.js.
     with io.open(os.path.join(test262OutDir, relPath, "shell.js"), "wb") as shellFile:
@@ -231,9 +219,7 @@ def writeShellAndBrowserFiles(
             shellFile.write(includeSource)
 
     # The browser.js file is always empty for test262 tests.
-    with io.open(
-        os.path.join(test262OutDir, relPath, "browser.js"), "wb"
-    ) as browserFile:
+    with io.open(os.path.join(test262OutDir, relPath, "browser.js"), "wb") as browserFile:
         browserFile.write(b"")
 
 
@@ -248,7 +234,7 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
     """
 
     # The test record dictionary, its contents are explained in depth at
-    # <https://github.com/tc39/test262/blob/main/INTERPRETING.md>.
+    # <https://github.com/tc39/test262/blob/master/INTERPRETING.md>.
     testRec = tryParseTestFile(test262parser, testSource.decode("utf-8"), testName)
 
     # jsreftest meta data
@@ -272,6 +258,14 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
     # before the actual test source code.
     raw = "raw" in testRec
 
+    # Async tests are marked with the "async" attribute. It is an error for a
+    # test to use the $DONE function without specifying the "async" attribute.
+    isAsync = "async" in testRec
+    assert b"$DONE" not in testSource or isAsync, "Missing async attribute in: %s" % testName
+
+    # When the "module" attribute is set, the source code is module code.
+    isModule = "module" in testRec
+
     # Negative tests have additional meta-data to specify the error type and
     # when the error is issued (runtime error or early parse error). We're
     # currently ignoring the error phase attribute.
@@ -280,26 +274,10 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
     assert not isNegative or type(testRec["negative"]) == dict
     errorType = testRec["negative"]["type"] if isNegative else None
 
-    # Async tests are marked with the "async" attribute.
-    isAsync = "async" in testRec
-
-    # Test262 tests cannot be both "negative" and "async".  (In principle a
-    # negative async test is permitted when the error phase is not "parse" or
-    # the error type is not SyntaxError, but no such tests exist now.)
-    assert not (isNegative and isAsync), (
-        "Can't have both async and negative attributes: %s" % testName
-    )
-
-    # Only async tests may use the $DONE function.  However, negative parse
-    # tests may "use" the $DONE function (of course they don't actually use it!)
-    # without specifying the "async" attribute.  Otherwise, $DONE must not
-    # appear in the test.
-    assert b"$DONE" not in testSource or isAsync or isNegative, (
-        "Missing async attribute in: %s" % testName
-    )
-
-    # When the "module" attribute is set, the source code is module code.
-    isModule = "module" in testRec
+    # Test262 contains tests both marked "negative" and "async". In this case
+    # "negative" is expected to overrule the "async" attribute.
+    if isNegative and isAsync:
+        isAsync = False
 
     # CanBlockIsFalse is set when the test expects that the implementation
     # cannot block on the main thread.
@@ -319,47 +297,23 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
         else:
             releaseOrBeta = [f for f in testRec["features"] if f in RELEASE_OR_BETA]
             if releaseOrBeta:
-                refTestSkipIf.append(
-                    (
-                        "release_or_beta",
-                        "%s is not released yet" % ",".join(releaseOrBeta),
-                    )
-                )
+                refTestSkipIf.append(("release_or_beta",
+                                      "%s is not released yet" % ",".join(releaseOrBeta)))
 
-            featureCheckNeeded = [
-                f for f in testRec["features"] if f in FEATURE_CHECK_NEEDED
-            ]
+            featureCheckNeeded = [f for f in testRec["features"] if f in FEATURE_CHECK_NEEDED]
             if featureCheckNeeded:
-                refTestSkipIf.append(
-                    (
-                        "||".join(
-                            [FEATURE_CHECK_NEEDED[f] for f in featureCheckNeeded]
-                        ),
-                        "%s is not enabled unconditionally"
-                        % ",".join(featureCheckNeeded),
-                    )
-                )
+                refTestSkipIf.append(("||".join([FEATURE_CHECK_NEEDED[f]
+                                                 for f in featureCheckNeeded]),
+                                      "%s is not enabled unconditionally" % ",".join(
+                                          featureCheckNeeded)))
 
-            if (
-                "Atomics" in testRec["features"]
-                and "SharedArrayBuffer" in testRec["features"]
-            ):
-                refTestSkipIf.append(
-                    (
-                        "(this.hasOwnProperty('getBuildConfiguration')"
-                        "&&getBuildConfiguration()['arm64-simulator'])",
-                        "ARM64 Simulator cannot emulate atomics",
-                    )
-                )
+            if "Atomics" in testRec["features"] and "SharedArrayBuffer" in testRec["features"]:
+                refTestSkipIf.append(("(this.hasOwnProperty('getBuildConfiguration')"
+                                      "&&getBuildConfiguration()['arm64-simulator'])",
+                                      "ARM64 Simulator cannot emulate atomics"))
 
-            shellOptions = {
-                SHELL_OPTIONS[f] for f in testRec["features"] if f in SHELL_OPTIONS
-            }
-            if shellOptions:
-                refTestSkipIf.append(("!xulRuntime.shell", "requires shell-options"))
-                refTestOptions.extend(
-                    ("shell-option({})".format(opt) for opt in sorted(shellOptions))
-                )
+            if "WeakRef" in testRec["features"] or "FinalizationRegistry" in testRec["features"]:
+                refTestOptions.append("shell-option(--enable-weak-refs)")
 
     # Includes for every test file in a directory is collected in a single
     # shell.js file per directory level. This is done to avoid adding all
@@ -374,10 +328,9 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
     else:
         testEpilogue = ""
 
-    (terms, comments) = createRefTestEntry(
-        refTestOptions, refTestSkip, refTestSkipIf, errorType, isModule, isAsync
-    )
-    if raw:
+    (terms, comments) = createRefTestEntry(refTestOptions, refTestSkip, refTestSkipIf, errorType,
+                                           isModule, isAsync)
+    if raw or refTestOptions:
         refTest = ""
         externRefTest = (terms, comments)
     else:
@@ -386,9 +339,8 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
 
     # Don't write a strict-mode variant for raw or module files.
     noStrictVariant = raw or isModule
-    assert not (noStrictVariant and (onlyStrict or noStrict)), (
+    assert not (noStrictVariant and (onlyStrict or noStrict)),\
         "Unexpected onlyStrict or noStrict attribute: %s" % testName
-    )
 
     # Write non-strict mode test.
     if noStrictVariant or noStrict or not onlyStrict:
@@ -420,9 +372,8 @@ def convertFixtureFile(fixtureSource, fixtureName):
     isModule = False
     isAsync = False
 
-    (terms, comments) = createRefTestEntry(
-        refTestOptions, refTestSkip, refTestSkipIf, errorType, isModule, isAsync
-    )
+    (terms, comments) = createRefTestEntry(refTestOptions, refTestSkip, refTestSkipIf, errorType,
+                                           isModule, isAsync)
     refTest = createRefTestLine(terms, comments)
 
     source = createSource(fixtureSource, refTest, "", "")
@@ -458,29 +409,21 @@ def process_test262(test262Dir, test262OutDir, strictTests, externManifests):
     includesMap[""].update(["propertyHelper.js", "compareArray.js"])
 
     # Write the root shell.js file.
-    writeShellAndBrowserFiles(
-        test262OutDir, harnessDir, includesMap, localIncludesMap, ""
-    )
+    writeShellAndBrowserFiles(test262OutDir, harnessDir, includesMap, localIncludesMap, "")
 
     # Additional explicit includes inserted at well-chosen locations to reduce
     # code duplication in shell.js files.
     explicitIncludes = {}
-    explicitIncludes[os.path.join("built-ins", "Atomics")] = [
-        "testAtomics.js",
-        "testTypedArray.js",
-    ]
-    explicitIncludes[os.path.join("built-ins", "DataView")] = [
-        "byteConversionValues.js"
-    ]
+    explicitIncludes[os.path.join("built-ins", "Atomics")] = ["testAtomics.js",
+                                                              "testTypedArray.js"]
+    explicitIncludes[os.path.join("built-ins", "DataView")] = ["byteConversionValues.js"]
     explicitIncludes[os.path.join("built-ins", "Promise")] = ["promiseHelper.js"]
-    explicitIncludes[os.path.join("built-ins", "TypedArray")] = [
-        "byteConversionValues.js",
-        "detachArrayBuffer.js",
-        "nans.js",
-    ]
-    explicitIncludes[os.path.join("built-ins", "TypedArrays")] = [
-        "detachArrayBuffer.js"
-    ]
+    explicitIncludes[os.path.join("built-ins", "TypedArray")] = ["byteConversionValues.js",
+                                                                 "detachArrayBuffer.js", "nans.js"]
+    explicitIncludes[os.path.join("built-ins", "TypedArrays")] = ["detachArrayBuffer.js"]
+
+    # Intl.DisplayNames isn't yet enabled by default.
+    localIncludesMap[os.path.join("intl402")] = ["test262-intl-displaynames.js"]
 
     # Process all test directories recursively.
     for (dirPath, dirNames, fileNames) in os.walk(testDir):
@@ -489,9 +432,8 @@ def process_test262(test262Dir, test262OutDir, strictTests, externManifests):
             continue
 
         # Skip creating a "prs" directory if it already exists
-        if relPath not in ("prs", "local") and not os.path.exists(
-            os.path.join(test262OutDir, relPath)
-        ):
+        if relPath not in ("prs", "local") and not os.path.exists(os.path.join(test262OutDir,
+                                                                               relPath)):
             os.makedirs(os.path.join(test262OutDir, relPath))
 
         includeSet = set()
@@ -512,7 +454,7 @@ def process_test262(test262Dir, test262OutDir, strictTests, externManifests):
                 continue
 
             # Files ending with "_FIXTURE.js" are fixture files:
-            # https://github.com/tc39/test262/blob/main/INTERPRETING.md#modules
+            # https://github.com/tc39/test262/blob/master/INTERPRETING.md#modules
             isFixtureFile = fileName.endswith("_FIXTURE.js")
 
             # Read the original test source and preprocess it for the jstests harness.
@@ -522,25 +464,21 @@ def process_test262(test262Dir, test262OutDir, strictTests, externManifests):
             if isFixtureFile:
                 convert = convertFixtureFile(testSource, testName)
             else:
-                convert = convertTestFile(
-                    test262parser, testSource, testName, includeSet, strictTests
-                )
+                convert = convertTestFile(test262parser, testSource, testName,
+                                          includeSet, strictTests)
 
             for (newFileName, newSource, externRefTest) in convert:
                 writeTestFile(test262OutDir, newFileName, newSource)
 
                 if externRefTest is not None:
-                    externManifests.append(
-                        {
-                            "name": newFileName,
-                            "reftest": externRefTest,
-                        }
-                    )
+                    externManifests.append({
+                        "name": newFileName,
+                        "reftest": externRefTest,
+                    })
 
         # Add shell.js and browers.js files for the current directory.
-        writeShellAndBrowserFiles(
-            test262OutDir, harnessDir, includesMap, localIncludesMap, relPath
-        )
+        writeShellAndBrowserFiles(test262OutDir, harnessDir,
+                                  includesMap, localIncludesMap, relPath)
 
 
 def fetch_local_changes(inDir, outDir, srcDir, strictTests):
@@ -555,7 +493,7 @@ def fetch_local_changes(inDir, outDir, srcDir, strictTests):
     """
     import subprocess
 
-    # TODO: fail if it's in the default branch? or require a branch name?
+    # TOOD: fail if it's in the master branch? or require a branch name?
 
     # Checks for unstaged or non committed files. A clean branch provides a clean status.
     status = subprocess.check_output(
@@ -565,50 +503,44 @@ def fetch_local_changes(inDir, outDir, srcDir, strictTests):
     if status.strip():
         raise RuntimeError(
             "Please commit files and cleanup the local test262 folder before importing files.\n"
-            "Current status: \n%s" % status
-        )
+            "Current status: \n%s"
+            % status)
 
     # Captures the branch name to be used on the output
     branchName = subprocess.check_output(
-        ("git -C %s rev-parse --abbrev-ref HEAD" % srcDir).split(" ")
-    ).split("\n")[0]
+        ("git -C %s rev-parse --abbrev-ref HEAD" % srcDir).split(" ")).split("\n")[0]
 
     # Fetches the file names to import
     files = subprocess.check_output(
-        ("git -C %s diff main --diff-filter=ACMR --name-only" % srcDir).split(" ")
+        ("git -C %s diff master --diff-filter=ACMR --name-only" % srcDir).split(" ")
     )
 
     # Fetches the deleted files to print an output log. This can be used to
     # set up the skip list, if necessary.
     deletedFiles = subprocess.check_output(
-        ("git -C %s diff main --diff-filter=D --name-only" % srcDir).split(" ")
+        ("git -C %s diff master --diff-filter=D --name-only" % srcDir).split(" ")
     )
 
     # Fetches the modified files as well for logging to support maintenance
     # in the skip list.
     modifiedFiles = subprocess.check_output(
-        ("git -C %s diff main --diff-filter=M --name-only" % srcDir).split(" ")
+        ("git -C %s diff master --diff-filter=M --name-only" % srcDir).split(" ")
     )
 
     # Fetches the renamed files for the same reason, this avoids duplicate
     # tests if running the new local folder and the general imported Test262
     # files.
     renamedFiles = subprocess.check_output(
-        ("git -C %s diff main --diff-filter=R --summary" % srcDir).split(" ")
+        ("git -C %s diff master --diff-filter=R --summary" % srcDir).split(" ")
     )
 
     # Print some friendly output
     print("From the branch %s in %s \n" % (branchName, srcDir))
     print("Files being copied to the local folder: \n%s" % files)
     if deletedFiles:
-        print(
-            "Deleted files (use this list to update the skip list): \n%s" % deletedFiles
-        )
+        print("Deleted files (use this list to update the skip list): \n%s" % deletedFiles)
     if modifiedFiles:
-        print(
-            "Modified files (use this list to update the skip list): \n%s"
-            % modifiedFiles
-        )
+        print("Modified files (use this list to update the skip list): \n%s" % modifiedFiles)
     if renamedFiles:
         print("Renamed files (already added with the new names): \n%s" % renamedFiles)
 
@@ -620,7 +552,8 @@ def fetch_local_changes(inDir, outDir, srcDir, strictTests):
             os.makedirs(fileTree)
 
         shutil.copyfile(
-            os.path.join(srcDir, f), os.path.join(fileTree, os.path.basename(f))
+            os.path.join(srcDir, f),
+            os.path.join(fileTree, os.path.basename(f))
         )
 
     # Extras from Test262. Copy the current support folders - including the
@@ -650,20 +583,16 @@ def fetch_pr_files(inDir, outDir, prNumber, strictTests):
     # folder can be discarded from here
     shutil.rmtree(os.path.join(inDir, "test"))
 
-    prRequest = requests.get(
-        "https://api.github.com/repos/tc39/test262/pulls/%s" % prNumber
-    )
+    prRequest = requests.get("https://api.github.com/repos/tc39/test262/pulls/%s" % prNumber)
     prRequest.raise_for_status()
 
     pr = prRequest.json()
 
-    if pr["state"] != "open":
+    if (pr["state"] != "open"):
         # Closed PR, remove respective files from folder
         return print("PR %s is closed" % prNumber)
 
-    files = requests.get(
-        "https://api.github.com/repos/tc39/test262/pulls/%s/files" % prNumber
-    )
+    files = requests.get("https://api.github.com/repos/tc39/test262/pulls/%s/files" % prNumber)
     files.raise_for_status()
 
     for item in files.json():
@@ -690,7 +619,7 @@ def fetch_pr_files(inDir, outDir, prNumber, strictTests):
             os.makedirs(filePathDirs)
 
         with io.open(os.path.join(inDir, *filename.split("/")), "wb") as output_file:
-            output_file.write(fileText.encode("utf8"))
+            output_file.write(fileText.encode('utf8'))
 
     process_test262(inDir, prTestsOutDir, strictTests, [])
 
@@ -739,7 +668,7 @@ def general_update(inDir, outDir, strictTests):
                 entry = "%s script %s%s\n" % (
                     terms,
                     externManifest["name"],
-                    (" # %s" % comments) if comments else "",
+                    (" # %s" % comments) if comments else ""
                 )
                 manifestFile.write(entry.encode("utf-8"))
 
@@ -774,13 +703,11 @@ def update_test262(args):
             return fetch_local_changes(inDir, outDir, srcDir, strictTests)
 
         if revision == "HEAD":
-            subprocess.check_call(
-                ["git", "clone", "--depth=1", "--branch=%s" % branch, url, inDir]
-            )
+            subprocess.check_call(["git", "clone", "--depth=1",
+                                   "--branch=%s" % branch, url, inDir])
         else:
-            subprocess.check_call(
-                ["git", "clone", "--single-branch", "--branch=%s" % branch, url, inDir]
-            )
+            subprocess.check_call(["git", "clone", "--single-branch",
+                                   "--branch=%s" % branch, url, inDir])
             subprocess.check_call(["git", "-C", inDir, "reset", "--hard", revision])
 
         # If a PR number is provided, fetches only the new and modified files
@@ -801,37 +728,22 @@ if __name__ == "__main__":
         raise RuntimeError("%s must be run from js/src/tests" % sys.argv[0])
 
     parser = argparse.ArgumentParser(description="Update the test262 test suite.")
-    parser.add_argument(
-        "--url",
-        default="git://github.com/tc39/test262.git",
-        help="URL to git repository (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--branch", default="main", help="Git branch (default: %(default)s)"
-    )
-    parser.add_argument(
-        "--revision", default="HEAD", help="Git revision (default: %(default)s)"
-    )
-    parser.add_argument(
-        "--out",
-        default="test262",
-        help="Output directory. Any existing directory will be removed!"
-        "(default: %(default)s)",
-    )
-    parser.add_argument(
-        "--pull", help="Import contents from a Pull Request specified by its number"
-    )
-    parser.add_argument(
-        "--local",
-        help="Import new and modified contents from a local folder, a new folder "
-        "will be created on local/branch_name",
-    )
-    parser.add_argument(
-        "--strict",
-        default=False,
-        action="store_true",
-        help="Generate additional strict mode tests. Not enabled by default.",
-    )
+    parser.add_argument("--url", default="git://github.com/tc39/test262.git",
+                        help="URL to git repository (default: %(default)s)")
+    parser.add_argument("--branch", default="master",
+                        help="Git branch (default: %(default)s)")
+    parser.add_argument("--revision", default="HEAD",
+                        help="Git revision (default: %(default)s)")
+    parser.add_argument("--out", default="test262",
+                        help="Output directory. Any existing directory will be removed!"
+                        "(default: %(default)s)")
+    parser.add_argument("--pull",
+                        help="Import contents from a Pull Request specified by its number")
+    parser.add_argument("--local",
+                        help="Import new and modified contents from a local folder, a new folder "
+                        "will be created on local/branch_name")
+    parser.add_argument("--strict", default=False, action="store_true",
+                        help="Generate additional strict mode tests. Not enabled by default.")
     parser.set_defaults(func=update_test262)
     args = parser.parse_args()
     args.func(args)

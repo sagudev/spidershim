@@ -26,18 +26,18 @@ try {
 } catch(err) {
   threw = true;
   if (err.constructor !== Test262Error) {
-    throw new Error(
+    $ERROR(
       'Expected a Test262Error, but a "' + err.constructor.name +
       '" was thrown.'
     );
   }
   if (err.message !== '$262.detachArrayBuffer called.') {
-    throw new Error(`Expected error message: ${err.message}`);
+    $ERROR(`Expected error message: ${err.message}`);
   }
 }
 
 if (threw === false) {
-  throw new Error('Expected a Test262Error, but no error was thrown.');
+  $ERROR('Expected a Test262Error, but no error was thrown.');
 }
 
 

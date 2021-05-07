@@ -15,7 +15,6 @@ mod analysis_main;
 
 mod analysis_control_flow;
 mod analysis_data_flow;
-mod analysis_reftypes;
 mod avl_tree;
 mod bt_coalescing_analysis;
 mod bt_commitment_map;
@@ -26,20 +25,13 @@ mod checker;
 mod data_structures;
 mod inst_stream;
 mod linear_scan;
-mod pretty_print;
-mod reg_maps;
-mod snapshot;
 mod sparse_set;
 mod union_find;
 
 use log::{info, log_enabled, Level};
-use std::default;
-use std::{borrow::Cow, fmt};
+use std::fmt;
 
 // Stuff that is defined by the library
-
-// Pretty-printing utilities.
-pub use crate::pretty_print::*;
 
 // Sets and maps of things.  We can refine these later; but for now the
 // interface needs some way to speak about them, so let's use the
@@ -155,24 +147,9 @@ pub use crate::data_structures::RegClassInfo;
 
 pub use crate::data_structures::RegUsageCollector;
 
-/// A trait for providing mapping results for a given instruction.
-///
-/// This provides virtual to real register mappings for every mention in an instruction: use, mod
-/// or def. The main purpose of this trait is to be used when re-writing the instruction stream
-/// after register allocation happened; see also `Function::map_regs`.
-pub trait RegUsageMapper: fmt::Debug {
-    /// Return the `RealReg` if mapped, or `None`, for `vreg` occuring as a use
-    /// on the current instruction.
-    fn get_use(&self, vreg: VirtualReg) -> Option<RealReg>;
+// A structure for providing mapping results for a given instruction.
 
-    /// Return the `RealReg` if mapped, or `None`, for `vreg` occuring as a def
-    /// on the current instruction.
-    fn get_def(&self, vreg: VirtualReg) -> Option<RealReg>;
-
-    /// Return the `RealReg` if mapped, or `None`, for a `vreg` occuring as a
-    /// mod on the current instruction.
-    fn get_mod(&self, vreg: VirtualReg) -> Option<RealReg>;
-}
+pub use crate::data_structures::RegUsageMapper;
 
 // TypedIxVector, so that the interface can speak about vectors of blocks and
 // instructions.
@@ -219,29 +196,10 @@ pub trait Function {
     fn block_insns(&self, block: BlockIx) -> Range<InstIx>;
 
     /// Get CFG successors for a given block.
-    fn block_succs(&self, block: BlockIx) -> Cow<[BlockIx]>;
+    fn block_succs(&self, block: BlockIx) -> Vec<BlockIx>;
 
     /// Determine whether an instruction is a return instruction.
     fn is_ret(&self, insn: InstIx) -> bool;
-
-    /// Determine whether an instruction should be considered while computing
-    /// the set of registers that need to be saved/restored in the function's
-    /// prologue/epilogue, that is, the registers returned in
-    /// `clobbered_registers` in `RegAllocResult`.  computation. Only
-    /// instructions for which this function returns `true` will be used to
-    /// compute that set.
-    ///
-    /// One reason that a client might *not* want an instruction to be included
-    /// would be if it can handle the clobbers some other way: for example,
-    /// ABI-support code might exclude call instructions' defs and mods from the
-    /// clobber set, because (given the callee has same ABI as the caller) the
-    /// registers possibly written by the callee are all registers that the
-    /// caller is also allowed to clobber (not save/restore in
-    /// prologue/epilogue).
-    fn is_included_in_clobbers(&self, _insn: &Self::Inst) -> bool {
-        // Default impl includes all instructions.
-        true
-    }
 
     // --------------------------
     // Instruction register slots
@@ -261,15 +219,16 @@ pub trait Function {
     /// Note that this does not take a `self`, because we want to allow the
     /// regalloc to have a mutable borrow of an insn (which borrows the whole
     /// Function in turn) outstanding while calling this.
-    fn map_regs<RUM: RegUsageMapper>(insn: &mut Self::Inst, maps: &RUM);
+    fn map_regs(insn: &mut Self::Inst, maps: &RegUsageMapper);
 
     /// Allow the regalloc to query whether this is a move. Returns (dst, src).
     fn is_move(&self, insn: &Self::Inst) -> Option<(Writable<Reg>, Reg)>;
 
-    /// Get the precise number of `VirtualReg` in use in this function, to allow preallocating data
-    /// structures. This number *must* be a correct lower-bound, otherwise invalid index failures
-    /// may happen; it is of course better if it is exact.
-    fn get_num_vregs(&self) -> usize;
+    /// Get an estimate of how many `VirtualReg` indices are used, if available, to allow
+    /// preallocating data structures.
+    fn get_vreg_count_estimate(&self) -> Option<usize> {
+        None
+    }
 
     // --------------
     // Spills/reloads
@@ -290,26 +249,21 @@ pub trait Function {
 
     /// Generate a spill instruction for insertion into the instruction
     /// sequence. The associated virtual register (whose value is being spilled)
-    /// is passed, if it exists, so that the client may make decisions about the
-    /// instruction to generate based on the type of value in question.  Because
-    /// the register allocator will insert spill instructions at arbitrary points,
-    /// the returned instruction here must not modify the machine's condition codes.
-    fn gen_spill(
-        &self,
-        to_slot: SpillSlot,
-        from_reg: RealReg,
-        for_vreg: Option<VirtualReg>,
-    ) -> Self::Inst;
+    /// is passed so that the client may make decisions about the instruction to
+    /// generate based on the type of value in question.  Because the register
+    /// allocator will insert spill instructions at arbitrary points, the
+    /// returned instruction here must not modify the machine's condition codes.
+    fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg, for_vreg: VirtualReg) -> Self::Inst;
 
     /// Generate a reload instruction for insertion into the instruction
     /// sequence. The associated virtual register (whose value is being loaded)
-    /// is passed as well, if it exists.  The returned instruction must not modify
-    /// the machine's condition codes.
+    /// is passed as well.  The returned instruction must not modify the
+    /// machine's condition codes.
     fn gen_reload(
         &self,
         to_reg: Writable<RealReg>,
         from_slot: SpillSlot,
-        for_vreg: Option<VirtualReg>,
+        for_vreg: VirtualReg,
     ) -> Self::Inst;
 
     /// Generate a register-to-register move for insertion into the instruction
@@ -396,21 +350,15 @@ pub struct RegAllocResult<F: Function> {
     /// call to `allocate_registers`.  Creating of these annotations is
     /// potentially expensive, so don't request them if you don't need them.
     pub block_annotations: Option<TypedIxVec<BlockIx, Vec<String>>>,
-
-    /// If stackmap support was requested: one stackmap for each of the safepoint instructions
-    /// declared.  Otherwise empty.
-    pub stackmaps: Vec<Vec<SpillSlot>>,
-
-    /// If stackmap support was requested: one InstIx for each safepoint instruction declared,
-    /// indicating the corresponding location in the final instruction stream.  Otherwise empty.
-    pub new_safepoint_insns: Vec<InstIx>,
 }
 
 /// A choice of register allocation algorithm to run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AlgorithmWithDefaults {
+pub enum RegAllocAlgorithm {
     Backtracking,
+    BacktrackingChecked,
     LinearScan,
+    LinearScanChecked,
 }
 
 pub use crate::analysis_main::AnalysisError;
@@ -432,206 +380,43 @@ impl fmt::Display for RegAllocError {
     }
 }
 
-pub use crate::bt_main::BacktrackingOptions;
-pub use crate::linear_scan::LinearScanOptions;
-
-#[derive(Clone)]
-pub enum Algorithm {
-    LinearScan(LinearScanOptions),
-    Backtracking(BacktrackingOptions),
-}
-
-impl fmt::Debug for Algorithm {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Algorithm::LinearScan(opts) => write!(fmt, "{:?}", opts),
-            Algorithm::Backtracking(opts) => write!(fmt, "{:?}", opts),
-        }
-    }
-}
-
-/// Tweakable options shared by all the allocators.
-#[derive(Clone)]
-pub struct Options {
-    /// Should the register allocator check that its results are valid? This adds runtime to the
-    /// compiler, so this is disabled by default.
-    pub run_checker: bool,
-
-    /// Which algorithm should be used for register allocation? By default, selects backtracking,
-    /// which is slower to compile but creates code of better quality.
-    pub algorithm: Algorithm,
-}
-
-impl default::Default for Options {
-    fn default() -> Self {
-        Self {
-            run_checker: false,
-            algorithm: Algorithm::Backtracking(Default::default()),
-        }
-    }
-}
-
-impl fmt::Debug for Options {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "checker: {:?}, algorithm: {:?}",
-            self.run_checker, self.algorithm
-        )
-    }
-}
-
-/// A structure with which callers can request stackmap information.
-pub struct StackmapRequestInfo {
-    /// The register class that holds reftypes.  This may only be RegClass::I32 or
-    /// RegClass::I64, and it must equal the word size of the target architecture.
-    pub reftype_class: RegClass,
-
-    /// The virtual regs that hold reftyped values.  These must be provided in ascending order
-    /// of register index and be duplicate-free.  They must have class `reftype_class`.
-    pub reftyped_vregs: Vec<VirtualReg>,
-
-    /// The indices of instructions for which the allocator will construct stackmaps.  These
-    /// must be provided in ascending order and be duplicate-free.  The specified instructions
-    /// may not be coalescable move instructions (as the allocator may remove those) and they
-    /// may not modify any register carrying a reftyped value (they may "def" or "use" them,
-    /// though).  The reason is that, at a safepoint, the client's garbage collector may change
-    /// the values of all live references, so it would be meaningless for a safepoint
-    /// instruction also to attempt to do that -- we'd end up with two competing new values.
-    pub safepoint_insns: Vec<InstIx>,
-}
-
-/// Allocate registers for a function's code, given a universe of real registers that we are
-/// allowed to use.  Optionally, stackmap support may be requested.
+/// Allocate registers for a function's code, given a universe of real
+/// registers that we are allowed to use.
 ///
-/// The control flow graph must not contain any critical edges, that is, any edge coming from a
-/// block with multiple successors must not flow into a block with multiple predecessors. The
-/// embedder must have split critical edges before handing over the function to this function.
-/// Otherwise, an error will be returned.
+/// The control flow graph must not contain any critical edges, that is, any
+/// edge coming from a block with multiple successors must not flow into a block
+/// with multiple predecessors. The embedder must have split critical edges
+/// before handing over the function to this function. Otherwise, an error will
+/// be returned.
 ///
-/// Allocation may succeed, returning a `RegAllocResult` with the new instruction sequence, or
-/// it may fail, returning an error.
-///
-/// Runtime options can be passed to the allocators, through the use of [Options] for options
-/// common to all the backends. The choice of algorithm is done by passing a given [Algorithm]
-/// instance, with options tailored for each algorithm.
+/// Allocate may succeed, returning a `RegAllocResult` with the new instruction
+/// sequence, or it may fail, returning an error.
 #[inline(never)]
-pub fn allocate_registers_with_opts<F: Function>(
+pub fn allocate_registers<F: Function>(
     func: &mut F,
+    algorithm: RegAllocAlgorithm,
     rreg_universe: &RealRegUniverse,
-    stackmap_info: Option<&StackmapRequestInfo>,
-    opts: Options,
+    request_block_annotations: bool,
 ) -> Result<RegAllocResult<F>, RegAllocError> {
     info!("");
     info!("================ regalloc.rs: BEGIN function ================");
     if log_enabled!(Level::Info) {
-        info!("with options: {:?}", opts);
         let strs = rreg_universe.show();
         info!("using RealRegUniverse:");
         for s in strs {
             info!("  {}", s);
         }
     }
-    // If stackmap support has been requested, perform some initial sanity checks.
-    if let Some(&StackmapRequestInfo {
-        reftype_class,
-        ref reftyped_vregs,
-        ref safepoint_insns,
-    }) = stackmap_info
-    {
-        if let Algorithm::LinearScan(_) = opts.algorithm {
-            return Err(RegAllocError::Other(
-                "stackmap request: not currently available for Linear Scan".to_string(),
-            ));
+    let res = match algorithm {
+        RegAllocAlgorithm::Backtracking | RegAllocAlgorithm::BacktrackingChecked => {
+            let use_checker = algorithm == RegAllocAlgorithm::BacktrackingChecked;
+            bt_main::alloc_main(func, rreg_universe, use_checker, request_block_annotations)
         }
-        if reftype_class != RegClass::I64 && reftype_class != RegClass::I32 {
-            return Err(RegAllocError::Other(
-                "stackmap request: invalid reftype_class".to_string(),
-            ));
+        RegAllocAlgorithm::LinearScan | RegAllocAlgorithm::LinearScanChecked => {
+            let use_checker = algorithm == RegAllocAlgorithm::LinearScanChecked;
+            linear_scan::run(func, rreg_universe, use_checker)
         }
-        let num_avail_vregs = func.get_num_vregs();
-        for i in 0..reftyped_vregs.len() {
-            let vreg = &reftyped_vregs[i];
-            if vreg.get_class() != reftype_class {
-                return Err(RegAllocError::Other(
-                    "stackmap request: invalid vreg class".to_string(),
-                ));
-            }
-            if vreg.get_index() >= num_avail_vregs {
-                return Err(RegAllocError::Other(
-                    "stackmap request: out of range vreg".to_string(),
-                ));
-            }
-            if i > 0 && reftyped_vregs[i - 1].get_index() >= vreg.get_index() {
-                return Err(RegAllocError::Other(
-                    "stackmap request: non-ascending vregs".to_string(),
-                ));
-            }
-        }
-        let num_avail_insns = func.insns().len();
-        for i in 0..safepoint_insns.len() {
-            let safepoint_iix = safepoint_insns[i];
-            if safepoint_iix.get() as usize >= num_avail_insns {
-                return Err(RegAllocError::Other(
-                    "stackmap request: out of range safepoint insn".to_string(),
-                ));
-            }
-            if i > 0 && safepoint_insns[i - 1].get() >= safepoint_iix.get() {
-                return Err(RegAllocError::Other(
-                    "stackmap request: non-ascending safepoint insns".to_string(),
-                ));
-            }
-            if func.is_move(func.get_insn(safepoint_iix)).is_some() {
-                return Err(RegAllocError::Other(
-                    "stackmap request: safepoint insn is a move insn".to_string(),
-                ));
-            }
-        }
-        // We can't check here that reftyped regs are not changed by safepoint insns.  That is
-        // done deep in the stackmap creation logic, for BT in `get_stackmap_artefacts_at`.
-    }
-
-    let run_checker = opts.run_checker;
-    let res = match &opts.algorithm {
-        Algorithm::Backtracking(opts) => {
-            bt_main::alloc_main(func, rreg_universe, stackmap_info, run_checker, opts)
-        }
-        Algorithm::LinearScan(opts) => linear_scan::run(func, rreg_universe, run_checker, opts),
     };
     info!("================ regalloc.rs: END function ================");
     res
 }
-
-/// Allocate registers for a function's code, given a universe of real registers that we are
-/// allowed to use.
-///
-/// The control flow graph must not contain any critical edges, that is, any edge coming from a
-/// block with multiple successors must not flow into a block with multiple predecessors. The
-/// embedder must have split critical edges before handing over the function to this function.
-/// Otherwise, an error will be returned.
-///
-/// Allocate may succeed, returning a `RegAllocResult` with the new instruction sequence, or it may
-/// fail, returning an error.
-///
-/// This is a convenient function that uses standard options for the allocator, according to the
-/// selected algorithm.
-#[inline(never)]
-pub fn allocate_registers<F: Function>(
-    func: &mut F,
-    rreg_universe: &RealRegUniverse,
-    stackmap_info: Option<&StackmapRequestInfo>,
-    algorithm: AlgorithmWithDefaults,
-) -> Result<RegAllocResult<F>, RegAllocError> {
-    let algorithm = match algorithm {
-        AlgorithmWithDefaults::Backtracking => Algorithm::Backtracking(Default::default()),
-        AlgorithmWithDefaults::LinearScan => Algorithm::LinearScan(Default::default()),
-    };
-    let opts = Options {
-        algorithm,
-        ..Default::default()
-    };
-    allocate_registers_with_opts(func, rreg_universe, stackmap_info, opts)
-}
-
-// Facilities to snapshot regalloc inputs and reproduce them in regalloc.rs.
-pub use crate::snapshot::IRSnapshot;

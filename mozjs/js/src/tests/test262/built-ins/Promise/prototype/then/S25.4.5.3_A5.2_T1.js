@@ -25,21 +25,18 @@ pResolve();
 
 p.then(function() {
   sequence.push(3);
-  assert.sameValue(sequence.length, 3);
-checkSequence(sequence, "Should be first");
+  checkSequence(sequence, "Should be first");
 }).catch($DONE);
 
 Promise.resolve().then(function() {
   // enqueue another then-handler
   p.then(function() {
     sequence.push(5);
-    assert.sameValue(sequence.length, 5);
-checkSequence(sequence, "Should be third");
+    checkSequence(sequence, "Should be third");
   }).then($DONE, $DONE);
 
   sequence.push(4);
-  assert.sameValue(sequence.length, 4);
-checkSequence(sequence, "Should be second");
+  checkSequence(sequence, "Should be second");
 }).catch($DONE);
 
 sequence.push(2);

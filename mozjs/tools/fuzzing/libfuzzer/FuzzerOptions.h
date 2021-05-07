@@ -44,9 +44,6 @@ struct FuzzingOptions {
   size_t MaxNumberOfRuns = -1L;
   int ReportSlowUnits = 10;
   bool OnlyASCII = false;
-  bool Entropic = false;
-  size_t EntropicFeatureFrequencyThreshold = 0xFF;
-  size_t EntropicNumberOfRarestFeatures = 100;
   std::string OutputCorpus;
   std::string ArtifactPrefix = "./";
   std::string ExactArtifactPath;
@@ -54,9 +51,6 @@ struct FuzzingOptions {
   std::string ExitOnItem;
   std::string FocusFunction;
   std::string DataFlowTrace;
-  std::string CollectDataFlow;
-  std::string FeaturesDir;
-  std::string StopFile;
   bool SaveArtifacts = true;
   bool PrintNEW = true; // Print a status line when new units are found;
   bool PrintNewCovPcs = false;
@@ -78,6 +72,7 @@ struct FuzzingOptions {
   bool HandleXfsz = false;
   bool HandleUsr1 = false;
   bool HandleUsr2 = false;
+  bool LazyCounters = false;
 };
 
 }  // namespace fuzzer

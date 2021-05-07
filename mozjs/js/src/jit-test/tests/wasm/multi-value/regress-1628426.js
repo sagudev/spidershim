@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmDebuggingEnabled()
+// |jit-test| skip-if: !wasmDebuggingIsSupported()
 var g20 = newGlobal({
     newCompartment: true
 });

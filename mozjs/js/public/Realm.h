@@ -7,8 +7,7 @@
 #ifndef js_Realm_h
 #define js_Realm_h
 
-#include "js/shadow/Realm.h"  // JS::shadow::Realm
-
+#include "jspubtd.h"
 #include "js/GCPolicyAPI.h"
 #include "js/TypeDecls.h"  // forward-declaration of JS::Realm
 
@@ -21,7 +20,6 @@ JS_PUBLIC_API bool RealmNeedsSweep(JS::Realm* realm);
 }  // namespace js
 
 namespace JS {
-class JS_PUBLIC_API AutoRequireNoGC;
 
 // Each Realm holds a strong reference to its GlobalObject, and vice versa.
 template <>
@@ -39,6 +37,23 @@ struct GCPolicy<Realm*> : public NonGCPointerPolicy<Realm*> {
 // Get the current realm, if any. The ECMAScript spec calls this "the current
 // Realm Record".
 extern JS_PUBLIC_API Realm* GetCurrentRealmOrNull(JSContext* cx);
+
+namespace shadow {
+
+class Realm {
+ protected:
+  JS::Compartment* compartment_;
+
+  explicit Realm(JS::Compartment* comp) : compartment_(comp) {}
+
+ public:
+  JS::Compartment* compartment() { return compartment_; }
+  static shadow::Realm* get(JS::Realm* realm) {
+    return reinterpret_cast<shadow::Realm*>(realm);
+  }
+};
+
+};  // namespace shadow
 
 // Return the compartment that contains a given realm.
 inline JS::Compartment* GetCompartmentForRealm(Realm* realm) {
@@ -69,9 +84,8 @@ typedef void (*DestroyRealmCallback)(JSFreeOp* fop, Realm* realm);
 extern JS_PUBLIC_API void SetDestroyRealmCallback(
     JSContext* cx, DestroyRealmCallback callback);
 
-using RealmNameCallback = void (*)(JSContext* cx, Realm* realm, char* buf,
-                                   size_t bufsize,
-                                   const JS::AutoRequireNoGC& nogc);
+typedef void (*RealmNameCallback)(JSContext* cx, Handle<Realm*> realm,
+                                  char* buf, size_t bufsize);
 
 // Set the callback SpiderMonkey calls to get the name of a realm, for
 // diagnostic output.
@@ -80,7 +94,7 @@ extern JS_PUBLIC_API void SetRealmNameCallback(JSContext* cx,
 
 // Get the global object for the given realm. This only returns nullptr during
 // GC, between collecting the global object and destroying the Realm.
-extern JS_PUBLIC_API JSObject* GetRealmGlobalOrNull(Realm* realm);
+extern JS_PUBLIC_API JSObject* GetRealmGlobalOrNull(Handle<Realm*> realm);
 
 // Initialize standard JS class constructors, prototypes, and any top-level
 // functions and constants associated with the standard classes (e.g. isNaN
@@ -101,10 +115,6 @@ extern JS_PUBLIC_API JSObject* GetRealmArrayPrototype(JSContext* cx);
 extern JS_PUBLIC_API JSObject* GetRealmErrorPrototype(JSContext* cx);
 
 extern JS_PUBLIC_API JSObject* GetRealmIteratorPrototype(JSContext* cx);
-
-// Returns a key for cross-origin realm weak map.
-// See the consumer in `MaybeCrossOriginObjectMixins::EnsureHolder` for details.
-extern JS_PUBLIC_API JSObject* GetRealmWeakMapKey(JSContext* cx);
 
 // Implements https://tc39.github.io/ecma262/#sec-getfunctionrealm
 // 7.3.22 GetFunctionRealm ( obj )

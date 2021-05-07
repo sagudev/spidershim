@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmThreadsEnabled()
+// |jit-test| skip-if: !wasmThreadsSupported()
 
 // Test that `atomic.fence` is a valid instruction of type `[] -> []`
 wasmFullPass(

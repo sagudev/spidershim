@@ -22,8 +22,6 @@
 #include "mozilla/MemoryReporting.h"
 
 #include "jit/MacroAssembler.h"
-#include "threading/ProtectedData.h"
-#include "vm/HelperThreadTask.h"
 #include "wasm/WasmCompile.h"
 #include "wasm/WasmModule.h"
 #include "wasm/WasmValidate.h"
@@ -32,7 +30,7 @@ namespace js {
 namespace wasm {
 
 struct CompileTask;
-using CompileTaskPtrVector = Vector<CompileTask*, 0, SystemAllocPolicy>;
+typedef Vector<CompileTask*, 0, SystemAllocPolicy> CompileTaskPtrVector;
 
 // FuncCompileInput contains the input for compiling a single function.
 
@@ -53,7 +51,7 @@ struct FuncCompileInput {
         callSiteLineNums(std::move(callSiteLineNums)) {}
 };
 
-using FuncCompileInputVector = Vector<FuncCompileInput, 8, SystemAllocPolicy>;
+typedef Vector<FuncCompileInput, 8, SystemAllocPolicy> FuncCompileInputVector;
 
 void CraneliftFreeReusableData(void* ptr);
 
@@ -77,13 +75,10 @@ struct CompiledCode {
   jit::CodeLabelVector codeLabels;
   StackMaps stackMaps;
   CraneliftReusableData craneliftReusableData;
-#ifdef ENABLE_WASM_EXCEPTIONS
-  WasmTryNoteVector tryNotes;
-#endif
 
-  [[nodiscard]] bool swap(jit::MacroAssembler& masm);
-  [[nodiscard]] bool swapCranelift(jit::MacroAssembler& masm,
-                                   CraneliftReusableData& craneliftData);
+  MOZ_MUST_USE bool swap(jit::MacroAssembler& masm);
+  MOZ_MUST_USE bool swapCranelift(jit::MacroAssembler& masm,
+                                  CraneliftReusableData& craneliftData);
 
   void clear() {
     bytes.clear();
@@ -94,9 +89,6 @@ struct CompiledCode {
     symbolicAccesses.clear();
     codeLabels.clear();
     stackMaps.clear();
-#ifdef ENABLE_WASM_EXCEPTIONS
-    tryNotes.clear();
-#endif
     // The cranelift reusable data resets itself lazily.
     MOZ_ASSERT(empty());
   }
@@ -104,12 +96,7 @@ struct CompiledCode {
   bool empty() {
     return bytes.empty() && codeRanges.empty() && callSites.empty() &&
            callSiteTargets.empty() && trapSites.empty() &&
-           symbolicAccesses.empty() && codeLabels.empty() &&
-#ifdef ENABLE_WASM_EXCEPTIONS
-           tryNotes.empty() && stackMaps.empty();
-#else
-           stackMaps.empty();
-#endif
+           symbolicAccesses.empty() && codeLabels.empty() && stackMaps.empty();
   }
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
@@ -121,48 +108,38 @@ struct CompiledCode {
 // 'numFailed'.
 
 struct CompileTaskState {
-  HelperThreadLockData<CompileTaskPtrVector> finished_;
-  HelperThreadLockData<uint32_t> numFailed_;
-  HelperThreadLockData<UniqueChars> errorMessage_;
-  HelperThreadLockData<ConditionVariable> condVar_;
+  CompileTaskPtrVector finished;
+  uint32_t numFailed;
+  UniqueChars errorMessage;
 
-  CompileTaskState() : numFailed_(0) {}
+  CompileTaskState() : numFailed(0) {}
   ~CompileTaskState() {
-    MOZ_ASSERT(finished_.refNoCheck().empty());
-    MOZ_ASSERT(!numFailed_.refNoCheck());
+    MOZ_ASSERT(finished.empty());
+    MOZ_ASSERT(!numFailed);
   }
-
-  CompileTaskPtrVector& finished() { return finished_.ref(); }
-  uint32_t& numFailed() { return numFailed_.ref(); }
-  UniqueChars& errorMessage() { return errorMessage_.ref(); }
-  ConditionVariable& condVar() { return condVar_.ref(); }
 };
+
+using ExclusiveCompileTaskState = ExclusiveWaitableData<CompileTaskState>;
 
 // A CompileTask holds a batch of input functions that are to be compiled on a
 // helper thread as well as, eventually, the results of compilation.
 
-struct CompileTask : public HelperThreadTask {
-  const ModuleEnvironment& moduleEnv;
-  const CompilerEnvironment& compilerEnv;
-
-  CompileTaskState& state;
+struct CompileTask : public RunnableTask {
+  const ModuleEnvironment& env;
+  ExclusiveCompileTaskState& state;
   LifoAlloc lifo;
   FuncCompileInputVector inputs;
   CompiledCode output;
 
-  CompileTask(const ModuleEnvironment& moduleEnv,
-              const CompilerEnvironment& compilerEnv, CompileTaskState& state,
+  CompileTask(const ModuleEnvironment& env, ExclusiveCompileTaskState& state,
               size_t defaultChunkSize)
-      : moduleEnv(moduleEnv),
-        compilerEnv(compilerEnv),
-        state(state),
-        lifo(defaultChunkSize) {}
+      : env(env), state(state), lifo(defaultChunkSize) {}
 
   virtual ~CompileTask() = default;
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
-  void runHelperThreadTask(AutoLockHelperThreadState& locked) override;
+  void runTask() override;
   ThreadType threadType() override { return ThreadType::THREAD_TYPE_WASM; }
 };
 
@@ -173,21 +150,20 @@ struct CompileTask : public HelperThreadTask {
 // compilation and extract the resulting wasm module.
 
 class MOZ_STACK_CLASS ModuleGenerator {
-  using CompileTaskVector = Vector<CompileTask, 0, SystemAllocPolicy>;
-  using CodeOffsetVector = Vector<jit::CodeOffset, 0, SystemAllocPolicy>;
+  typedef Vector<CompileTask, 0, SystemAllocPolicy> CompileTaskVector;
+  typedef Vector<jit::CodeOffset, 0, SystemAllocPolicy> CodeOffsetVector;
   struct CallFarJump {
     uint32_t funcIndex;
     jit::CodeOffset jump;
     CallFarJump(uint32_t fi, jit::CodeOffset j) : funcIndex(fi), jump(j) {}
   };
-  using CallFarJumpVector = Vector<CallFarJump, 0, SystemAllocPolicy>;
+  typedef Vector<CallFarJump, 0, SystemAllocPolicy> CallFarJumpVector;
 
   // Constant parameters
   SharedCompileArgs const compileArgs_;
   UniqueChars* const error_;
   const Atomic<bool>* const cancelled_;
-  ModuleEnvironment* const moduleEnv_;
-  CompilerEnvironment* const compilerEnv_;
+  ModuleEnvironment* const env_;
 
   // Data that is moved into the result of finish()
   UniqueLinkData linkData_;
@@ -195,7 +171,7 @@ class MOZ_STACK_CLASS ModuleGenerator {
   MutableMetadata metadata_;
 
   // Data scoped to the ModuleGenerator's lifetime
-  CompileTaskState taskState_;
+  ExclusiveCompileTaskState taskState_;
   LifoAlloc lifo_;
   jit::JitContext jcx_;
   jit::TempAllocator masmAlloc_;
@@ -236,29 +212,28 @@ class MOZ_STACK_CLASS ModuleGenerator {
   UniqueCodeTier finishCodeTier();
   SharedMetadata finishMetadata(const Bytes& bytecode);
 
-  bool isAsmJS() const { return moduleEnv_->isAsmJS(); }
-  Tier tier() const { return compilerEnv_->tier(); }
-  CompileMode mode() const { return compilerEnv_->mode(); }
-  bool debugEnabled() const { return compilerEnv_->debugEnabled(); }
+  bool isAsmJS() const { return env_->isAsmJS(); }
+  Tier tier() const { return env_->tier(); }
+  CompileMode mode() const { return env_->mode(); }
+  bool debugEnabled() const { return env_->debugEnabled(); }
 
  public:
-  ModuleGenerator(const CompileArgs& args, ModuleEnvironment* moduleEnv,
-                  CompilerEnvironment* compilerEnv,
+  ModuleGenerator(const CompileArgs& args, ModuleEnvironment* env,
                   const Atomic<bool>* cancelled, UniqueChars* error);
   ~ModuleGenerator();
-  [[nodiscard]] bool init(Metadata* maybeAsmJSMetadata = nullptr);
+  MOZ_MUST_USE bool init(Metadata* maybeAsmJSMetadata = nullptr);
 
   // Before finishFuncDefs() is called, compileFuncDef() must be called once
   // for each funcIndex in the range [0, env->numFuncDefs()).
 
-  [[nodiscard]] bool compileFuncDef(
+  MOZ_MUST_USE bool compileFuncDef(
       uint32_t funcIndex, uint32_t lineOrBytecode, const uint8_t* begin,
       const uint8_t* end, Uint32Vector&& callSiteLineNums = Uint32Vector());
 
   // Must be called after the last compileFuncDef() and before finishModule()
   // or finishTier2().
 
-  [[nodiscard]] bool finishFuncDefs();
+  MOZ_MUST_USE bool finishFuncDefs();
 
   // If env->mode is Once or Tier1, finishModule() must be called to generate
   // a new Module. Otherwise, if env->mode is Tier2, finishTier2() must be
@@ -267,7 +242,7 @@ class MOZ_STACK_CLASS ModuleGenerator {
   SharedModule finishModule(
       const ShareableBytes& bytecode,
       JS::OptimizedEncodingListener* maybeTier2Listener = nullptr);
-  [[nodiscard]] bool finishTier2(const Module& module);
+  MOZ_MUST_USE bool finishTier2(const Module& module);
 };
 
 }  // namespace wasm

@@ -93,8 +93,6 @@ macro_rules! impl_reduction_float_arithmetic {
         test_if! {
             $test_tt:
             paste::item! {
-                // Comparisons use integer casts within mantissa^1 range.
-                #[allow(clippy::float_cmp)]
                 pub mod [<$id _reduction_float_arith>] {
                     use super::*;
                     fn alternating(x: usize) -> $id {
@@ -227,7 +225,7 @@ macro_rules! impl_reduction_float_arithmetic {
                         let mut v = $id::splat(0. as $elem_ty);
                         for i in 0..$id::lanes() {
                             let c = if i % 2 == 0 { 1e3 } else { -1. };
-                            start *= ::core::$elem_ty::consts::PI * c;
+                            start *= 3.14 * c;
                             scalar_reduction += start;
                             v = v.replace(i, start);
                         }
@@ -259,7 +257,6 @@ macro_rules! impl_reduction_float_arithmetic {
                     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
                     #[allow(unused, dead_code)]
                     fn product_roundoff() {
-                        use ::core::convert::TryInto;
                         // Performs a tree-reduction
                         fn tree_reduce_product(a: &[$elem_ty]) -> $elem_ty {
                             assert!(!a.is_empty());
@@ -281,7 +278,7 @@ macro_rules! impl_reduction_float_arithmetic {
                         let mut v = $id::splat(0. as $elem_ty);
                         for i in 0..$id::lanes() {
                             let c = if i % 2 == 0 { 1e3 } else { -1. };
-                            start *= ::core::$elem_ty::consts::PI * c;
+                            start *= 3.14 * c;
                             scalar_reduction *= start;
                             v = v.replace(i, start);
                         }
@@ -291,9 +288,7 @@ macro_rules! impl_reduction_float_arithmetic {
                         v.write_to_slice_unaligned(&mut a);
                         let tree_reduction = tree_reduce_product(&a);
 
-                        // FIXME: Too imprecise, even only for product(f32x8).
-                        // Figure out how to narrow this down.
-                        let ulp_limit = $id::lanes() / 2;
+                        // tolerate 1 ULP difference:
                         let red_bits = simd_reduction.to_bits();
                         let tree_bits = tree_reduction.to_bits();
                         assert!(
@@ -301,7 +296,7 @@ macro_rules! impl_reduction_float_arithmetic {
                                 red_bits - tree_bits
                             } else {
                                 tree_bits - red_bits
-                            } < ulp_limit.try_into().unwrap(),
+                            } < 2,
                             "vector: {:?} | simd_reduction: {:?} | \
                              tree_reduction: {} | scalar_reduction: {}",
                             v,

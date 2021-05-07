@@ -13,9 +13,8 @@
 [package]
 edition = "2018"
 name = "fluent-bundle"
-version = "0.14.1"
+version = "0.11.0"
 authors = ["Zibi Braniecki <gandalf@mozilla.com>", "Staś Małolepszy <stas@mozilla.com>"]
-include = ["src/**/*", "benches/*.rs", "Cargo.toml", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 description = "A localization system designed to unleash the entire expressive power of\nnatural language translations.\n"
 homepage = "http://www.projectfluent.org"
 readme = "README.md"
@@ -28,30 +27,30 @@ repository = "https://github.com/projectfluent/fluent-rs"
 name = "resolver"
 harness = false
 [dependencies.fluent-langneg]
-version = "0.13"
+version = "0.12"
 
 [dependencies.fluent-syntax]
-version = "0.10.1"
+version = "0.9"
 
 [dependencies.intl-memoizer]
-version = "0.5"
+version = "0.4"
 
 [dependencies.intl_pluralrules]
-version = "7.0.1"
+version = "6.0"
 
-[dependencies.ouroboros]
-version = "0.7"
+[dependencies.rental]
+version = "0.5"
 
 [dependencies.smallvec]
-version = "1"
+version = "1.0"
 
 [dependencies.unic-langid]
-version = "0.9"
+version = "0.8"
 [dev-dependencies.criterion]
 version = "0.3"
 
 [dev-dependencies.rand]
-version = "0.8"
+version = "0.7"
 
 [dev-dependencies.serde]
 version = "1.0"
@@ -61,5 +60,5 @@ features = ["derive"]
 version = "0.8"
 
 [dev-dependencies.unic-langid]
-version = "0.9"
+version = "0.8"
 features = ["macros"]

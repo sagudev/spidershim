@@ -6,17 +6,19 @@
 
 /* Class ReadableStreamDefaultReader. */
 
-#include "jsapi.h"  // JS_ReportErrorNumberASCII
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
+#include "jsapi.h"        // JS_ReportErrorNumberASCII
+#include "jsfriendapi.h"  // js::GetErrorMessage
 
 #include "builtin/streams/ClassSpecMacro.h"  // JS_STREAMS_CLASS_SPEC
 #include "builtin/streams/MiscellaneousOperations.h"  // js::ReturnPromiseRejectedWithPendingError
 #include "builtin/streams/ReadableStream.h"  // js::ReadableStream
 #include "builtin/streams/ReadableStreamReader.h"  // js::ForAuthorCodeBool, js::ReadableStream{,Default}Reader
-#include "js/CallArgs.h"              // JS::CallArgs{,FromVp}
-#include "js/Class.h"                 // JSClass, JS_NULL_CLASS_OPS
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/RootingAPI.h"            // JS::Handle, JS::Rooted
-#include "vm/PromiseObject.h"         // js::PromiseObject
+#include "js/CallArgs.h"       // JS::CallArgs{,FromVp}
+#include "js/Class.h"          // JSClass, JS_NULL_CLASS_OPS
+#include "js/RootingAPI.h"     // JS::Handle, JS::Rooted
+#include "vm/PromiseObject.h"  // js::PromiseObject
 
 #include "vm/Compartment-inl.h"   // js::UnwrapAndTypeCheckThis
 #include "vm/JSObject-inl.h"      // js::NewObjectWithClassProto
@@ -44,11 +46,9 @@ using js::UnwrapAndTypeCheckThis;
  * Stream spec, 3.6.3. new ReadableStreamDefaultReader ( stream )
  * Steps 2-4.
  */
-[[nodiscard]] ReadableStreamDefaultReader*
-js::CreateReadableStreamDefaultReader(JSContext* cx,
-                                      Handle<ReadableStream*> unwrappedStream,
-                                      ForAuthorCodeBool forAuthorCode,
-                                      Handle<JSObject*> proto /* = nullptr */) {
+MOZ_MUST_USE ReadableStreamDefaultReader* js::CreateReadableStreamDefaultReader(
+    JSContext* cx, Handle<ReadableStream*> unwrappedStream,
+    ForAuthorCodeBool forAuthorCode, Handle<JSObject*> proto /* = nullptr */) {
   Rooted<ReadableStreamDefaultReader*> reader(
       cx, NewObjectWithClassProto<ReadableStreamDefaultReader>(cx, proto));
   if (!reader) {
@@ -113,9 +113,9 @@ bool ReadableStreamDefaultReader::constructor(JSContext* cx, unsigned argc,
 /**
  * Streams spec, 3.6.4.1 get closed
  */
-[[nodiscard]] static bool ReadableStreamDefaultReader_closed(JSContext* cx,
-                                                             unsigned argc,
-                                                             Value* vp) {
+static MOZ_MUST_USE bool ReadableStreamDefaultReader_closed(JSContext* cx,
+                                                            unsigned argc,
+                                                            Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Step 1: If ! IsReadableStreamDefaultReader(this) is false, return a promise
@@ -140,9 +140,9 @@ bool ReadableStreamDefaultReader::constructor(JSContext* cx, unsigned argc,
 /**
  * Streams spec, 3.6.4.2. cancel ( reason )
  */
-[[nodiscard]] static bool ReadableStreamDefaultReader_cancel(JSContext* cx,
-                                                             unsigned argc,
-                                                             Value* vp) {
+static MOZ_MUST_USE bool ReadableStreamDefaultReader_cancel(JSContext* cx,
+                                                            unsigned argc,
+                                                            Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Step 1: If ! IsReadableStreamDefaultReader(this) is false, return a promise
@@ -175,9 +175,9 @@ bool ReadableStreamDefaultReader::constructor(JSContext* cx, unsigned argc,
 /**
  * Streams spec, 3.6.4.3 read ( )
  */
-[[nodiscard]] static bool ReadableStreamDefaultReader_read(JSContext* cx,
-                                                           unsigned argc,
-                                                           Value* vp) {
+static MOZ_MUST_USE bool ReadableStreamDefaultReader_read(JSContext* cx,
+                                                          unsigned argc,
+                                                          Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Step 1: If ! IsReadableStreamDefaultReader(this) is false, return a promise

@@ -11,14 +11,7 @@
 #include "vm/JSScript.h"
 
 BEGIN_TEST(testBug795104) {
-  JS::RealmOptions options;
-  options.behaviors().setDiscardSource(true);
-
-  JS::RootedObject g(cx, JS_NewGlobalObject(cx, getGlobalClass(), nullptr,
-                                            JS::FireOnNewGlobalHook, options));
-  CHECK(g);
-
-  JSAutoRealm ar(cx, g);
+  JS::RealmBehaviorsRef(cx->realm()).setDiscardSource(true);
 
   const size_t strLen = 60002;
   char* s = static_cast<char*>(JS_malloc(cx, strLen));

@@ -10,7 +10,7 @@
 
 #include "BaseProfilerSharedLibraries.h"
 
-#include "mozilla/glue/WindowsUnicode.h"
+#include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
 #include "mozilla/WindowsVersion.h"
 
@@ -18,8 +18,6 @@
 #include <string>
 
 #define CV_SIGNATURE 0x53445352  // 'SDSR'
-
-namespace {
 
 struct CodeViewRecord70 {
   uint32_t signature;
@@ -29,13 +27,6 @@ struct CodeViewRecord70 {
   // https://github.com/Microsoft/microsoft-pdb/blob/082c5290e5aff028ae84e43affa8be717aa7af73/PDB/dbi/locator.cpp#L785
   char pdbFileName[1];
 };
-
-struct HModuleFreer {
-  using pointer = HMODULE;
-  void operator()(pointer aModule) { ::FreeLibrary(aModule); }
-};
-
-}  // anonymous namespace
 
 static constexpr char digits[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
                                     '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
@@ -123,15 +114,15 @@ static bool GetPdbInfo(uintptr_t aStart, std::string& aSignature,
   return true;
 }
 
-static std::string GetVersion(wchar_t* dllPath) {
-  DWORD infoSize = GetFileVersionInfoSizeW(dllPath, nullptr);
+static std::string GetVersion(char* dllPath) {
+  DWORD infoSize = GetFileVersionInfoSizeA(dllPath, nullptr);
   if (infoSize == 0) {
     return {};
   }
 
   mozilla::UniquePtr<unsigned char[]> infoData =
       mozilla::MakeUnique<unsigned char[]>(infoSize);
-  if (!GetFileVersionInfoW(dllPath, 0, infoSize, infoData.get())) {
+  if (!GetFileVersionInfoA(dllPath, 0, infoSize, infoData.get())) {
     return {};
   }
 
@@ -174,41 +165,19 @@ SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
   }
 
   for (unsigned int i = 0; i < modulesNum; i++) {
-    wchar_t modulePath[MAX_PATH + 1];
-    if (!GetModuleFileNameExW(hProcess, hMods[i], modulePath,
-                              std::size(modulePath))) {
-      continue;
-    }
-
-    // Load the module again to make sure that its handle will remain valid
-    // as we attempt to read the PDB information from it.  We load the DLL as
-    // a datafile so that if the module actually gets unloaded between the call
-    // to EnumProcessModules and the following LoadLibraryEx, we don't end up
-    // running the now newly loaded module's DllMain function.  If the module
-    // is already loaded, LoadLibraryEx just increments its refcount.
-    mozilla::UniquePtr<HMODULE, HModuleFreer> handleLock(
-        LoadLibraryExW(modulePath, NULL, LOAD_LIBRARY_AS_DATAFILE));
-    if (!handleLock) {
-      continue;
-    }
-
-    mozilla::UniquePtr<char[]> utf8ModulePath(
-        mozilla::glue::WideToUTF8(modulePath));
-    if (!utf8ModulePath) {
+    char modulePath[MAX_PATH + 1];
+    if (!GetModuleFileNameEx(hProcess, hMods[i], modulePath,
+                             sizeof(modulePath) / sizeof(char))) {
       continue;
     }
 
     MODULEINFO module = {0};
     if (!GetModuleInformation(hProcess, hMods[i], &module,
                               sizeof(MODULEINFO))) {
-      // If the module was unloaded before LoadLibraryEx, LoadLibraryEx
-      // loads the module onto an address different from hMods[i] and
-      // thus GetModuleInformation fails with ERROR_INVALID_HANDLE.
-      // We skip that case.
       continue;
     }
 
-    std::string modulePathStr(utf8ModulePath.get());
+    std::string modulePathStr(modulePath);
     size_t pos = modulePathStr.find_last_of("\\/");
     std::string moduleNameStr = (pos != std::string::npos)
                                     ? modulePathStr.substr(pos + 1)
@@ -225,11 +194,11 @@ SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
     // a dummy breakpad id instead.
 #if !defined(_M_ARM64)
 #  if defined(_M_AMD64)
-    LPCWSTR kNvidiaShimDriver = L"nvd3d9wrapx.dll";
-    LPCWSTR kNvidiaInitDriver = L"nvinitx.dll";
+    LPCSTR kNvidiaShimDriver = "nvd3d9wrapx.dll";
+    LPCSTR kNvidiaInitDriver = "nvinitx.dll";
 #  elif defined(_M_IX86)
-    LPCWSTR kNvidiaShimDriver = L"nvd3d9wrap.dll";
-    LPCWSTR kNvidiaInitDriver = L"nvinit.dll";
+    LPCSTR kNvidiaShimDriver = "nvd3d9wrap.dll";
+    LPCSTR kNvidiaInitDriver = "nvinit.dll";
 #  endif
     constexpr std::string_view detoured_dll = "detoured.dll";
     if (std::equal(moduleNameStr.cbegin(), moduleNameStr.cend(),
@@ -237,8 +206,8 @@ SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
                    [](char aModuleChar, char aDetouredChar) {
                      return std::tolower(aModuleChar) == aDetouredChar;
                    }) &&
-        !mozilla::IsWin8OrLater() && ::GetModuleHandleW(kNvidiaShimDriver) &&
-        !::GetModuleHandleW(kNvidiaInitDriver)) {
+        !mozilla::IsWin8OrLater() && ::GetModuleHandle(kNvidiaShimDriver) &&
+        !::GetModuleHandle(kNvidiaInitDriver)) {
       const std::string pdbNameStr = "detoured.pdb";
       SharedLibrary shlib((uintptr_t)module.lpBaseOfDll,
                           (uintptr_t)module.lpBaseOfDll + module.SizeOfImage,
@@ -251,12 +220,31 @@ SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
 #endif  // !defined(_M_ARM64)
 
     std::string breakpadId;
+    // Load the module again to make sure that its handle will remain
+    // valid as we attempt to read the PDB information from it.  We load the
+    // DLL as a datafile so that if the module actually gets unloaded between
+    // the call to EnumProcessModules and the following LoadLibraryEx, we
+    // don't end up running the now newly loaded module's DllMain function. If
+    // the module is already loaded, LoadLibraryEx just increments its
+    // refcount.
+    //
+    // Note that because of the race condition above, merely loading the DLL
+    // again is not safe enough, therefore we also need to make sure that we
+    // can read the memory mapped at the base address before we can safely
+    // proceed to actually access those pages.
+    HMODULE handleLock =
+        LoadLibraryEx(modulePath, NULL, LOAD_LIBRARY_AS_DATAFILE);
+    MEMORY_BASIC_INFORMATION vmemInfo = {0};
     std::string pdbSig;
     uint32_t pdbAge;
     std::string pdbPathStr;
     std::string pdbNameStr;
     char* pdbName = nullptr;
-    if (GetPdbInfo((uintptr_t)module.lpBaseOfDll, pdbSig, pdbAge, &pdbName)) {
+    if (handleLock &&
+        sizeof(vmemInfo) ==
+            VirtualQuery(module.lpBaseOfDll, &vmemInfo, sizeof(vmemInfo)) &&
+        vmemInfo.State == MEM_COMMIT &&
+        GetPdbInfo((uintptr_t)module.lpBaseOfDll, pdbSig, pdbAge, &pdbName)) {
       MOZ_ASSERT(breakpadId.empty());
       breakpadId += pdbSig;
       AppendHex(pdbAge, breakpadId, WITHOUT_PADDING);
@@ -273,6 +261,8 @@ SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
                         breakpadId, moduleNameStr, modulePathStr, pdbNameStr,
                         pdbPathStr, GetVersion(modulePath), "");
     sharedLibraryInfo.AddSharedLibrary(shlib);
+
+    FreeLibrary(handleLock);  // ok to free null handles
   }
 
   return sharedLibraryInfo;

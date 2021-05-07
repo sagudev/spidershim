@@ -19,26 +19,17 @@
 #ifndef wasm_gc_h
 #define wasm_gc_h
 
-#include "mozilla/BinarySearch.h"
-
-#include "jit/MacroAssembler.h"  // For ABIArgIter
-#include "js/AllocPolicy.h"
-#include "js/Vector.h"
+#include "jit/MacroAssembler.h"
 #include "util/Memory.h"
 
 namespace js {
-
-namespace jit {
-class MacroAssembler;
-}  // namespace jit
-
 namespace wasm {
 
 using namespace js::jit;
 
 // Definitions for stack maps.
 
-using ExitStubMapVector = Vector<bool, 32, SystemAllocPolicy>;
+typedef Vector<bool, 32, SystemAllocPolicy> ExitStubMapVector;
 
 struct StackMap final {
   // A StackMap is a bit-array containing numMappedWords bits, one bit per
@@ -184,22 +175,22 @@ class StackMaps {
  public:
   StackMaps() : sorted_(false) {}
   ~StackMaps() {
-    for (auto& maplet : mapping_) {
-      maplet.map->destroy();
-      maplet.map = nullptr;
+    for (size_t i = 0; i < mapping_.length(); i++) {
+      mapping_[i].map->destroy();
+      mapping_[i].map = nullptr;
     }
   }
-  [[nodiscard]] bool add(uint8_t* nextInsnAddr, StackMap* map) {
+  MOZ_MUST_USE bool add(uint8_t* nextInsnAddr, StackMap* map) {
     MOZ_ASSERT(!sorted_);
     return mapping_.append(Maplet(nextInsnAddr, map));
   }
-  [[nodiscard]] bool add(const Maplet& maplet) {
+  MOZ_MUST_USE bool add(const Maplet& maplet) {
     return add(maplet.nextInsnAddr, maplet.map);
   }
   void clear() {
-    for (auto& maplet : mapping_) {
-      maplet.nextInsnAddr = nullptr;
-      maplet.map = nullptr;
+    for (size_t i = 0; i < mapping_.length(); i++) {
+      mapping_[i].nextInsnAddr = nullptr;
+      mapping_[i].map = nullptr;
     }
     mapping_.clear();
   }
@@ -213,7 +204,7 @@ class StackMaps {
     return m;
   }
   void offsetBy(uintptr_t delta) {
-    for (auto& maplet : mapping_) maplet.offsetBy(delta);
+    for (size_t i = 0; i < mapping_.length(); i++) mapping_[i].offsetBy(delta);
   }
   void sort() {
     MOZ_ASSERT(!sorted_);
@@ -231,13 +222,13 @@ class StackMaps {
         }
         return 0;
       }
-      explicit Comparator(const uint8_t* aTarget) : mTarget(aTarget) {}
+      explicit Comparator(uint8_t* aTarget) : mTarget(aTarget) {}
       const uint8_t* mTarget;
     };
 
     size_t result;
-    if (mozilla::BinarySearchIf(mapping_, 0, mapping_.length(),
-                                Comparator(nextInsnAddr), &result)) {
+    if (BinarySearchIf(mapping_, 0, mapping_.length(), Comparator(nextInsnAddr),
+                       &result)) {
       return mapping_[result].map;
     }
 
@@ -261,7 +252,7 @@ class StackMaps {
 // the complete native-ABI-level call signature.
 template <class T>
 static inline size_t StackArgAreaSizeUnaligned(const T& argTypes) {
-  WasmABIArgIter<const T> i(argTypes);
+  ABIArgIter<const T> i(argTypes);
   while (!i.done()) {
     i++;
   }
@@ -270,7 +261,7 @@ static inline size_t StackArgAreaSizeUnaligned(const T& argTypes) {
 
 static inline size_t StackArgAreaSizeUnaligned(
     const SymbolicAddressSignature& saSig) {
-  // WasmABIArgIter::ABIArgIter wants the items to be iterated over to be
+  // ABIArgIter::ABIArgIter wants the items to be iterated over to be
   // presented in some type that has methods length() and operator[].  So we
   // have to wrap up |saSig|'s array of types in this API-matching class.
   class MOZ_STACK_CLASS ItemsAndLength {
@@ -307,7 +298,7 @@ static inline size_t StackArgAreaSizeAligned(const T& argTypes) {
 // A stackmap creation helper.  Create a stackmap from a vector of booleans.
 // The caller owns the resulting stackmap.
 
-using StackMapBoolVector = Vector<bool, 128, SystemAllocPolicy>;
+typedef Vector<bool, 128, SystemAllocPolicy> StackMapBoolVector;
 
 wasm::StackMap* ConvertStackMapBoolVectorToStackMap(
     const StackMapBoolVector& vec, bool hasRefs);
@@ -331,7 +322,7 @@ wasm::StackMap* ConvertStackMapBoolVectorToStackMap(
 // The "space reserved before trap" is the space reserved by
 // MacroAssembler::wasmReserveStackChecked, in the case where the frame is
 // "small", as determined by that function.
-[[nodiscard]] bool CreateStackMapForFunctionEntryTrap(
+MOZ_MUST_USE bool CreateStackMapForFunctionEntryTrap(
     const ArgTypeVector& argTypes, const MachineState& trapExitLayout,
     size_t trapExitLayoutWords, size_t nBytesReservedBeforeTrap,
     size_t nInboundStackArgBytes, wasm::StackMap** result);
@@ -341,7 +332,7 @@ wasm::StackMap* ConvertStackMapBoolVectorToStackMap(
 // vector of booleans describing the ref-ness of the saved integer registers.
 // |args[0]| corresponds to the low addressed end of the described section of
 // the save area.
-[[nodiscard]] bool GenerateStackmapEntriesForTrapExit(
+MOZ_MUST_USE bool GenerateStackmapEntriesForTrapExit(
     const ArgTypeVector& args, const MachineState& trapExitLayout,
     const size_t trapExitLayoutNumWords, ExitStubMapVector* extras);
 

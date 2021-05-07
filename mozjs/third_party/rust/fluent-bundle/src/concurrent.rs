@@ -5,9 +5,6 @@ use crate::bundle::FluentBundleBase;
 use crate::memoizer::MemoizerKind;
 use crate::types::FluentType;
 
-/// Concurrent version of [`FluentBundle`] struct. See its docs for details.
-///
-/// [`FluentBundle`]: ../type.FluentBundle.html
 pub type FluentBundle<R> = FluentBundleBase<R, IntlLangMemoizer>;
 
 impl MemoizerKind for IntlLangMemoizer {
@@ -15,7 +12,7 @@ impl MemoizerKind for IntlLangMemoizer {
     where
         Self: Sized,
     {
-        Self::new(lang)
+        IntlLangMemoizer::new(lang)
     }
 
     fn with_try_get_threadsafe<I, R, U>(&self, args: I::Args, cb: U) -> Result<R, I::Error>

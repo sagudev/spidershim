@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 // Misc utils for Darwin.
 //===----------------------------------------------------------------------===//
-#include "FuzzerPlatform.h"
+#include "FuzzerDefs.h"
 #if LIBFUZZER_APPLE
 #include "FuzzerCommand.h"
 #include "FuzzerIO.h"
@@ -17,7 +17,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
 // There is no header for this on macOS so declare here
 extern "C" char **environ;
@@ -155,14 +154,6 @@ int ExecuteCommand(const Command &Cmd) {
     }
   }
   return ProcessStatus;
-}
-
-void DiscardOutput(int Fd) {
-  FILE* Temp = fopen("/dev/null", "w");
-  if (!Temp)
-    return;
-  dup2(fileno(Temp), Fd);
-  fclose(Temp);
 }
 
 } // namespace fuzzer

@@ -26,17 +26,17 @@ info: |
   [[Type]]: "type"
   [[Fallback]]: "fallback"
 
-  Intl.DisplayNames ( locales , options )
+  Intl.DisplayNames ([ locales [ , options ]])
 
   ...
-  7. Let matcher be ? GetOption(options, "localeMatcher", "string", « "lookup", "best fit" », "best fit").
+  8. Let matcher be ? GetOption(options, "localeMatcher", "string", « "lookup", "best fit" », "best fit").
   ...
-  9. Let r be ResolveLocale(%DisplayNames%.[[AvailableLocales]], requestedLocales, opt,
+  10. Let r be ResolveLocale(%DisplayNames%.[[AvailableLocales]], requestedLocales, opt,
     %DisplayNames%.[[RelevantExtensionKeys]]).
-  10. Let style be ? GetOption(options, "style", "string", « "narrow", "short", "long" », "long").
+  11. Let style be ? GetOption(options, "style", "string", « "narrow", "short", "long" », "long").
   ...
-  12. Let type be ? GetOption(options, "type", "string", « "language", "region", "script", "currency" », undefined).
-  13. If type is undefined, throw a TypeError exception.
+  13. Let type be ? GetOption(options, "type", "string", « "language", "region", "script", "currency",
+    "weekday", "month", "quarter", "dayPeriod", "dateTimeField" », "language").
   ...
   15. Let fallback be ? GetOption(options, "fallback", "string", « "code", "none" », "code").
   ...
@@ -54,7 +54,7 @@ features: [Intl.DisplayNames]
 includes: [propertyHelper.js]
 ---*/
 
-var dn = new Intl.DisplayNames('en-US', {type: 'language'});
+var dn = new Intl.DisplayNames('en-US');
 
 var options = dn.resolvedOptions();
 

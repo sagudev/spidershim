@@ -6,53 +6,45 @@ description: >
   toString of built-in Function object
 info: |
   ...
-  If func is a built-in Function object, then return an implementation-dependent String source code representation of func.
+  If func is a Bound Function exotic object or a built-in Function object, then return an implementation-dependent String source code representation of func.
   The representation must have the syntax of a NativeFunction.
   ...
 
   NativeFunction:
-    function NativeFunctionAccessor_opt IdentifierName_opt ( FormalParameters ) { [ native code ] }
-  NativeFunctionAccessor :
-    get
-    set
+    function IdentifierName_opt ( FormalParameters ) { [ native code ] }
 
 includes: [nativeFunctionMatcher.js, wellKnownIntrinsicObjects.js]
-features: [arrow-function, Reflect]
+features: [arrow-function]
 ---*/
 
-const visited = [];
-function visit(ns, path) {
-  if (visited.includes(ns)) {
-    return;
-  }
-  visited.push(ns);
+var visited = [];
+var verified = [];
 
-  if (typeof ns === 'function') {
-    assertNativeFunction(ns, path);
-  }
-  if (typeof ns !== 'function' && (typeof ns !== 'object' || ns === null)) {
+function visit(object) {
+  if (visited.includes(object)) {
     return;
   }
 
-  const descriptors = Object.getOwnPropertyDescriptors(ns);
-  Reflect.ownKeys(descriptors)
-    .forEach((name) => {
-      const desc = descriptors[name];
-      const p = typeof name === 'symbol'
-        ? `${path}[Symbol(${name.description})]`
-        : `${path}.${name}`;
-      if ('value' in desc) {
-        visit(desc.value, p);
-      } else {
-        visit(desc.get, p);
-        visit(desc.set, p);
+  visited.push(object);
+
+  if (typeof object === "function") {
+    assertNativeFunction(object);
+    verified.push(object.name);
+  }
+
+  for (var property of Object.getOwnPropertyNames(object)) {
+    if (typeof object[property] === "function" ||
+        typeof object[property] === "object") {
+      try {
+        visit(object[property], assertNativeFunction);
+      } catch(error) {
+        /* we don't actually want to do anything about failures here */
       }
-    });
+    }
+  }
 }
 
-WellKnownIntrinsicObjects.forEach((intrinsic) => {
-  visit(intrinsic.value, intrinsic.name);
-});
-assert.notSameValue(visited.length, 0);
+visit(WellKnownIntrinsicObjects.map(wkio => wkio.reference));
+assert.notSameValue(verified.length, 0);
 
 reportCompare(0, 0);

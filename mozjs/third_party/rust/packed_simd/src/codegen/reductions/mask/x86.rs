@@ -19,7 +19,13 @@ mod avx2;
 /// x86 64-bit m8x8 implementation
 macro_rules! x86_m8x8_impl {
     ($id:ident) => {
-        fallback_impl!($id);
+        cfg_if! {
+            if #[cfg(all(target_arch = "x86_64", target_feature = "sse"))] {
+                x86_m8x8_sse_impl!($id);
+            } else {
+                fallback_impl!($id);
+            }
+        }
     };
 }
 

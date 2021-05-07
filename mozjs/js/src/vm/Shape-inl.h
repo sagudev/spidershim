@@ -29,9 +29,9 @@ inline AutoKeepShapeCaches::~AutoKeepShapeCaches() {
   cx_->zone()->setKeepShapeCaches(prev_);
 }
 
-inline StackBaseShape::StackBaseShape(const JSClass* clasp, JS::Realm* realm,
-                                      TaggedProto proto)
-    : clasp(clasp), realm(realm), proto(proto) {}
+inline StackBaseShape::StackBaseShape(const JSClass* clasp,
+                                      uint32_t objectFlags)
+    : flags(objectFlags), clasp(clasp) {}
 
 MOZ_ALWAYS_INLINE Shape* Shape::search(JSContext* cx, jsid id) {
   return search(cx, this, id);
@@ -127,20 +127,11 @@ inline Shape* Shape::new_(JSContext* cx, Handle<StackShape> other,
 inline void Shape::updateBaseShapeAfterMovingGC() {
   BaseShape* base = this->base();
   if (IsForwarded(base)) {
-    unbarrieredSetHeaderPtr(Forwarded(base));
+    headerAndBase_.unsafeSetPtr(Forwarded(base));
   }
 }
 
-static inline void GetterSetterPreWriteBarrier(AccessorShape* shape) {
-  if (shape->hasGetterObject()) {
-    PreWriteBarrier(shape->getterObject());
-  }
-  if (shape->hasSetterObject()) {
-    PreWriteBarrier(shape->setterObject());
-  }
-}
-
-static inline void GetterSetterPostWriteBarrier(AccessorShape* shape) {
+static inline void GetterSetterWriteBarrierPost(AccessorShape* shape) {
   // If the shape contains any nursery pointers then add it to a vector on the
   // zone that we fixup on minor GC. Prevent this vector growing too large
   // since we don't tolerate OOM here.
@@ -165,7 +156,7 @@ static inline void GetterSetterPostWriteBarrier(AccessorShape* shape) {
   {
     AutoEnterOOMUnsafeRegion oomUnsafe;
     if (!nurseryShapes.append(shape)) {
-      oomUnsafe.crash("GetterSetterPostWriteBarrier");
+      oomUnsafe.crash("GetterSetterWriteBarrierPost");
     }
   }
 
@@ -181,13 +172,7 @@ inline AccessorShape::AccessorShape(const StackShape& other, uint32_t nfixed)
       rawGetter(other.rawGetter),
       rawSetter(other.rawSetter) {
   MOZ_ASSERT(getAllocKind() == gc::AllocKind::ACCESSOR_SHAPE);
-  GetterSetterPostWriteBarrier(this);
-}
-
-inline AccessorShape::AccessorShape(BaseShape* base, ObjectFlags objectFlags,
-                                    uint32_t nfixed)
-    : Shape(base, objectFlags, nfixed), rawGetter(nullptr), rawSetter(nullptr) {
-  MOZ_ASSERT(getAllocKind() == gc::AllocKind::ACCESSOR_SHAPE);
+  GetterSetterWriteBarrierPost(this);
 }
 
 inline void Shape::initDictionaryShape(const StackShape& child, uint32_t nfixed,
@@ -226,28 +211,18 @@ inline void Shape::setDictionaryNextPtr(DictionaryShapeLink next) {
 inline void Shape::dictNextPreWriteBarrier() {
   // Only object pointers are traced, so we only need to barrier those.
   if (dictNext.isObject()) {
-    gc::PreWriteBarrier(dictNext.toObject());
+    JSObject::writeBarrierPre(dictNext.toObject());
   }
 }
 
-inline Shape* DictionaryShapeLink::prev() {
+inline GCPtrShape* DictionaryShapeLink::prevPtr() {
   MOZ_ASSERT(!isNone());
 
   if (isShape()) {
-    return toShape()->parent;
+    return &toShape()->parent;
   }
 
-  return toObject()->as<NativeObject>().shape();
-}
-
-inline void DictionaryShapeLink::setPrev(Shape* shape) {
-  MOZ_ASSERT(!isNone());
-
-  if (isShape()) {
-    toShape()->parent = shape;
-  } else {
-    toObject()->as<NativeObject>().setShape(shape);
-  }
+  return toObject()->as<NativeObject>().shapePtr();
 }
 
 template <class ObjectSubclass>
@@ -269,9 +244,19 @@ template <class ObjectSubclass>
   }
   MOZ_ASSERT(!obj->empty());
 
-  // Cache the initial shape, so that future instances will begin life with that
-  // shape.
-  EmptyShape::insertInitialShape(cx, shape);
+  // If the object is a standard prototype -- |RegExp.prototype|,
+  // |String.prototype|, |RangeError.prototype|, &c. -- GlobalObject.cpp's
+  // |CreateBlankProto| marked it as a delegate.  These are the only objects
+  // of this class that won't use the standard prototype, and there's no
+  // reason to pollute the initial shape cache with entries for them.
+  if (obj->isDelegate()) {
+    return true;
+  }
+
+  // Cache the initial shape for non-prototype objects, however, so that
+  // future instances will begin life with that shape.
+  RootedObject proto(cx, obj->staticPrototype());
+  EmptyShape::insertInitialShape(cx, shape, proto);
   return true;
 }
 
@@ -279,24 +264,24 @@ inline AutoRooterGetterSetter::Inner::Inner(uint8_t attrs, GetterOp* pgetter_,
                                             SetterOp* psetter_)
     : attrs(attrs), pgetter(pgetter_), psetter(psetter_) {}
 
-inline AutoRooterGetterSetter::AutoRooterGetterSetter(JSContext* cx,
-                                                      uint8_t attrs,
-                                                      GetterOp* pgetter,
-                                                      SetterOp* psetter) {
+inline AutoRooterGetterSetter::AutoRooterGetterSetter(
+    JSContext* cx, uint8_t attrs, GetterOp* pgetter,
+    SetterOp* psetter MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL) {
   if (attrs & (JSPROP_GETTER | JSPROP_SETTER)) {
     inner.emplace(cx, Inner(attrs, pgetter, psetter));
   }
+  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 }
 
 static inline uint8_t GetPropertyAttributes(JSObject* obj,
                                             PropertyResult prop) {
-  MOZ_ASSERT(obj->is<NativeObject>());
+  MOZ_ASSERT(obj->isNative());
 
-  if (prop.isDenseElement()) {
+  if (prop.isDenseOrTypedArrayElement()) {
+    if (obj->is<TypedArrayObject>()) {
+      return JSPROP_ENUMERATE | JSPROP_PERMANENT;
+    }
     return obj->as<NativeObject>().getElementsHeader()->elementAttributes();
-  }
-  if (prop.isTypedArrayElement()) {
-    return JSPROP_ENUMERATE;
   }
 
   return prop.shape()->attributes();
@@ -434,7 +419,7 @@ MOZ_ALWAYS_INLINE Shape* Shape::searchNoHashify(Shape* start, jsid id) {
     JSContext* cx, HandleNativeObject obj, HandleId id, uint32_t slot,
     unsigned attrs) {
   MOZ_ASSERT(!JSID_IS_VOID(id));
-  MOZ_ASSERT_IF(!id.isPrivateName(), obj->uninlinedNonProxyIsExtensible());
+  MOZ_ASSERT(obj->uninlinedNonProxyIsExtensible());
   MOZ_ASSERT(!obj->containsPure(id));
 
   AutoKeepShapeCaches keep(cx);
@@ -455,7 +440,7 @@ MOZ_ALWAYS_INLINE Shape* Shape::searchNoHashify(Shape* start, jsid id) {
     JSContext* cx, HandleNativeObject obj, HandleId id, GetterOp getter,
     SetterOp setter, unsigned attrs) {
   MOZ_ASSERT(!JSID_IS_VOID(id));
-  MOZ_ASSERT_IF(!id.isPrivateName(), obj->uninlinedNonProxyIsExtensible());
+  MOZ_ASSERT(obj->uninlinedNonProxyIsExtensible());
   MOZ_ASSERT(!obj->containsPure(id));
 
   AutoKeepShapeCaches keep(cx);

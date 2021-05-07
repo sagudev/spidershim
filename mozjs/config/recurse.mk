@@ -38,6 +38,8 @@ $(RUNNABLE_TIERS)::
 binaries::
 	+$(MAKE) recurse_compile
 
+# Carefully avoid $(eval) type of rule generation, which makes pymake slower
+# than necessary.
 # Get current tier and corresponding subtiers from the data in root.mk.
 CURRENT_TIER := $(filter $(foreach tier,$(RUNNABLE_TIERS) $(non_default_tiers),recurse_$(tier) $(tier)-deps),$(MAKECMDGOALS))
 ifneq (,$(filter-out 0 1,$(words $(CURRENT_TIER))))
@@ -67,8 +69,8 @@ CURRENT_DIRS := $($(CURRENT_TIER)_dirs)
 # Need a list of compile targets because we can't use pattern rules:
 # https://savannah.gnu.org/bugs/index.php?42833
 # Only recurse the paths starting with RECURSE_BASE_DIR when provided.
-.PHONY: $(pre_compile_targets) $(compile_targets) $(syms_targets)
-$(pre_compile_targets) $(compile_targets) $(syms_targets):
+.PHONY: $(compile_targets) $(syms_targets)
+$(compile_targets) $(syms_targets):
 	$(if $(filter $(RECURSE_BASE_DIR)%,$@),$(call RECURSE,$(@F),$(@D)))
 
 $(syms_targets): %/syms: %/target
@@ -160,6 +162,10 @@ recurse:
 	$(LOOP_OVER_DIRS)
 
 ifeq (.,$(DEPTH))
+# Interdependencies for parallel export.
+js/xpconnect/src/export: dom/bindings/export xpcom/xpidl/export
+accessible/xpcom/export: xpcom/xpidl/export
+
 # The Android SDK bindings needs to build the Java generator code
 # source code in order to write the SDK bindings.
 widget/android/bindings/export: mobile/android/base/export
@@ -168,28 +174,15 @@ widget/android/bindings/export: mobile/android/base/export
 # source code in order to find JNI wrapper annotations.
 widget/android/export: mobile/android/base/export
 
-# android_apks is not built on artifact builds without this dependency.
-mobile/android/base/export: mobile/android/base/android_apks
-
-# This is required so that the pre-export tier sees the rules in mobile/android/base
-ifeq ($(MOZ_WIDGET_TOOLKIT),android)
-recurse_pre-export:: mobile/android/base/pre-export
-endif
-
 # CSS2Properties.webidl needs ServoCSSPropList.py from layout/style
-dom/bindings/export: layout/style/ServoCSSPropList.py
+dom/bindings/export: layout/style/export
 
 # Various telemetry histogram files need ServoCSSPropList.py from layout/style
-toolkit/components/telemetry/export: layout/style/ServoCSSPropList.py
+toolkit/components/telemetry/export: layout/style/export
 
 # The update agent needs to link to the updatecommon library, but the build system does not
 # currently have a good way of expressing this dependency.
 toolkit/components/updateagent/target: toolkit/mozapps/update/common/target
-
-ifeq ($(TARGET_ENDIANNESS),big)
-config/external/icu/data/target-objects: config/external/icu/data/$(MDDEPDIR)/icudt$(MOZ_ICU_VERSION)b.dat.stub
-config/external/icu/data/$(MDDEPDIR)/icudt$(MOZ_ICU_VERSION)b.dat.stub: config/external/icu/icupkg/host
-endif
 
 ifdef ENABLE_CLANG_PLUGIN
 # Only target rules use the clang plugin.
@@ -211,7 +204,7 @@ endif
 # Interdependencies that moz.build world don't know about yet for compilation.
 # Note some others are hardcoded or "guessed" in recursivemake.py and emitter.py
 ifeq ($(MOZ_WIDGET_TOOLKIT),gtk)
-toolkit/library/build/target: widget/gtk/mozgtk/gtk3/target
+toolkit/library/target: widget/gtk/mozgtk/gtk3/target
 endif
 
 ifndef MOZ_FOLD_LIBS
@@ -238,7 +231,7 @@ $(addprefix build/unix/stdc++compat/,target host) build/clang-plugin/host: confi
 # prior to Make running. So we also set it as a dependency of pre-export, which
 # ensures it exists before recursing the rust targets and the export targets
 # that run cbindgen, tricking Make into keeping them early.
-$(rust_targets): $(DEPTH)/.cargo/config
+$(rust_targets) gfx/webrender_bindings/export layout/style/export xpcom/base/export: $(DEPTH)/.cargo/config
 ifndef TEST_MOZBUILD
 pre-export:: $(DEPTH)/.cargo/config
 endif

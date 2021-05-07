@@ -2,7 +2,7 @@
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
-esid: sec-intl-datetimeformat-constructor
+es5id: 12.1.1_1
 description: >
     Tests that the this-value is ignored in DateTimeFormat, if the this-value
     isn't a DateTimeFormat instance.

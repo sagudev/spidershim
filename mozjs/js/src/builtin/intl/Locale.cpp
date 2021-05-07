@@ -24,13 +24,11 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 
-#include "builtin/Boolean.h"
 #include "builtin/intl/CommonFunctions.h"
 #include "builtin/intl/LanguageTag.h"
 #include "builtin/String.h"
 #include "gc/Rooting.h"
 #include "js/Conversions.h"
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/TypeDecls.h"
 #include "js/Wrapper.h"
 #include "util/StringBuffer.h"
@@ -39,7 +37,6 @@
 #include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/Printer.h"
 #include "vm/StringType.h"
-#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -51,7 +48,7 @@ using intl::LanguageTag;
 using intl::LanguageTagParser;
 
 const JSClass LocaleObject::class_ = {
-    "Intl.Locale",
+    js_Object_str,
     JSCLASS_HAS_RESERVED_SLOTS(LocaleObject::SLOT_COUNT) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_Locale),
     JS_NULL_CLASS_OPS, &LocaleObject::classSpec_};
@@ -514,15 +511,6 @@ static bool Locale(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  // Steps 10-11.
-  RootedObject options(cx);
-  if (args.hasDefined(1)) {
-    options = ToObject(cx, args[1]);
-    if (!options) {
-      return false;
-    }
-  }
-
   // ApplyOptionsToTag, steps 2 and 9.
   LanguageTag tag(cx);
   if (!LanguageTagParser::parse(cx, tagLinearStr, tag)) {
@@ -533,7 +521,13 @@ static bool Locale(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  if (options) {
+  // Steps 10-11.
+  if (args.hasDefined(1)) {
+    RootedObject options(cx, ToObject(cx, args[1]));
+    if (!options) {
+      return false;
+    }
+
     // Step 12.
     if (!ApplyOptionsToTag(cx, tag, options)) {
       return false;
@@ -1397,8 +1391,8 @@ bool js::intl_ValidateAndCanonicalizeUnicodeExtensionType(JSContext* cx,
   intl::AsciiToLowerCase(unicodeTypeChars.get(), unicodeTypeLength,
                          unicodeTypeChars.get());
 
-  auto key = mozilla::Span(unicodeKey, UnicodeKeyLength);
-  auto type = mozilla::Span(unicodeTypeChars.get(), unicodeTypeLength);
+  auto key = mozilla::MakeSpan(unicodeKey, UnicodeKeyLength);
+  auto type = mozilla::MakeSpan(unicodeTypeChars.get(), unicodeTypeLength);
 
   // Search if there's a replacement for the current Unicode keyword.
   JSString* result;

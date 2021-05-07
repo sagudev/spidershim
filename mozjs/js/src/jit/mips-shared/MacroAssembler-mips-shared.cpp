@@ -8,8 +8,6 @@
 
 #include "mozilla/EndianUtils.h"
 
-#include "jsmath.h"
-
 #include "jit/MacroAssembler.h"
 
 using namespace js;
@@ -276,9 +274,9 @@ void MacroAssemblerMIPSShared::ma_addu(Register rd, Imm32 imm) {
   ma_addu(rd, rd, imm);
 }
 
-void MacroAssemblerMIPSShared::ma_add32TestCarry(Condition cond, Register rd,
-                                                 Register rs, Register rt,
-                                                 Label* overflow) {
+void MacroAssemblerMIPSShared::ma_addTestCarry(Condition cond, Register rd,
+                                               Register rs, Register rt,
+                                               Label* overflow) {
   MOZ_ASSERT(cond == Assembler::CarrySet || cond == Assembler::CarryClear);
   MOZ_ASSERT_IF(rd == rs, rt != rd);
   as_addu(rd, rs, rt);
@@ -287,11 +285,11 @@ void MacroAssemblerMIPSShared::ma_add32TestCarry(Condition cond, Register rd,
        cond == Assembler::CarrySet ? Assembler::NonZero : Assembler::Zero);
 }
 
-void MacroAssemblerMIPSShared::ma_add32TestCarry(Condition cond, Register rd,
-                                                 Register rs, Imm32 imm,
-                                                 Label* overflow) {
+void MacroAssemblerMIPSShared::ma_addTestCarry(Condition cond, Register rd,
+                                               Register rs, Imm32 imm,
+                                               Label* overflow) {
   ma_li(ScratchRegister, imm);
-  ma_add32TestCarry(cond, rd, rs, ScratchRegister, overflow);
+  ma_addTestCarry(cond, rd, rs, ScratchRegister, overflow);
 }
 
 // Subtract.
@@ -312,14 +310,13 @@ void MacroAssemblerMIPSShared::ma_subu(Register rd, Register rs) {
   as_subu(rd, rd, rs);
 }
 
-void MacroAssemblerMIPSShared::ma_sub32TestOverflow(Register rd, Register rs,
-                                                    Imm32 imm,
-                                                    Label* overflow) {
+void MacroAssemblerMIPSShared::ma_subTestOverflow(Register rd, Register rs,
+                                                  Imm32 imm, Label* overflow) {
   if (imm.value != INT32_MIN) {
-    asMasm().ma_add32TestOverflow(rd, rs, Imm32(-imm.value), overflow);
+    asMasm().ma_addTestOverflow(rd, rs, Imm32(-imm.value), overflow);
   } else {
     ma_li(ScratchRegister, Imm32(imm.value));
-    asMasm().ma_sub32TestOverflow(rd, rs, ScratchRegister, overflow);
+    asMasm().ma_subTestOverflow(rd, rs, ScratchRegister, overflow);
   }
 }
 
@@ -328,9 +325,9 @@ void MacroAssemblerMIPSShared::ma_mul(Register rd, Register rs, Imm32 imm) {
   as_mul(rd, rs, ScratchRegister);
 }
 
-void MacroAssemblerMIPSShared::ma_mul32TestOverflow(Register rd, Register rs,
-                                                    Register rt,
-                                                    Label* overflow) {
+void MacroAssemblerMIPSShared::ma_mul_branch_overflow(Register rd, Register rs,
+                                                      Register rt,
+                                                      Label* overflow) {
 #ifdef MIPSR6
   if (rd == rs) {
     ma_move(SecondScratchReg, rs);
@@ -347,11 +344,11 @@ void MacroAssemblerMIPSShared::ma_mul32TestOverflow(Register rd, Register rs,
   ma_b(ScratchRegister, SecondScratchReg, overflow, Assembler::NotEqual);
 }
 
-void MacroAssemblerMIPSShared::ma_mul32TestOverflow(Register rd, Register rs,
-                                                    Imm32 imm,
-                                                    Label* overflow) {
+void MacroAssemblerMIPSShared::ma_mul_branch_overflow(Register rd, Register rs,
+                                                      Imm32 imm,
+                                                      Label* overflow) {
   ma_li(ScratchRegister, imm);
-  ma_mul32TestOverflow(rd, rs, ScratchRegister, overflow);
+  ma_mul_branch_overflow(rd, rs, ScratchRegister, overflow);
 }
 
 void MacroAssemblerMIPSShared::ma_div_branch_overflow(Register rd, Register rs,
@@ -1819,9 +1816,8 @@ void MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr,
 
   movePtr(ptr, SecondScratchReg);
   orPtr(Imm32(gc::ChunkMask), SecondScratchReg);
-  branchPtr(InvertCondition(cond),
-            Address(SecondScratchReg, gc::ChunkStoreBufferOffsetFromLastByte),
-            ImmWord(0), label);
+  branch32(cond, Address(SecondScratchReg, gc::ChunkLocationOffsetFromLastByte),
+           Imm32(int32_t(gc::ChunkLocation::Nursery)), label);
 }
 
 void MacroAssembler::comment(const char* msg) { Assembler::comment(msg); }
@@ -2097,7 +2093,7 @@ void MacroAssemblerMIPSShared::wasmLoadImpl(
     const wasm::MemoryAccessDesc& access, Register memoryBase, Register ptr,
     Register ptrScratch, AnyRegister output, Register tmp) {
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < asMasm().wasmMaxOffsetGuardLimit());
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
   MOZ_ASSERT_IF(offset, ptrScratch != InvalidReg);
 
   // Maybe add the offset.
@@ -2110,9 +2106,6 @@ void MacroAssemblerMIPSShared::wasmLoadImpl(
   bool isSigned;
   bool isFloat = false;
 
-  MOZ_ASSERT(!access.isZeroExtendSimd128Load());
-  MOZ_ASSERT(!access.isSplatSimd128Load());
-  MOZ_ASSERT(!access.isWidenSimd128Load());
   switch (access.type()) {
     case Scalar::Int8:
       isSigned = true;
@@ -2179,7 +2172,7 @@ void MacroAssemblerMIPSShared::wasmStoreImpl(
     const wasm::MemoryAccessDesc& access, AnyRegister value,
     Register memoryBase, Register ptr, Register ptrScratch, Register tmp) {
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < asMasm().wasmMaxOffsetGuardLimit());
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
   MOZ_ASSERT_IF(offset, ptrScratch != InvalidReg);
 
   // Maybe add the offset.
@@ -3297,55 +3290,6 @@ void MacroAssembler::roundDoubleToInt32(FloatRegister src, Register dest,
   branch32(Assembler::Equal, dest, Imm32(INT_MIN), fail);
 
   bind(&end);
-}
-
-void MacroAssembler::truncFloat32ToInt32(FloatRegister src, Register dest,
-                                         Label* fail) {
-  Label notZero;
-  as_truncws(ScratchFloat32Reg, src);
-  as_cfc1(ScratchRegister, Assembler::FCSR);
-  moveFromFloat32(ScratchFloat32Reg, dest);
-  ma_ext(ScratchRegister, ScratchRegister, Assembler::CauseV, 1);
-
-  ma_b(dest, Imm32(0), &notZero, Assembler::NotEqual, ShortJump);
-  moveFromFloat32(src, ScratchRegister);
-  // Check if src is in ]-1; -0] range by checking the sign bit.
-  as_slt(ScratchRegister, ScratchRegister, zero);
-  bind(&notZero);
-
-  branch32(Assembler::NotEqual, ScratchRegister, Imm32(0), fail);
-}
-
-void MacroAssembler::truncDoubleToInt32(FloatRegister src, Register dest,
-                                        Label* fail) {
-  Label notZero;
-  as_truncwd(ScratchFloat32Reg, src);
-  as_cfc1(ScratchRegister, Assembler::FCSR);
-  moveFromFloat32(ScratchFloat32Reg, dest);
-  ma_ext(ScratchRegister, ScratchRegister, Assembler::CauseV, 1);
-
-  ma_b(dest, Imm32(0), &notZero, Assembler::NotEqual, ShortJump);
-  moveFromDoubleHi(src, ScratchRegister);
-  // Check if src is in ]-1; -0] range by checking the sign bit.
-  as_slt(ScratchRegister, ScratchRegister, zero);
-  bind(&notZero);
-
-  branch32(Assembler::NotEqual, ScratchRegister, Imm32(0), fail);
-}
-
-void MacroAssembler::nearbyIntDouble(RoundingMode mode, FloatRegister src,
-                                     FloatRegister dest) {
-  MOZ_CRASH("not supported on this platform");
-}
-
-void MacroAssembler::nearbyIntFloat32(RoundingMode mode, FloatRegister src,
-                                      FloatRegister dest) {
-  MOZ_CRASH("not supported on this platform");
-}
-
-void MacroAssembler::copySignDouble(FloatRegister lhs, FloatRegister rhs,
-                                    FloatRegister output) {
-  MOZ_CRASH("not supported on this platform");
 }
 
 //}}} check_macroassembler_style

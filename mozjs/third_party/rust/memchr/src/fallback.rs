@@ -3,10 +3,8 @@
 // get auto-vectorized.
 
 use core::cmp;
+use core::ptr;
 use core::usize;
-
-#[cfg(target_pointer_width = "16")]
-const USIZE_BYTES: usize = 2;
 
 #[cfg(target_pointer_width = "32")]
 const USIZE_BYTES: usize = 4;
@@ -58,25 +56,25 @@ pub fn memchr(n1: u8, haystack: &[u8]) -> Option<usize> {
             return forward_search(start_ptr, end_ptr, ptr, confirm);
         }
 
-        let chunk = (ptr as *const usize).read_unaligned();
+        let chunk = read_unaligned_usize(ptr);
         if contains_zero_byte(chunk ^ vn1) {
             return forward_search(start_ptr, end_ptr, ptr, confirm);
         }
 
-        ptr = ptr.add(USIZE_BYTES - (start_ptr as usize & align));
+        ptr = ptr_add(ptr, USIZE_BYTES - (start_ptr as usize & align));
         debug_assert!(ptr > start_ptr);
-        debug_assert!(end_ptr.sub(USIZE_BYTES) >= start_ptr);
-        while loop_size == LOOP_SIZE && ptr <= end_ptr.sub(loop_size) {
+        debug_assert!(ptr_sub(end_ptr, USIZE_BYTES) >= start_ptr);
+        while loop_size == LOOP_SIZE && ptr <= ptr_sub(end_ptr, loop_size) {
             debug_assert_eq!(0, (ptr as usize) % USIZE_BYTES);
 
             let a = *(ptr as *const usize);
-            let b = *(ptr.add(USIZE_BYTES) as *const usize);
+            let b = *(ptr_add(ptr, USIZE_BYTES) as *const usize);
             let eqa = contains_zero_byte(a ^ vn1);
             let eqb = contains_zero_byte(b ^ vn1);
             if eqa || eqb {
                 break;
             }
-            ptr = ptr.add(LOOP_SIZE);
+            ptr = ptr_add(ptr, LOOP_SIZE);
         }
         forward_search(start_ptr, end_ptr, ptr, confirm)
     }
@@ -97,17 +95,17 @@ pub fn memchr2(n1: u8, n2: u8, haystack: &[u8]) -> Option<usize> {
             return forward_search(start_ptr, end_ptr, ptr, confirm);
         }
 
-        let chunk = (ptr as *const usize).read_unaligned();
+        let chunk = read_unaligned_usize(ptr);
         let eq1 = contains_zero_byte(chunk ^ vn1);
         let eq2 = contains_zero_byte(chunk ^ vn2);
         if eq1 || eq2 {
             return forward_search(start_ptr, end_ptr, ptr, confirm);
         }
 
-        ptr = ptr.add(USIZE_BYTES - (start_ptr as usize & align));
+        ptr = ptr_add(ptr, USIZE_BYTES - (start_ptr as usize & align));
         debug_assert!(ptr > start_ptr);
-        debug_assert!(end_ptr.sub(USIZE_BYTES) >= start_ptr);
-        while ptr <= end_ptr.sub(USIZE_BYTES) {
+        debug_assert!(ptr_sub(end_ptr, USIZE_BYTES) >= start_ptr);
+        while ptr <= ptr_sub(end_ptr, USIZE_BYTES) {
             debug_assert_eq!(0, (ptr as usize) % USIZE_BYTES);
 
             let chunk = *(ptr as *const usize);
@@ -116,7 +114,7 @@ pub fn memchr2(n1: u8, n2: u8, haystack: &[u8]) -> Option<usize> {
             if eq1 || eq2 {
                 break;
             }
-            ptr = ptr.add(USIZE_BYTES);
+            ptr = ptr_add(ptr, USIZE_BYTES);
         }
         forward_search(start_ptr, end_ptr, ptr, confirm)
     }
@@ -138,7 +136,7 @@ pub fn memchr3(n1: u8, n2: u8, n3: u8, haystack: &[u8]) -> Option<usize> {
             return forward_search(start_ptr, end_ptr, ptr, confirm);
         }
 
-        let chunk = (ptr as *const usize).read_unaligned();
+        let chunk = read_unaligned_usize(ptr);
         let eq1 = contains_zero_byte(chunk ^ vn1);
         let eq2 = contains_zero_byte(chunk ^ vn2);
         let eq3 = contains_zero_byte(chunk ^ vn3);
@@ -146,10 +144,10 @@ pub fn memchr3(n1: u8, n2: u8, n3: u8, haystack: &[u8]) -> Option<usize> {
             return forward_search(start_ptr, end_ptr, ptr, confirm);
         }
 
-        ptr = ptr.add(USIZE_BYTES - (start_ptr as usize & align));
+        ptr = ptr_add(ptr, USIZE_BYTES - (start_ptr as usize & align));
         debug_assert!(ptr > start_ptr);
-        debug_assert!(end_ptr.sub(USIZE_BYTES) >= start_ptr);
-        while ptr <= end_ptr.sub(USIZE_BYTES) {
+        debug_assert!(ptr_sub(end_ptr, USIZE_BYTES) >= start_ptr);
+        while ptr <= ptr_sub(end_ptr, USIZE_BYTES) {
             debug_assert_eq!(0, (ptr as usize) % USIZE_BYTES);
 
             let chunk = *(ptr as *const usize);
@@ -159,7 +157,7 @@ pub fn memchr3(n1: u8, n2: u8, n3: u8, haystack: &[u8]) -> Option<usize> {
             if eq1 || eq2 || eq3 {
                 break;
             }
-            ptr = ptr.add(USIZE_BYTES);
+            ptr = ptr_add(ptr, USIZE_BYTES);
         }
         forward_search(start_ptr, end_ptr, ptr, confirm)
     }
@@ -180,24 +178,24 @@ pub fn memrchr(n1: u8, haystack: &[u8]) -> Option<usize> {
             return reverse_search(start_ptr, end_ptr, ptr, confirm);
         }
 
-        let chunk = (ptr.sub(USIZE_BYTES) as *const usize).read_unaligned();
+        let chunk = read_unaligned_usize(ptr_sub(ptr, USIZE_BYTES));
         if contains_zero_byte(chunk ^ vn1) {
             return reverse_search(start_ptr, end_ptr, ptr, confirm);
         }
 
         ptr = (end_ptr as usize & !align) as *const u8;
         debug_assert!(start_ptr <= ptr && ptr <= end_ptr);
-        while loop_size == LOOP_SIZE && ptr >= start_ptr.add(loop_size) {
+        while loop_size == LOOP_SIZE && ptr >= ptr_add(start_ptr, loop_size) {
             debug_assert_eq!(0, (ptr as usize) % USIZE_BYTES);
 
-            let a = *(ptr.sub(2 * USIZE_BYTES) as *const usize);
-            let b = *(ptr.sub(1 * USIZE_BYTES) as *const usize);
+            let a = *(ptr_sub(ptr, 2 * USIZE_BYTES) as *const usize);
+            let b = *(ptr_sub(ptr, 1 * USIZE_BYTES) as *const usize);
             let eqa = contains_zero_byte(a ^ vn1);
             let eqb = contains_zero_byte(b ^ vn1);
             if eqa || eqb {
                 break;
             }
-            ptr = ptr.sub(loop_size);
+            ptr = ptr_sub(ptr, loop_size);
         }
         reverse_search(start_ptr, end_ptr, ptr, confirm)
     }
@@ -218,7 +216,7 @@ pub fn memrchr2(n1: u8, n2: u8, haystack: &[u8]) -> Option<usize> {
             return reverse_search(start_ptr, end_ptr, ptr, confirm);
         }
 
-        let chunk = (ptr.sub(USIZE_BYTES) as *const usize).read_unaligned();
+        let chunk = read_unaligned_usize(ptr_sub(ptr, USIZE_BYTES));
         let eq1 = contains_zero_byte(chunk ^ vn1);
         let eq2 = contains_zero_byte(chunk ^ vn2);
         if eq1 || eq2 {
@@ -227,16 +225,16 @@ pub fn memrchr2(n1: u8, n2: u8, haystack: &[u8]) -> Option<usize> {
 
         ptr = (end_ptr as usize & !align) as *const u8;
         debug_assert!(start_ptr <= ptr && ptr <= end_ptr);
-        while ptr >= start_ptr.add(USIZE_BYTES) {
+        while ptr >= ptr_add(start_ptr, USIZE_BYTES) {
             debug_assert_eq!(0, (ptr as usize) % USIZE_BYTES);
 
-            let chunk = *(ptr.sub(USIZE_BYTES) as *const usize);
+            let chunk = *(ptr_sub(ptr, USIZE_BYTES) as *const usize);
             let eq1 = contains_zero_byte(chunk ^ vn1);
             let eq2 = contains_zero_byte(chunk ^ vn2);
             if eq1 || eq2 {
                 break;
             }
-            ptr = ptr.sub(USIZE_BYTES);
+            ptr = ptr_sub(ptr, USIZE_BYTES);
         }
         reverse_search(start_ptr, end_ptr, ptr, confirm)
     }
@@ -258,7 +256,7 @@ pub fn memrchr3(n1: u8, n2: u8, n3: u8, haystack: &[u8]) -> Option<usize> {
             return reverse_search(start_ptr, end_ptr, ptr, confirm);
         }
 
-        let chunk = (ptr.sub(USIZE_BYTES) as *const usize).read_unaligned();
+        let chunk = read_unaligned_usize(ptr_sub(ptr, USIZE_BYTES));
         let eq1 = contains_zero_byte(chunk ^ vn1);
         let eq2 = contains_zero_byte(chunk ^ vn2);
         let eq3 = contains_zero_byte(chunk ^ vn3);
@@ -268,17 +266,17 @@ pub fn memrchr3(n1: u8, n2: u8, n3: u8, haystack: &[u8]) -> Option<usize> {
 
         ptr = (end_ptr as usize & !align) as *const u8;
         debug_assert!(start_ptr <= ptr && ptr <= end_ptr);
-        while ptr >= start_ptr.add(USIZE_BYTES) {
+        while ptr >= ptr_add(start_ptr, USIZE_BYTES) {
             debug_assert_eq!(0, (ptr as usize) % USIZE_BYTES);
 
-            let chunk = *(ptr.sub(USIZE_BYTES) as *const usize);
+            let chunk = *(ptr_sub(ptr, USIZE_BYTES) as *const usize);
             let eq1 = contains_zero_byte(chunk ^ vn1);
             let eq2 = contains_zero_byte(chunk ^ vn2);
             let eq3 = contains_zero_byte(chunk ^ vn3);
             if eq1 || eq2 || eq3 {
                 break;
             }
-            ptr = ptr.sub(USIZE_BYTES);
+            ptr = ptr_sub(ptr, USIZE_BYTES);
         }
         reverse_search(start_ptr, end_ptr, ptr, confirm)
     }
@@ -320,6 +318,24 @@ unsafe fn reverse_search<F: Fn(u8) -> bool>(
         }
     }
     None
+}
+
+/// Increment the given pointer by the given amount.
+unsafe fn ptr_add(ptr: *const u8, amt: usize) -> *const u8 {
+    debug_assert!(amt < ::core::isize::MAX as usize);
+    ptr.offset(amt as isize)
+}
+
+/// Decrement the given pointer by the given amount.
+unsafe fn ptr_sub(ptr: *const u8, amt: usize) -> *const u8 {
+    debug_assert!(amt < ::core::isize::MAX as usize);
+    ptr.offset((amt as isize).wrapping_neg())
+}
+
+unsafe fn read_unaligned_usize(ptr: *const u8) -> usize {
+    let mut n: usize = 0;
+    ptr::copy_nonoverlapping(ptr, &mut n as *mut _ as *mut u8, USIZE_BYTES);
+    n
 }
 
 /// Subtract `b` from `a` and return the difference. `a` should be greater than

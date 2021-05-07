@@ -3,22 +3,13 @@ if (!wasmIsSupported())
 
 load(libdir + "asserts.js");
 
-// 65534 allocated pages is our current upper limit for reasons having to do
-// with avoiding arithmetic overflow.  Eventually this will become 65536.
-
-var PageSizeInBytes = 65536;
-var MaxBytesIn32BitMemory = largeArrayBufferEnabled() ? 65534*PageSizeInBytes : 0x7FFF_FFFF;
-var MaxPagesIn32BitMemory = Math.floor(MaxBytesIn32BitMemory / PageSizeInBytes);
-
-// "options" is an extension to facilitate the SIMD wormhole
-
-function wasmEvalText(str, imports, options) {
+function wasmEvalText(str, imports) {
     let binary = wasmTextToBinary(str);
-    let valid = WebAssembly.validate(binary, options);
+    let valid = WebAssembly.validate(binary);
 
     let m;
     try {
-        m = new WebAssembly.Module(binary, options);
+        m = new WebAssembly.Module(binary);
         assertEq(valid, true);
     } catch(e) {
         if (!e.toString().match(/out of memory/))
@@ -69,13 +60,12 @@ function wasmCompilationShouldFail(bin, compile_error_regex) {
 }
 
 function mismatchError(actual, expect) {
-    var str = `(type mismatch: expression has type ${actual} but expected ${expect})|` +
-              `(type mismatch: expected ${expect}, found ${actual}\)`;
+    var str = `type mismatch: expression has type ${actual} but expected ${expect}`;
     return RegExp(str);
 }
 
-const emptyStackError = /(from empty stack)|(nothing on stack)/;
-const unusedValuesError = /(unused values not explicitly dropped by end of block)|(values remaining on stack at end of block)/;
+const emptyStackError = /from empty stack/;
+const unusedValuesError = /unused values not explicitly dropped by end of block/;
 
 function jsify(wasmVal) {
     if (wasmVal === 'nan')
@@ -103,26 +93,12 @@ function _augmentSrc(src, assertions) {
                 case 'f32':
                     newSrc += `
          i32.reinterpret/f32
-         ${(function () {
-             if (expected == 'nan:arithmetic') {
-               expected = '0x7FC00000';
-               return '(i32.const 0x7FC00000) i32.and';
-             }
-             return '';
-         })()}
          i32.const ${expected}
          i32.eq`;
                     break;
                 case 'f64':
                     newSrc += `
          i64.reinterpret/f64
-         ${(function () {
-             if (expected == 'nan:arithmetic') {
-               expected = '0x7FF8000000000000';
-               return '(i64.const 0x7FF8000000000000) i64.and';
-             }
-             return '';
-         })()}
          i64.const ${expected}
          i64.eq`;
                     break;
@@ -135,12 +111,6 @@ function _augmentSrc(src, assertions) {
                     newSrc += `
          i64.const ${expected}
          i64.eq`;
-                    break;
-                case 'v128':
-                    newSrc += `
-         v128.const ${expected}
-         i8x16.eq
-         i8x16.all_true`;
                     break;
                 default:
                     throw new Error("unexpected usage of wasmAssert");
@@ -156,10 +126,8 @@ function _augmentSrc(src, assertions) {
     return newSrc;
 }
 
-function wasmAssert(src, assertions, maybeImports = {}, exportBox = null) {
+function wasmAssert(src, assertions, maybeImports = {}) {
     let { exports } = wasmEvalText(_augmentSrc(src, assertions), maybeImports);
-    if (exportBox !== null)
-        exportBox.exports = exports;
     for (let i = 0; i < assertions.length; i++) {
         let { func, expected, params } = assertions[i];
         let paramText = params ? params.join(', ') : '';
@@ -191,10 +159,7 @@ function wasmFullPassI64(text, expected, maybeImports, ...args) {
 
     let augmentedSrc = _augmentSrc(text, [ { type: 'i64', func: '$run', args, expected } ]);
     let augmentedBinary = wasmTextToBinary(augmentedSrc);
-
-    let module = new WebAssembly.Module(augmentedBinary);
-    let instance = new WebAssembly.Instance(module, maybeImports);
-    assertEq(instance.exports.assert_0(), 1);
+    new WebAssembly.Instance(new WebAssembly.Module(augmentedBinary), maybeImports).exports.assert_0();
 }
 
 function wasmRunWithDebugger(wast, lib, init, done) {
@@ -379,47 +344,3 @@ WasmHelpers.assertEqPreciseStacks = (observed, expectedStacks) => {
 Expected one of:
 ${expectedStacks.map(stacks => stacks.join("/")).join('\n')}`);
 }
-
-function fuzzingSafe() {
-    return typeof getErrorNotes == 'undefined';
-}
-
-// Common instantiations of wasm values for dynamic type check testing
-
-let WasmFuncrefValues = [
-    wasmEvalText(`(module (func (export "")))`).exports[''],
-];
-let WasmNonNullEqrefValues = [];
-let WasmEqrefValues = [];
-if (wasmGcEnabled()) {
-    let { newStruct } = wasmEvalText(`
-      (module
-        (type $s (struct))
-        (func (export "newStruct") (result eqref)
-            rtt.canon $s
-            struct.new_with_rtt $s)
-      )`).exports;
-    WasmNonNullEqrefValues.push(newStruct());
-    WasmEqrefValues.push(null, ...WasmNonNullEqrefValues);
-}
-let WasmNonEqrefValues = [
-    undefined,
-    true,
-    false,
-    {x:1337},
-    ["abracadabra"],
-    1337,
-    13.37,
-    "hi",
-    37n,
-    new Number(42),
-    new Boolean(true),
-    Symbol("status"),
-    () => 1337,
-    ...WasmFuncrefValues,
-];
-let WasmNonNullExternrefValues = [
-    ...WasmNonEqrefValues,
-    ...WasmNonNullEqrefValues
-];
-let WasmExternrefValues = [null, ...WasmNonNullExternrefValues];

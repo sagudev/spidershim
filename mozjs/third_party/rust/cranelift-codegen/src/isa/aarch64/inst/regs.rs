@@ -1,13 +1,10 @@
 //! AArch64 ISA definitions: registers.
 
-use crate::isa::aarch64::inst::OperandSize;
-use crate::isa::aarch64::inst::ScalarSize;
-use crate::isa::aarch64::inst::VectorSize;
+use crate::isa::aarch64::inst::InstSize;
+use crate::machinst::*;
 use crate::settings;
 
-use regalloc::{
-    PrettyPrint, RealRegUniverse, Reg, RegClass, RegClassInfo, Writable, NUM_REG_CLASSES,
-};
+use regalloc::{RealRegUniverse, Reg, RegClass, RegClassInfo, Writable, NUM_REG_CLASSES};
 
 use std::string::{String, ToString};
 
@@ -23,21 +20,23 @@ pub const PINNED_REG: u8 = 21;
 const XREG_INDICES: [u8; 31] = [
     // X0 - X7
     32, 33, 34, 35, 36, 37, 38, 39,
-    // X8 - X15
-    40, 41, 42, 43, 44, 45, 46, 47,
+    // X8 - X14
+    40, 41, 42, 43, 44, 45, 46,
+    // X15
+    59,
     // X16, X17
-    58, 59,
+    47, 48,
     // X18
     60,
     // X19, X20
-    48, 49,
+    49, 50,
     // X21, put aside because it's the pinned register.
-    57,
+    58,
     // X22 - X28
-    50, 51, 52, 53, 54, 55, 56,
-    // X29 (FP)
+    51, 52, 53, 54, 55, 56, 57,
+    // X29
     61,
-    // X30 (LR)
+    // X30
     62,
 ];
 
@@ -126,36 +125,19 @@ pub fn writable_fp_reg() -> Writable<Reg> {
     Writable::from_reg(fp_reg())
 }
 
-/// Get a reference to the first temporary, sometimes "spill temporary", register. This register is
-/// used to compute the address of a spill slot when a direct offset addressing mode from FP is not
-/// sufficient (+/- 2^11 words). We exclude this register from regalloc and reserve it for this
-/// purpose for simplicity; otherwise we need a multi-stage analysis where we first determine how
-/// many spill slots we have, then perhaps remove the reg from the pool and recompute regalloc.
-///
-/// We use x16 for this (aka IP0 in the AArch64 ABI) because it's a scratch register but is
-/// slightly special (used for linker veneers). We're free to use it as long as we don't expect it
-/// to live through call instructions.
+/// Get a reference to the "spill temp" register. This register is used to
+/// compute the address of a spill slot when a direct offset addressing mode from
+/// FP is not sufficient (+/- 2^11 words). We exclude this register from regalloc
+/// and reserve it for this purpose for simplicity; otherwise we need a
+/// multi-stage analysis where we first determine how many spill slots we have,
+/// then perhaps remove the reg from the pool and recompute regalloc.
 pub fn spilltmp_reg() -> Reg {
-    xreg(16)
+    xreg(15)
 }
 
 /// Get a writable reference to the spilltmp reg.
 pub fn writable_spilltmp_reg() -> Writable<Reg> {
     Writable::from_reg(spilltmp_reg())
-}
-
-/// Get a reference to the second temp register. We need this in some edge cases
-/// where we need both the spilltmp and another temporary.
-///
-/// We use x17 (aka IP1), the other "interprocedural"/linker-veneer scratch reg that is
-/// free to use otherwise.
-pub fn tmp2_reg() -> Reg {
-    xreg(17)
-}
-
-/// Get a writable reference to the tmp2 reg.
-pub fn writable_tmp2_reg() -> Writable<Reg> {
-    Writable::from_reg(tmp2_reg())
 }
 
 /// Create the register universe for AArch64.
@@ -191,7 +173,7 @@ pub fn create_reg_universe(flags: &settings::Flags) -> RealRegUniverse {
 
     for i in 0u8..32u8 {
         // See above for excluded registers.
-        if i == 16 || i == 17 || i == 18 || i == 29 || i == 30 || i == 31 || i == PINNED_REG {
+        if i == 15 || i == 18 || i == 29 || i == 30 || i == 31 || i == PINNED_REG {
             continue;
         }
         let reg = Reg::new_real(
@@ -209,7 +191,7 @@ pub fn create_reg_universe(flags: &settings::Flags) -> RealRegUniverse {
     allocable_by_class[RegClass::I64.rc_to_usize()] = Some(RegClassInfo {
         first: x_reg_base as usize,
         last: x_reg_last as usize,
-        suggested_scratch: Some(XREG_INDICES[19] as usize),
+        suggested_scratch: Some(XREG_INDICES[13] as usize),
     });
     allocable_by_class[RegClass::V128.rc_to_usize()] = Some(RegClassInfo {
         first: v_reg_base as usize,
@@ -229,8 +211,7 @@ pub fn create_reg_universe(flags: &settings::Flags) -> RealRegUniverse {
         regs.len()
     };
 
-    regs.push((xreg(16).to_real_reg(), "x16".to_string()));
-    regs.push((xreg(17).to_real_reg(), "x17".to_string()));
+    regs.push((xreg(15).to_real_reg(), "x15".to_string()));
     regs.push((xreg(18).to_real_reg(), "x18".to_string()));
     regs.push((fp_reg().to_real_reg(), "fp".to_string()));
     regs.push((link_reg().to_real_reg(), "lr".to_string()));
@@ -257,7 +238,7 @@ pub fn create_reg_universe(flags: &settings::Flags) -> RealRegUniverse {
 
 /// If `ireg` denotes an I64-classed reg, make a best-effort attempt to show
 /// its name at the 32-bit size.
-pub fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: OperandSize) -> String {
+pub fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: InstSize) -> String {
     let mut s = reg.show_rru(mb_rru);
     if reg.get_class() != RegClass::I64 || !size.is32() {
         // We can't do any better.
@@ -278,8 +259,19 @@ pub fn show_ireg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: Operand
     s
 }
 
+/// Show a vector register when its use as a 32-bit or 64-bit float is known.
+pub fn show_freg_sized(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: InstSize) -> String {
+    let mut s = reg.show_rru(mb_rru);
+    if reg.get_class() != RegClass::V128 {
+        return s;
+    }
+    let prefix = if size.is32() { "s" } else { "d" };
+    s.replace_range(0..1, prefix);
+    s
+}
+
 /// Show a vector register used in a scalar context.
-pub fn show_vreg_scalar(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: ScalarSize) -> String {
+pub fn show_vreg_scalar(reg: Reg, mb_rru: Option<&RealRegUniverse>) -> String {
     let mut s = reg.show_rru(mb_rru);
     if reg.get_class() != RegClass::V128 {
         // We can't do any better.
@@ -288,15 +280,8 @@ pub fn show_vreg_scalar(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: Scalar
 
     if reg.is_real() {
         // Change (eg) "v0" into "d0".
-        if s.starts_with("v") {
-            let replacement = match size {
-                ScalarSize::Size8 => "b",
-                ScalarSize::Size16 => "h",
-                ScalarSize::Size32 => "s",
-                ScalarSize::Size64 => "d",
-                ScalarSize::Size128 => "q",
-            };
-            s.replace_range(0..1, replacement);
+        if reg.get_class() == RegClass::V128 && s.starts_with("v") {
+            s.replace_range(0..1, "d");
         }
     } else {
         // Add a "d" suffix to RegClass::V128 vregs.
@@ -304,48 +289,5 @@ pub fn show_vreg_scalar(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: Scalar
             s.push('d');
         }
     }
-    s
-}
-
-/// Show a vector register.
-pub fn show_vreg_vector(reg: Reg, mb_rru: Option<&RealRegUniverse>, size: VectorSize) -> String {
-    assert_eq!(RegClass::V128, reg.get_class());
-    let mut s = reg.show_rru(mb_rru);
-
-    let suffix = match size {
-        VectorSize::Size8x8 => ".8b",
-        VectorSize::Size8x16 => ".16b",
-        VectorSize::Size16x4 => ".4h",
-        VectorSize::Size16x8 => ".8h",
-        VectorSize::Size32x2 => ".2s",
-        VectorSize::Size32x4 => ".4s",
-        VectorSize::Size64x2 => ".2d",
-    };
-
-    s.push_str(suffix);
-    s
-}
-
-/// Show an indexed vector element.
-pub fn show_vreg_element(
-    reg: Reg,
-    mb_rru: Option<&RealRegUniverse>,
-    idx: u8,
-    size: VectorSize,
-) -> String {
-    assert_eq!(RegClass::V128, reg.get_class());
-    let mut s = reg.show_rru(mb_rru);
-
-    let suffix = match size {
-        VectorSize::Size8x8 => "b",
-        VectorSize::Size8x16 => "b",
-        VectorSize::Size16x4 => "h",
-        VectorSize::Size16x8 => "h",
-        VectorSize::Size32x2 => "s",
-        VectorSize::Size32x4 => "s",
-        VectorSize::Size64x2 => "d",
-    };
-
-    s.push_str(&format!(".{}[{}]", suffix, idx));
     s
 }

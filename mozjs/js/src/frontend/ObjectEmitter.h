@@ -7,8 +7,8 @@
 #ifndef frontend_ObjectEmitter_h
 #define frontend_ObjectEmitter_h
 
-#include "mozilla/Attributes.h"  // MOZ_STACK_CLASS, MOZ_ALWAYS_INLINE, MOZ_RAII
-#include "mozilla/Maybe.h"       // Maybe
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE, MOZ_STACK_CLASS, MOZ_ALWAYS_INLINE, MOZ_RAII
+#include "mozilla/Maybe.h"  // Maybe
 
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint32_t
@@ -16,12 +16,13 @@
 #include "frontend/BytecodeOffset.h"  // BytecodeOffset
 #include "frontend/EmitterScope.h"    // EmitterScope
 #include "frontend/NameOpEmitter.h"   // NameOpEmitter
-#include "frontend/ParseNode.h"       // AccessorType
-#include "frontend/ParserAtom.h"      // TaggedParserAtomIndex
-#include "frontend/TDZCheckCache.h"   // TDZCheckCache
-#include "vm/BytecodeUtil.h"          // JSOp
-#include "vm/NativeObject.h"          // PlainObject
-#include "vm/Scope.h"                 // LexicalScope
+#include "frontend/ObjLiteral.h"     // ObjLiteralWriter, ObjLiteralCreationData
+#include "frontend/TDZCheckCache.h"  // TDZCheckCache
+#include "js/RootingAPI.h"           // JS::Handle, JS::Rooted
+#include "vm/BytecodeUtil.h"         // JSOp
+#include "vm/JSAtom.h"               // JSAtom
+#include "vm/NativeObject.h"         // PlainObject
+#include "vm/Scope.h"                // LexicalScope
 
 namespace js {
 
@@ -82,7 +83,9 @@ class MOZ_STACK_CLASS PropertyEmitter {
   //    |                                            |               |
   //    |    +-------------------------------------- +               |
   //    |    |                                                       |
-  //    |    | emitInit                                              |
+  //    |    | emitInitProp                                          |
+  //    |    | emitInitGetter                                        |
+  //    |    | emitInitSetter                                        |
   //    |    +------------------------------------------------------>+
   //    |                                                            ^
   //    | [index property/method/accessor]                           |
@@ -107,7 +110,9 @@ class MOZ_STACK_CLASS PropertyEmitter {
   //    |                                                         |  |
   //    |      +--------------------------------------------------+  |
   //    |      |                                                     |
-  //    |      | emitInitIndexOrComputed                             |
+  //    |      | emitInitIndexProp                                   |
+  //    |      | emitInitIndexGetter                                 |
+  //    |      | emitInitIndexSetter                                 |
   //    |      +---------------------------------------------------->+
   //    |                                                            |
   //    | [computed property/method/accessor]                        |
@@ -132,7 +137,9 @@ class MOZ_STACK_CLASS PropertyEmitter {
   //    |                                                         |  |
   //    |      +--------------------------------------------------+  |
   //    |      |                                                     |
-  //    |      | emitInitIndexOrComputed                             |
+  //    |      | emitInitComputedProp                                |
+  //    |      | emitInitComputedGetter                              |
+  //    |      | emitInitComputedSetter                              |
   //    |      +---------------------------------------------------->+
   //    |                                                            ^
   //    |                                                            |
@@ -179,8 +186,9 @@ class MOZ_STACK_CLASS PropertyEmitter {
     // After calling prepareForSpreadOperand.
     SpreadOperand,
 
-    // After calling one of emitInit, emitInitIndexOrComputed, emitMutateProto,
-    // or emitSpread.
+    // After calling one of emitInitProp, emitInitGetter, emitInitSetter,
+    // emitInitIndexOrComputedProp, emitInitIndexOrComputedGetter,
+    // emitInitIndexOrComputedSetter, emitMutateProto, or emitSpread.
     Init,
   };
   PropertyState propertyState_ = PropertyState::Start;
@@ -195,62 +203,69 @@ class MOZ_STACK_CLASS PropertyEmitter {
   //   ^
   //   |
   //   keyPos
-  [[nodiscard]] bool prepareForProtoValue(
+  MOZ_MUST_USE bool prepareForProtoValue(
       const mozilla::Maybe<uint32_t>& keyPos);
-  [[nodiscard]] bool emitMutateProto();
+  MOZ_MUST_USE bool emitMutateProto();
 
   // { ...obj }
   //   ^
   //   |
   //   spreadPos
-  [[nodiscard]] bool prepareForSpreadOperand(
+  MOZ_MUST_USE bool prepareForSpreadOperand(
       const mozilla::Maybe<uint32_t>& spreadPos);
-  [[nodiscard]] bool emitSpread();
+  MOZ_MUST_USE bool emitSpread();
 
   // { key: value }
   //   ^
   //   |
   //   keyPos
-  [[nodiscard]] bool prepareForPropValue(const mozilla::Maybe<uint32_t>& keyPos,
-                                         Kind kind = Kind::Prototype);
+  MOZ_MUST_USE bool prepareForPropValue(const mozilla::Maybe<uint32_t>& keyPos,
+                                        Kind kind = Kind::Prototype);
 
   // { 1: value }
   //   ^
   //   |
   //   keyPos
-  [[nodiscard]] bool prepareForIndexPropKey(
+  MOZ_MUST_USE bool prepareForIndexPropKey(
       const mozilla::Maybe<uint32_t>& keyPos, Kind kind = Kind::Prototype);
-  [[nodiscard]] bool prepareForIndexPropValue();
+  MOZ_MUST_USE bool prepareForIndexPropValue();
 
   // { [ key ]: value }
   //   ^
   //   |
   //   keyPos
-  [[nodiscard]] bool prepareForComputedPropKey(
+  MOZ_MUST_USE bool prepareForComputedPropKey(
       const mozilla::Maybe<uint32_t>& keyPos, Kind kind = Kind::Prototype);
-  [[nodiscard]] bool prepareForComputedPropValue();
+  MOZ_MUST_USE bool prepareForComputedPropValue();
 
-  [[nodiscard]] bool emitInitHomeObject();
+  MOZ_MUST_USE bool emitInitHomeObject();
 
   // @param key
   //        Property key
-  [[nodiscard]] bool emitInit(AccessorType accessorType,
-                              TaggedParserAtomIndex key);
+  MOZ_MUST_USE bool emitInitProp(JS::Handle<JSAtom*> key);
+  MOZ_MUST_USE bool emitInitGetter(JS::Handle<JSAtom*> key);
+  MOZ_MUST_USE bool emitInitSetter(JS::Handle<JSAtom*> key);
 
-  [[nodiscard]] bool emitInitIndexOrComputed(AccessorType accessorType);
+  MOZ_MUST_USE bool emitInitIndexProp();
+  MOZ_MUST_USE bool emitInitIndexGetter();
+  MOZ_MUST_USE bool emitInitIndexSetter();
+
+  MOZ_MUST_USE bool emitInitComputedProp();
+  MOZ_MUST_USE bool emitInitComputedGetter();
+  MOZ_MUST_USE bool emitInitComputedSetter();
 
  private:
-  [[nodiscard]] MOZ_ALWAYS_INLINE bool prepareForProp(
+  MOZ_MUST_USE MOZ_ALWAYS_INLINE bool prepareForProp(
       const mozilla::Maybe<uint32_t>& keyPos, bool isStatic, bool isComputed);
 
   // @param op
   //        Opcode for initializing property
   // @param key
   //        Atom of the property if the property key is not computed
-  [[nodiscard]] bool emitInit(JSOp op, TaggedParserAtomIndex key);
-  [[nodiscard]] bool emitInitIndexOrComputed(JSOp op);
+  MOZ_MUST_USE bool emitInit(JSOp op, JS::Handle<JSAtom*> key);
+  MOZ_MUST_USE bool emitInitIndexOrComputed(JSOp op);
 
-  [[nodiscard]] bool emitPopClassConstructor();
+  MOZ_MUST_USE bool emitPopClassConstructor();
 };
 
 // Class for emitting bytecode for object literal.
@@ -390,11 +405,11 @@ class MOZ_STACK_CLASS ObjectEmitter : public PropertyEmitter {
  public:
   explicit ObjectEmitter(BytecodeEmitter* bce);
 
-  [[nodiscard]] bool emitObject(size_t propertyCount);
+  MOZ_MUST_USE bool emitObject(size_t propertyCount);
   // Same as `emitObject()`, but start with an empty template object already on
   // the stack.
-  [[nodiscard]] bool emitObjectWithTemplateOnStack();
-  [[nodiscard]] bool emitEnd();
+  MOZ_MUST_USE bool emitObjectWithTemplateOnStack();
+  MOZ_MUST_USE bool emitEnd();
 };
 
 // Save and restore the strictness.
@@ -414,6 +429,16 @@ class MOZ_RAII AutoSaveLocalStrictMode {
 // Class for emitting bytecode for JS class.
 //
 // Usage: (check for the return value is omitted for simplicity)
+//
+//   `class {}`
+//     ClassEmitter ce(this);
+//     ce.emitScope(scopeBindings);
+//     ce.emitClass(nullptr, nullptr, false);
+//
+//     ce.emitInitDefaultConstructor(offset_of_class,
+//                                   offset_of_closing_bracket);
+//
+//     ce.emitEnd(ClassEmitter::Kind::Expression);
 //
 //   `class { constructor() { ... } }`
 //     ClassEmitter ce(this);
@@ -466,12 +491,12 @@ class MOZ_RAII AutoSaveLocalStrictMode {
 //     emit(Y);
 //     ce.emitDerivedClass(atom_of_X, nullptr, false);
 //
-//     ce.prepareForMemberInitializers(fields.length());
+//     ce.prepareForFieldInitializers(fields.length());
 //     for (auto field : fields) {
 //       emit(field.initializer_method());
-//       ce.emitStoreMemberInitializer();
+//       ce.emitStoreFieldInitializer();
 //     }
-//     ce.emitMemberInitializersEnd();
+//     ce.emitFieldInitializersEnd();
 //
 //     emit(function_for_constructor);
 //     ce.emitInitConstructor(/* needsHomeObject = */ false);
@@ -479,52 +504,52 @@ class MOZ_RAII AutoSaveLocalStrictMode {
 //
 //   `class X { field0 = super.method(); ... }`
 //     // after emitClass/emitDerivedClass
-//     ce.prepareForMemberInitializers(1);
+//     ce.prepareForFieldInitializers(1);
 //     for (auto field : fields) {
 //       emit(field.initializer_method());
 //       if (field.initializer_contains_super_or_eval()) {
-//         ce.emitMemberInitializerHomeObject();
+//         ce.emitFieldInitializerHomeObject();
 //       }
-//       ce.emitStoreMemberInitializer();
+//       ce.emitStoreFieldInitializer();
 //     }
-//     ce.emitMemberInitializersEnd();
+//     ce.emitFieldInitializersEnd();
 //
 //   `m() {}` in class
-//     // after emitInitConstructor
+//     // after emitInitConstructor/emitInitDefaultConstructor
 //     ce.prepareForPropValue(Some(offset_of_m));
 //     emit(function_for_m);
 //     ce.emitInitProp(atom_of_m);
 //
 //   `m() { super.f(); }` in class
-//     // after emitInitConstructor
+//     // after emitInitConstructor/emitInitDefaultConstructor
 //     ce.prepareForPropValue(Some(offset_of_m));
 //     emit(function_for_m);
 //     ce.emitInitHomeObject();
 //     ce.emitInitProp(atom_of_m);
 //
 //   `async m() { super.f(); }` in class
-//     // after emitInitConstructor
+//     // after emitInitConstructor/emitInitDefaultConstructor
 //     ce.prepareForPropValue(Some(offset_of_m));
 //     emit(function_for_m);
 //     ce.emitInitHomeObject();
 //     ce.emitInitProp(atom_of_m);
 //
 //   `get p() { super.f(); }` in class
-//     // after emitInitConstructor
+//     // after emitInitConstructor/emitInitDefaultConstructor
 //     ce.prepareForPropValue(Some(offset_of_p));
 //     emit(function_for_p);
 //     ce.emitInitHomeObject();
 //     ce.emitInitGetter(atom_of_m);
 //
 //   `static m() {}` in class
-//     // after emitInitConstructor
+//     // after emitInitConstructor/emitInitDefaultConstructor
 //     ce.prepareForPropValue(Some(offset_of_m),
 //                            PropertyEmitter::Kind::Static);
 //     emit(function_for_m);
 //     ce.emitInitProp(atom_of_m);
 //
 //   `static get [p]() { super.f(); }` in class
-//     // after emitInitConstructor
+//     // after emitInitConstructor/emitInitDefaultConstructor
 //     ce.prepareForComputedPropValue(Some(offset_of_m),
 //                                    PropertyEmitter::Kind::Static);
 //     emit(p);
@@ -593,8 +618,6 @@ class MOZ_STACK_CLASS ClassEmitter : public PropertyEmitter {
 
   mozilla::Maybe<TDZCheckCache> tdzCache_;
   mozilla::Maybe<EmitterScope> innerScope_;
-  mozilla::Maybe<TDZCheckCache> bodyTdzCache_;
-  mozilla::Maybe<EmitterScope> bodyScope_;
   AutoSaveLocalStrictMode strictMode_;
 
 #ifdef DEBUG
@@ -602,14 +625,14 @@ class MOZ_STACK_CLASS ClassEmitter : public PropertyEmitter {
   //
   // clang-format off
   // +-------+
-  // | Start |-+------------------------>+--+------------------------------>+--+
-  // +-------+ |                         ^  |                               ^  |
-  //           | [has scope]             |  | [has body scope]              |  |
-  //           |   emitScope   +-------+ |  |  emitBodyScope  +-----------+ |  |
-  //           +-------------->| Scope |-+  +---------------->| BodyScope |-+  |
-  //                           +-------+                      +-----------+    |
-  //                                                                           |
-  //   +-----------------------------------------------------------------------+
+  // | Start |-+------------------------>+-+
+  // +-------+ |                         ^ |
+  //           | [has scope]             | |
+  //           |   emitScope   +-------+ | |
+  //           +-------------->| Scope |-+ |
+  //                           +-------+   |
+  //                                       |
+  //   +-----------------------------------+
   //   |
   //   |   emitClass           +-------+
   //   +-+----------------->+->| Class |-+
@@ -620,41 +643,41 @@ class MOZ_STACK_CLASS ClassEmitter : public PropertyEmitter {
   //     +-------------------------------+
   //     |
   //     |
-  //     |  prepareForMemberInitializers(isStatic = false)
+  //     |  prepareForFieldInitializers(isStatic = false)
   //     +---------------+
   //     |               |
-  //     |      +--------v-------------------+
-  //     |      | InstanceMemberInitializers |
-  //     |      +----------------------------+
+  //     |      +--------v------------------+
+  //     |      | InstanceFieldInitializers |
+  //     |      +---------------------------+
   //     |               |
-  //                     | emitMemberInitializersEnd
+  //                     | emitFieldInitializersEnd
   //     |               |
-  //     |      +--------v----------------------+
-  //     |      | InstanceMemberInitializersEnd |
-  //     |      +-------------------------------+
+  //     |      +--------v---------------------+
+  //     |      | InstanceFieldInitializersEnd |
+  //     |      +------------------------------+
   //     |               |
   //     +<--------------+
   //     |
   //     |   emitInitConstructor           +-----------------+
-  //     +-------------------------------->| InitConstructor |-+
-  //                                       +-----------------+ |
-  //                                                           |
-  //                                                           |
+  //     +-+--------------------------->+->| InitConstructor |-+
+  //       |                            ^  +-----------------+ |
+  //       | emitInitDefaultConstructor |                      |
+  //       +----------------------------+                      |
   //                                                           |
   //     +-----------------------------------------------------+
   //     |
-  //     |  prepareForMemberInitializers(isStatic = true)
+  //     |  prepareForFieldInitializers(isStatic = true)
   //     +---------------+
   //     |               |
-  //     |      +--------v-----------------+
-  //     |      | StaticMemberInitializers |
-  //     |      +--------------------------+
+  //     |      +--------v----------------+
+  //     |      | StaticFieldInitializers |
+  //     |      +-------------------------+
   //     |               |
-  //     |               | emitMemberInitializersEnd
+  //     |               | emitFieldInitializersEnd
   //     |               |
-  //     |      +--------v--------------------+
-  //     |      | StaticMemberInitializersEnd |
-  //     |      +-----------------------------+
+  //     |      +--------v-------------------+
+  //     |      | StaticFieldInitializersEnd |
+  //     |      +----------------------------+
   //     |               |
   //     +<--------------+
   //     |
@@ -679,26 +702,23 @@ class MOZ_STACK_CLASS ClassEmitter : public PropertyEmitter {
     // After calling emitScope.
     Scope,
 
-    // After calling emitBodyScope.
-    BodyScope,
-
     // After calling emitClass or emitDerivedClass.
     Class,
 
-    // After calling emitInitConstructor.
+    // After calling emitInitConstructor or emitInitDefaultConstructor.
     InitConstructor,
 
-    // After calling prepareForMemberInitializers(isStatic = false).
-    InstanceMemberInitializers,
+    // After calling prepareForFieldInitializers(isStatic = false).
+    InstanceFieldInitializers,
 
-    // After calling emitMemberInitializersEnd.
-    InstanceMemberInitializersEnd,
+    // After calling emitFieldInitializersEnd.
+    InstanceFieldInitializersEnd,
 
-    // After calling prepareForMemberInitializers(isStatic = true).
-    StaticMemberInitializers,
+    // After calling prepareForFieldInitializers(isStatic = true).
+    StaticFieldInitializers,
 
-    // After calling emitMemberInitializersEnd.
-    StaticMemberInitializersEnd,
+    // After calling emitFieldInitializersEnd.
+    StaticFieldInitializersEnd,
 
     // After calling emitBinding.
     BoundName,
@@ -708,7 +728,7 @@ class MOZ_STACK_CLASS ClassEmitter : public PropertyEmitter {
   };
   ClassState classState_ = ClassState::Start;
 
-  // The state of the members emitter.
+  // The state of the fields emitter.
   //
   // clang-format off
   //
@@ -716,46 +736,45 @@ class MOZ_STACK_CLASS ClassEmitter : public PropertyEmitter {
   //   | Start +<-----------------------------+
   //   +-------+                              |
   //       |                                  |
-  //       | prepareForMemberInitializer      | emitStoreMemberInitializer
+  //       | prepareForFieldInitializer       | emitStoreFieldInitializer
   //       v                                  |
   // +-------------+                          |
   // | Initializer +------------------------->+
   // +-------------+                          |
   //       |                                  |
-  //       | emitMemberInitializerHomeObject  |
+  //       | emitFieldInitializerHomeObject   |
   //       v                                  |
   // +---------------------------+            |
   // | InitializerWithHomeObject +------------+
   // +---------------------------+
   //
   // clang-format on
-  enum class MemberState {
-    // After calling prepareForMemberInitializers
-    // and 0 or more calls to emitStoreMemberInitializer.
+  enum class FieldState {
+    // After calling prepareForFieldInitializers
+    // and 0 or more calls to emitStoreFieldInitializer.
     Start,
 
-    // After calling prepareForMemberInitializer
+    // After calling prepareForFieldInitializer
     Initializer,
 
-    // After calling emitMemberInitializerHomeObject
+    // After calling emitFieldInitializerHomeObject
     InitializerWithHomeObject,
   };
-  MemberState memberState_ = MemberState::Start;
+  FieldState fieldState_ = FieldState::Start;
 
-  size_t numInitializers_ = 0;
+  size_t numFields_ = 0;
 #endif
 
-  TaggedParserAtomIndex name_;
-  TaggedParserAtomIndex nameForAnonymousClass_;
+  JS::Rooted<JSAtom*> name_;
+  JS::Rooted<JSAtom*> nameForAnonymousClass_;
   bool hasNameOnStack_ = false;
   mozilla::Maybe<NameOpEmitter> initializersAssignment_;
-  size_t initializerIndex_ = 0;
+  size_t fieldIndex_ = 0;
 
  public:
   explicit ClassEmitter(BytecodeEmitter* bce);
 
-  bool emitScope(LexicalScope::ParserData* scopeBindings);
-  bool emitBodyScope(LexicalScope::ParserData* scopeBindings);
+  bool emitScope(JS::Handle<LexicalScope::Data*> scopeBindings);
 
   // @param name
   //        Name of the class (nullptr if this is anonymous class)
@@ -763,30 +782,42 @@ class MOZ_STACK_CLASS ClassEmitter : public PropertyEmitter {
   //        Statically inferred name of the class (only for anonymous classes)
   // @param hasNameOnStack
   //        If true the name is on the stack (only for anonymous classes)
-  [[nodiscard]] bool emitClass(TaggedParserAtomIndex name,
-                               TaggedParserAtomIndex nameForAnonymousClass,
-                               bool hasNameOnStack);
-  [[nodiscard]] bool emitDerivedClass(
-      TaggedParserAtomIndex name, TaggedParserAtomIndex nameForAnonymousClass,
-      bool hasNameOnStack);
+  MOZ_MUST_USE bool emitClass(JS::Handle<JSAtom*> name,
+                              JS::Handle<JSAtom*> nameForAnonymousClass,
+                              bool hasNameOnStack);
+  MOZ_MUST_USE bool emitDerivedClass(JS::Handle<JSAtom*> name,
+                                     JS::Handle<JSAtom*> nameForAnonymousClass,
+                                     bool hasNameOnStack);
 
   // @param needsHomeObject
   //        True if the constructor contains `super.foo`
-  [[nodiscard]] bool emitInitConstructor(bool needsHomeObject);
+  MOZ_MUST_USE bool emitInitConstructor(bool needsHomeObject);
 
-  [[nodiscard]] bool prepareForMemberInitializers(size_t numInitializers,
-                                                  bool isStatic);
-  [[nodiscard]] bool prepareForMemberInitializer();
-  [[nodiscard]] bool emitMemberInitializerHomeObject(bool isStatic);
-  [[nodiscard]] bool emitStoreMemberInitializer();
-  [[nodiscard]] bool emitMemberInitializersEnd();
+  // Parameters are the offset in the source code for each character below:
+  //
+  //   class X { foo() {} }
+  //   ^                  ^
+  //   |                  |
+  //   |                  classEnd
+  //   |
+  //   classStart
+  //
+  MOZ_MUST_USE bool emitInitDefaultConstructor(uint32_t classStart,
+                                               uint32_t classEnd);
 
-  [[nodiscard]] bool emitBinding();
+  MOZ_MUST_USE bool prepareForFieldInitializers(size_t numFields,
+                                                bool isStatic);
+  MOZ_MUST_USE bool prepareForFieldInitializer();
+  MOZ_MUST_USE bool emitFieldInitializerHomeObject(bool isStatic);
+  MOZ_MUST_USE bool emitStoreFieldInitializer();
+  MOZ_MUST_USE bool emitFieldInitializersEnd();
 
-  [[nodiscard]] bool emitEnd(Kind kind);
+  MOZ_MUST_USE bool emitBinding();
+
+  MOZ_MUST_USE bool emitEnd(Kind kind);
 
  private:
-  [[nodiscard]] bool initProtoAndCtor();
+  MOZ_MUST_USE bool initProtoAndCtor();
 };
 
 } /* namespace frontend */

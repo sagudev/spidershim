@@ -1,20 +1,18 @@
 //! A channel for sending a single message between asynchronous tasks.
-//!
-//! This is a single-producer, single-consumer channel.
 
 use alloc::sync::Arc;
 use core::fmt;
 use core::pin::Pin;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering::SeqCst;
-use futures_core::future::{Future, FusedFuture};
+use futures_core::future::Future;
 use futures_core::task::{Context, Poll, Waker};
 
 use crate::lock::Lock;
 
 /// A future for a value that will be provided by another asynchronous task.
 ///
-/// This is created by the [`channel`](channel) function.
+/// This is created by the [`channel`] function.
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 #[derive(Debug)]
 pub struct Receiver<T> {
@@ -23,7 +21,7 @@ pub struct Receiver<T> {
 
 /// A means of transmitting a single value to another task.
 ///
-/// This is created by the [`channel`](channel) function.
+/// This is created by the [`channel`] function.
 #[derive(Debug)]
 pub struct Sender<T> {
     inner: Arc<Inner<T>>,
@@ -70,9 +68,7 @@ struct Inner<T> {
     tx_task: Lock<Option<Waker>>,
 }
 
-/// Creates a new one-shot channel for sending a single value across asynchronous tasks.
-///
-/// The channel works for a spsc (single-producer, single-consumer) scheme.
+/// Creates a new one-shot channel for sending values across asynchronous tasks.
 ///
 /// This function is similar to Rust's channel constructor found in the standard
 /// library. Two halves are returned, the first of which is a `Sender` handle,
@@ -86,23 +82,22 @@ struct Inner<T> {
 ///
 /// ```
 /// use futures::channel::oneshot;
-/// use std::{thread, time::Duration};
+/// use futures::future::FutureExt;
+/// use std::thread;
 ///
 /// let (sender, receiver) = oneshot::channel::<i32>();
 ///
+/// # let t =
 /// thread::spawn(|| {
-///     println!("THREAD: sleeping zzz...");
-///     thread::sleep(Duration::from_millis(1000));
-///     println!("THREAD: i'm awake! sending.");
-///     sender.send(3).unwrap();
+///     let future = receiver.map(|i| {
+///         println!("got: {:?}", i);
+///     });
+///     // ...
+/// # return future;
 /// });
 ///
-/// println!("MAIN: doing some useful stuff");
-///
-/// futures::executor::block_on(async {
-///     println!("MAIN: waiting for msg...");
-///     println!("MAIN: got: {:?}", receiver.await)
-/// });
+/// sender.send(3).unwrap();
+/// # futures::executor::block_on(t.join().unwrap());
 /// ```
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
     let inner = Arc::new(Inner::new());
@@ -116,8 +111,8 @@ pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
 }
 
 impl<T> Inner<T> {
-    fn new() -> Self {
-        Self {
+    fn new() -> Inner<T> {
+        Inner {
             complete: AtomicBool::new(false),
             data: Lock::new(None),
             rx_task: Lock::new(None),
@@ -131,7 +126,7 @@ impl<T> Inner<T> {
         }
 
         // Note that this lock acquisition may fail if the receiver
-        // is closed and sets the `complete` flag to `true`, whereupon
+        // is closed and sets the `complete` flag to true, whereupon
         // the receiver may call `poll()`.
         if let Some(mut slot) = self.data.try_lock() {
             assert!(slot.is_none());
@@ -341,13 +336,14 @@ impl<T> Sender<T> {
     ///
     /// If the value is successfully enqueued for the remote end to receive,
     /// then `Ok(())` is returned. If the receiving end was dropped before
-    /// this function was called, however, then `Err(t)` is returned.
+    /// this function was called, however, then `Err` is returned with the value
+    /// provided.
     pub fn send(self, t: T) -> Result<(), T> {
         self.inner.send(t)
     }
 
     /// Polls this `Sender` half to detect whether its associated
-    /// [`Receiver`](Receiver) has been dropped.
+    /// [`Receiver`](Receiver) with has been dropped.
     ///
     /// # Return values
     ///
@@ -362,15 +358,6 @@ impl<T> Sender<T> {
         self.inner.poll_canceled(cx)
     }
 
-    /// Creates a future that resolves when this `Sender`'s corresponding
-    /// [`Receiver`](Receiver) half has hung up.
-    ///
-    /// This is a utility wrapping [`poll_canceled`](Sender::poll_canceled)
-    /// to expose a [`Future`](core::future::Future).
-    pub fn cancellation(&mut self) -> Cancellation<'_, T> {
-        Cancellation { inner: self }
-    }
-
     /// Tests to see whether this `Sender`'s corresponding `Receiver`
     /// has been dropped.
     ///
@@ -380,34 +367,11 @@ impl<T> Sender<T> {
     pub fn is_canceled(&self) -> bool {
         self.inner.is_canceled()
     }
-
-    /// Tests to see whether this `Sender` is connected to the given `Receiver`. That is, whether
-    /// they were created by the same call to `channel`.
-    pub fn is_connected_to(&self, receiver: &Receiver<T>) -> bool {
-        Arc::ptr_eq(&self.inner, &receiver.inner)
-    }
 }
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         self.inner.drop_tx()
-    }
-}
-
-/// A future that resolves when the receiving end of a channel has hung up.
-///
-/// This is an `.await`-friendly interface around [`poll_canceled`](Sender::poll_canceled).
-#[must_use = "futures do nothing unless you `.await` or poll them"]
-#[derive(Debug)]
-pub struct Cancellation<'a, T> {
-    inner: &'a mut Sender<T>,
-}
-
-impl<T> Future for Cancellation<'_, T> {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        self.inner.poll_canceled(cx)
     }
 }
 
@@ -458,21 +422,6 @@ impl<T> Future for Receiver<T> {
         cx: &mut Context<'_>,
     ) -> Poll<Result<T, Canceled>> {
         self.inner.recv(cx)
-    }
-}
-
-impl<T> FusedFuture for Receiver<T> {
-    fn is_terminated(&self) -> bool {
-        if self.inner.complete.load(SeqCst) {
-            if let Some(slot) = self.inner.data.try_lock() {
-                if slot.is_some() {
-                    return false;
-                }
-            }
-            true
-        } else {
-            false
-        }
     }
 }
 

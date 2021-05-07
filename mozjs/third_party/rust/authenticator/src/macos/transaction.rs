@@ -4,14 +4,13 @@
 
 extern crate libc;
 
-use crate::errors;
-use crate::platform::iokit::{CFRunLoopEntryObserver, IOHIDDeviceRef, SendableRunLoop};
-use crate::platform::monitor::Monitor;
-use crate::statecallback::StateCallback;
 use core_foundation::runloop::*;
+use platform::iokit::{CFRunLoopEntryObserver, IOHIDDeviceRef, SendableRunLoop};
+use platform::monitor::Monitor;
 use std::os::raw::c_void;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
+use util::OnceCallback;
 
 // A transaction will run the given closure in a new thread, thereby using a
 // separate per-thread state machine for each HID. It will either complete or
@@ -25,9 +24,9 @@ pub struct Transaction {
 impl Transaction {
     pub fn new<F, T>(
         timeout: u64,
-        callback: StateCallback<crate::Result<T>>,
+        callback: OnceCallback<T>,
         new_device_cb: F,
-    ) -> crate::Result<Self>
+    ) -> Result<Self, ::Error>
     where
         F: Fn((IOHIDDeviceRef, Receiver<Vec<u8>>), &dyn Fn() -> bool) + Sync + Send + 'static,
         T: 'static,
@@ -48,8 +47,7 @@ impl Transaction {
 
                 // Create a new HID device monitor and start polling.
                 let mut monitor = Monitor::new(new_device_cb);
-                try_or!(monitor.start(), |_| callback
-                    .call(Err(errors::AuthenticatorError::Platform)));
+                try_or!(monitor.start(), |_| callback.call(Err(::Error::Unknown)));
 
                 // This will block until completion, abortion, or timeout.
                 unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, 0) };
@@ -58,16 +56,12 @@ impl Transaction {
                 monitor.stop();
 
                 // Send an error, if the callback wasn't called already.
-                callback.call(Err(errors::AuthenticatorError::U2FToken(
-                    errors::U2FTokenError::NotAllowed,
-                )));
+                callback.call(Err(::Error::NotAllowed));
             })
-            .map_err(|_| errors::AuthenticatorError::Platform)?;
+            .map_err(|_| ::Error::Unknown)?;
 
         // Block until we enter the CFRunLoop.
-        let runloop = rx
-            .recv()
-            .map_err(|_| errors::AuthenticatorError::Platform)?;
+        let runloop = rx.recv().map_err(|_| ::Error::Unknown)?;
 
         Ok(Self {
             runloop: Some(runloop),

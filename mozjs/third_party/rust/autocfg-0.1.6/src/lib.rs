@@ -40,7 +40,6 @@
 #![allow(unknown_lints)]
 #![allow(bare_trait_objects)]
 #![allow(ellipsis_inclusive_range_patterns)]
-#![allow(warnings)]
 
 use std::env;
 use std::ffi::OsString;
@@ -199,7 +198,7 @@ impl AutoCfg {
             command.arg("--target").arg(target);
         }
 
-        command.arg("-").stdin(Stdio::piped()).stderr(Stdio::null());
+        command.arg("-").stdin(Stdio::piped());
         let mut child = try!(command.spawn().map_err(error::from_io));
         let mut stdin = child.stdin.take().expect("rustc stdin");
 

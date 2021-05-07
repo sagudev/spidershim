@@ -1,5 +1,6 @@
 // Copyright (C) 2017 André Bargull. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
+
 /*---
 esid: sec-integer-indexed-exotic-objects-hasproperty-p
 description: >
@@ -11,7 +12,7 @@ info: |
     a. Let numericIndex be ! CanonicalNumericIndexString(P).
     b. If numericIndex is not undefined, then
       i. Let buffer be O.[[ViewedArrayBuffer]].
-      ii. If IsDetachedBuffer(buffer) is true, return false.
+      ii. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
       ...
 
   7.1.16 CanonicalNumericIndexString ( argument )
@@ -22,27 +23,16 @@ info: |
 
 flags: [noStrict]
 includes: [testBigIntTypedArray.js, detachArrayBuffer.js]
-features: [align-detached-buffer-semantics-with-web-reality, BigInt, TypedArray]
+features: [BigInt, TypedArray]
 ---*/
+
 testWithBigIntTypedArrayConstructors(function(TA) {
-  let counter = 0;
+  var sample = new TA(0);
+  $DETACHBUFFER(sample.buffer);
 
-  let n = {
-    valueOf() {
-      counter++;
-      return 9n;
-    }
-  };
-
-  assert.sameValue(counter, 0, 'The value of `counter` is 0');
-  let ta = new TA([n]);
-  assert.sameValue(counter, 1, 'The value of `counter` is 1');
-  $DETACHBUFFER(ta.buffer);
-
-  with (ta) {
-    Infinity;
-    assert.sameValue(counter, 1, 'The value of `counter` is 1');
-  }
+  assert.throws(TypeError, function() {
+    with (sample) Infinity;
+  });
 });
 
 reportCompare(0, 0);

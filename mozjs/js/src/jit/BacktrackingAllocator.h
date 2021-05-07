@@ -32,18 +32,35 @@ namespace jit {
 
 class Requirement {
  public:
-  enum Kind { NONE, REGISTER, FIXED };
+  enum Kind { NONE, REGISTER, FIXED, MUST_REUSE_INPUT };
 
   Requirement() : kind_(NONE) {}
 
   explicit Requirement(Kind kind) : kind_(kind) {
-    // FIXED has a dedicated constructor.
-    MOZ_ASSERT(kind != FIXED);
+    // These have dedicated constructors.
+    MOZ_ASSERT(kind != FIXED && kind != MUST_REUSE_INPUT);
+  }
+
+  Requirement(Kind kind, CodePosition at) : kind_(kind), position_(at) {
+    // These have dedicated constructors.
+    MOZ_ASSERT(kind != FIXED && kind != MUST_REUSE_INPUT);
   }
 
   explicit Requirement(LAllocation fixed) : kind_(FIXED), allocation_(fixed) {
     MOZ_ASSERT(!fixed.isBogus() && !fixed.isUse());
   }
+
+  // Only useful as a hint, encodes where the fixed requirement is used to
+  // avoid allocating a fixed register too early.
+  Requirement(LAllocation fixed, CodePosition at)
+      : kind_(FIXED), allocation_(fixed), position_(at) {
+    MOZ_ASSERT(!fixed.isBogus() && !fixed.isUse());
+  }
+
+  Requirement(uint32_t vreg, CodePosition at)
+      : kind_(MUST_REUSE_INPUT),
+        allocation_(LUse(vreg, LUse::ANY)),
+        position_(at) {}
 
   Kind kind() const { return kind_; }
 
@@ -52,9 +69,18 @@ class Requirement {
     return allocation_;
   }
 
-  [[nodiscard]] bool merge(const Requirement& newRequirement) {
+  uint32_t virtualRegister() const {
+    MOZ_ASSERT(allocation_.isUse());
+    MOZ_ASSERT(kind() == MUST_REUSE_INPUT);
+    return allocation_.toUse()->virtualRegister();
+  }
+
+  CodePosition pos() const { return position_; }
+
+  MOZ_MUST_USE bool merge(const Requirement& newRequirement) {
     // Merge newRequirement with any existing requirement, returning false
     // if the new and old requirements conflict.
+    MOZ_ASSERT(newRequirement.kind() != Requirement::MUST_REUSE_INPUT);
 
     if (newRequirement.kind() == Requirement::FIXED) {
       if (kind() == Requirement::FIXED) {
@@ -76,6 +102,7 @@ class Requirement {
  private:
   Kind kind_;
   LAllocation allocation_;
+  CodePosition position_;
 };
 
 struct UsePosition : public TempObject,
@@ -353,7 +380,7 @@ class SpillSet : public TempObject {
     return new (alloc) SpillSet(alloc);
   }
 
-  [[nodiscard]] bool addSpilledBundle(LiveBundle* bundle) {
+  MOZ_MUST_USE bool addSpilledBundle(LiveBundle* bundle) {
     return list_.append(bundle);
   }
   size_t numSpilledBundles() const { return list_.length(); }
@@ -403,12 +430,12 @@ class LiveBundle : public TempObject {
     ranges_.removeAndIncrement(iter);
   }
   void addRange(LiveRange* range);
-  [[nodiscard]] bool addRange(TempAllocator& alloc, uint32_t vreg,
-                              CodePosition from, CodePosition to);
-  [[nodiscard]] bool addRangeAndDistributeUses(TempAllocator& alloc,
-                                               LiveRange* oldRange,
-                                               CodePosition from,
-                                               CodePosition to);
+  MOZ_MUST_USE bool addRange(TempAllocator& alloc, uint32_t vreg,
+                             CodePosition from, CodePosition to);
+  MOZ_MUST_USE bool addRangeAndDistributeUses(TempAllocator& alloc,
+                                              LiveRange* oldRange,
+                                              CodePosition from,
+                                              CodePosition to);
   LiveRange* popFirstRange();
 #ifdef DEBUG
   size_t numRanges() const;
@@ -498,8 +525,8 @@ class VirtualRegister {
 
   LiveBundle* firstBundle() const { return firstRange()->bundle(); }
 
-  [[nodiscard]] bool addInitialRange(TempAllocator& alloc, CodePosition from,
-                                     CodePosition to, size_t* numRanges);
+  MOZ_MUST_USE bool addInitialRange(TempAllocator& alloc, CodePosition from,
+                                    CodePosition to, size_t* numRanges);
   void addInitialUse(UsePosition* use);
   void setInitialDefinition(CodePosition from);
 };
@@ -598,7 +625,7 @@ class BacktrackingAllocator : protected RegisterAllocator {
         liveIn(nullptr),
         callRanges(nullptr) {}
 
-  [[nodiscard]] bool go();
+  MOZ_MUST_USE bool go();
 
   static size_t SpillWeightFromUsePolicy(LUse::Policy policy) {
     switch (policy) {
@@ -619,11 +646,11 @@ class BacktrackingAllocator : protected RegisterAllocator {
   using LiveBundleVector = Vector<LiveBundle*, 4, SystemAllocPolicy>;
 
   // Liveness methods.
-  [[nodiscard]] bool init();
-  [[nodiscard]] bool buildLivenessInfo();
+  MOZ_MUST_USE bool init();
+  MOZ_MUST_USE bool buildLivenessInfo();
 
-  [[nodiscard]] bool addInitialFixedRange(AnyRegister reg, CodePosition from,
-                                          CodePosition to);
+  MOZ_MUST_USE bool addInitialFixedRange(AnyRegister reg, CodePosition from,
+                                         CodePosition to);
 
   VirtualRegister& vreg(const LDefinition* def) {
     return vregs[def->virtualRegister()];
@@ -634,62 +661,61 @@ class BacktrackingAllocator : protected RegisterAllocator {
   }
 
   // Allocation methods.
-  [[nodiscard]] bool tryMergeBundles(LiveBundle* bundle0, LiveBundle* bundle1);
-  [[nodiscard]] bool tryMergeReusedRegister(VirtualRegister& def,
-                                            VirtualRegister& input);
+  MOZ_MUST_USE bool tryMergeBundles(LiveBundle* bundle0, LiveBundle* bundle1);
+  MOZ_MUST_USE bool tryMergeReusedRegister(VirtualRegister& def,
+                                           VirtualRegister& input);
   void allocateStackDefinition(VirtualRegister& reg);
-  [[nodiscard]] bool mergeAndQueueRegisters();
-  [[nodiscard]] bool tryAllocateFixed(LiveBundle* bundle,
-                                      Requirement requirement, bool* success,
-                                      bool* pfixed,
-                                      LiveBundleVector& conflicting);
-  [[nodiscard]] bool tryAllocateNonFixed(LiveBundle* bundle,
-                                         Requirement requirement,
-                                         Requirement hint, bool* success,
-                                         bool* pfixed,
-                                         LiveBundleVector& conflicting);
-  [[nodiscard]] bool processBundle(MIRGenerator* mir, LiveBundle* bundle);
-  [[nodiscard]] bool computeRequirement(LiveBundle* bundle,
-                                        Requirement* prequirement,
-                                        Requirement* phint);
-  [[nodiscard]] bool tryAllocateRegister(PhysicalRegister& r,
-                                         LiveBundle* bundle, bool* success,
-                                         bool* pfixed,
-                                         LiveBundleVector& conflicting);
-  [[nodiscard]] bool evictBundle(LiveBundle* bundle);
-  [[nodiscard]] bool splitAndRequeueBundles(LiveBundle* bundle,
-                                            const LiveBundleVector& newBundles);
-  [[nodiscard]] bool spill(LiveBundle* bundle);
-  [[nodiscard]] AVOID_INLINE_FOR_DEBUGGING bool
+  MOZ_MUST_USE bool mergeAndQueueRegisters();
+  MOZ_MUST_USE bool tryAllocateFixed(LiveBundle* bundle,
+                                     Requirement requirement, bool* success,
+                                     bool* pfixed,
+                                     LiveBundleVector& conflicting);
+  MOZ_MUST_USE bool tryAllocateNonFixed(LiveBundle* bundle,
+                                        Requirement requirement,
+                                        Requirement hint, bool* success,
+                                        bool* pfixed,
+                                        LiveBundleVector& conflicting);
+  MOZ_MUST_USE bool processBundle(MIRGenerator* mir, LiveBundle* bundle);
+  MOZ_MUST_USE bool computeRequirement(LiveBundle* bundle,
+                                       Requirement* prequirement,
+                                       Requirement* phint);
+  MOZ_MUST_USE bool tryAllocateRegister(PhysicalRegister& r, LiveBundle* bundle,
+                                        bool* success, bool* pfixed,
+                                        LiveBundleVector& conflicting);
+  MOZ_MUST_USE bool evictBundle(LiveBundle* bundle);
+  MOZ_MUST_USE bool splitAndRequeueBundles(LiveBundle* bundle,
+                                           const LiveBundleVector& newBundles);
+  MOZ_MUST_USE bool spill(LiveBundle* bundle);
+  AVOID_INLINE_FOR_DEBUGGING MOZ_MUST_USE bool
   tryAllocatingRegistersForSpillBundles();
 
   bool isReusedInput(LUse* use, LNode* ins, bool considerCopy);
   bool isRegisterUse(UsePosition* use, LNode* ins, bool considerCopy = false);
   bool isRegisterDefinition(LiveRange* range);
-  [[nodiscard]] bool pickStackSlot(SpillSet* spill);
-  [[nodiscard]] bool insertAllRanges(LiveRangeSet& set, LiveBundle* bundle);
+  MOZ_MUST_USE bool pickStackSlot(SpillSet* spill);
+  MOZ_MUST_USE bool insertAllRanges(LiveRangeSet& set, LiveBundle* bundle);
 
   // Reification methods.
-  [[nodiscard]] AVOID_INLINE_FOR_DEBUGGING bool pickStackSlots();
-  [[nodiscard]] AVOID_INLINE_FOR_DEBUGGING bool resolveControlFlow();
-  [[nodiscard]] AVOID_INLINE_FOR_DEBUGGING bool reifyAllocations();
-  [[nodiscard]] AVOID_INLINE_FOR_DEBUGGING bool populateSafepoints();
-  [[nodiscard]] AVOID_INLINE_FOR_DEBUGGING bool annotateMoveGroups();
-  [[nodiscard]] AVOID_INLINE_FOR_DEBUGGING bool deadRange(LiveRange* range);
+  AVOID_INLINE_FOR_DEBUGGING MOZ_MUST_USE bool pickStackSlots();
+  AVOID_INLINE_FOR_DEBUGGING MOZ_MUST_USE bool resolveControlFlow();
+  AVOID_INLINE_FOR_DEBUGGING MOZ_MUST_USE bool reifyAllocations();
+  AVOID_INLINE_FOR_DEBUGGING MOZ_MUST_USE bool populateSafepoints();
+  AVOID_INLINE_FOR_DEBUGGING MOZ_MUST_USE bool annotateMoveGroups();
+  AVOID_INLINE_FOR_DEBUGGING MOZ_MUST_USE bool deadRange(LiveRange* range);
   size_t findFirstNonCallSafepoint(CodePosition from);
   size_t findFirstSafepoint(CodePosition pos, size_t startFrom);
   void addLiveRegistersForRange(VirtualRegister& reg, LiveRange* range);
 
-  [[nodiscard]] bool addMove(LMoveGroup* moves, LiveRange* from, LiveRange* to,
-                             LDefinition::Type type) {
+  MOZ_MUST_USE bool addMove(LMoveGroup* moves, LiveRange* from, LiveRange* to,
+                            LDefinition::Type type) {
     LAllocation fromAlloc = from->bundle()->allocation();
     LAllocation toAlloc = to->bundle()->allocation();
     MOZ_ASSERT(fromAlloc != toAlloc);
     return moves->add(fromAlloc, toAlloc, type);
   }
 
-  [[nodiscard]] bool moveInput(LInstruction* ins, LiveRange* from,
-                               LiveRange* to, LDefinition::Type type) {
+  MOZ_MUST_USE bool moveInput(LInstruction* ins, LiveRange* from, LiveRange* to,
+                              LDefinition::Type type) {
     if (from->bundle()->allocation() == to->bundle()->allocation()) {
       return true;
     }
@@ -697,8 +723,8 @@ class BacktrackingAllocator : protected RegisterAllocator {
     return addMove(moves, from, to, type);
   }
 
-  [[nodiscard]] bool moveAfter(LInstruction* ins, LiveRange* from,
-                               LiveRange* to, LDefinition::Type type) {
+  MOZ_MUST_USE bool moveAfter(LInstruction* ins, LiveRange* from, LiveRange* to,
+                              LDefinition::Type type) {
     if (from->bundle()->allocation() == to->bundle()->allocation()) {
       return true;
     }
@@ -706,8 +732,8 @@ class BacktrackingAllocator : protected RegisterAllocator {
     return addMove(moves, from, to, type);
   }
 
-  [[nodiscard]] bool moveAtExit(LBlock* block, LiveRange* from, LiveRange* to,
-                                LDefinition::Type type) {
+  MOZ_MUST_USE bool moveAtExit(LBlock* block, LiveRange* from, LiveRange* to,
+                               LDefinition::Type type) {
     if (from->bundle()->allocation() == to->bundle()->allocation()) {
       return true;
     }
@@ -715,8 +741,8 @@ class BacktrackingAllocator : protected RegisterAllocator {
     return addMove(moves, from, to, type);
   }
 
-  [[nodiscard]] bool moveAtEntry(LBlock* block, LiveRange* from, LiveRange* to,
-                                 LDefinition::Type type) {
+  MOZ_MUST_USE bool moveAtEntry(LBlock* block, LiveRange* from, LiveRange* to,
+                                LDefinition::Type type) {
     if (from->bundle()->allocation() == to->bundle()->allocation()) {
       return true;
     }
@@ -724,9 +750,9 @@ class BacktrackingAllocator : protected RegisterAllocator {
     return addMove(moves, from, to, type);
   }
 
-  [[nodiscard]] bool moveAtEdge(LBlock* predecessor, LBlock* successor,
-                                LiveRange* from, LiveRange* to,
-                                LDefinition::Type type);
+  MOZ_MUST_USE bool moveAtEdge(LBlock* predecessor, LBlock* successor,
+                               LiveRange* from, LiveRange* to,
+                               LDefinition::Type type);
 
   // Debugging methods.
   void dumpAllocations();
@@ -744,23 +770,23 @@ class BacktrackingAllocator : protected RegisterAllocator {
 
   size_t maximumSpillWeight(const LiveBundleVector& bundles);
 
-  [[nodiscard]] bool chooseBundleSplit(LiveBundle* bundle, bool fixed,
-                                       LiveBundle* conflict);
+  MOZ_MUST_USE bool chooseBundleSplit(LiveBundle* bundle, bool fixed,
+                                      LiveBundle* conflict);
 
-  [[nodiscard]] bool splitAt(LiveBundle* bundle,
-                             const SplitPositionVector& splitPositions);
-  [[nodiscard]] bool trySplitAcrossHotcode(LiveBundle* bundle, bool* success);
-  [[nodiscard]] bool trySplitAfterLastRegisterUse(LiveBundle* bundle,
-                                                  LiveBundle* conflict,
-                                                  bool* success);
-  [[nodiscard]] bool trySplitBeforeFirstRegisterUse(LiveBundle* bundle,
-                                                    LiveBundle* conflict,
-                                                    bool* success);
-  [[nodiscard]] bool splitAcrossCalls(LiveBundle* bundle);
+  MOZ_MUST_USE bool splitAt(LiveBundle* bundle,
+                            const SplitPositionVector& splitPositions);
+  MOZ_MUST_USE bool trySplitAcrossHotcode(LiveBundle* bundle, bool* success);
+  MOZ_MUST_USE bool trySplitAfterLastRegisterUse(LiveBundle* bundle,
+                                                 LiveBundle* conflict,
+                                                 bool* success);
+  MOZ_MUST_USE bool trySplitBeforeFirstRegisterUse(LiveBundle* bundle,
+                                                   LiveBundle* conflict,
+                                                   bool* success);
+  MOZ_MUST_USE bool splitAcrossCalls(LiveBundle* bundle);
 
   bool compilingWasm() { return mir->outerInfo().compilingWasm(); }
 
-  void dumpVregs(const char* who);
+  void dumpVregs();
 };
 
 }  // namespace jit

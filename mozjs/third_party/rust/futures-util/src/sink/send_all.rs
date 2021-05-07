@@ -2,7 +2,6 @@ use crate::stream::{StreamExt, TryStreamExt, Fuse};
 use core::fmt;
 use core::pin::Pin;
 use futures_core::future::Future;
-use futures_core::ready;
 use futures_core::stream::{TryStream, Stream};
 use futures_core::task::{Context, Poll};
 use futures_sink::Sink;
@@ -50,8 +49,8 @@ where
     pub(super) fn new(
         sink: &'a mut Si,
         stream: &'a mut St,
-    ) -> Self {
-        Self {
+    ) -> SendAll<'a, Si, St> {
+        SendAll {
             sink,
             stream: stream.fuse(),
             buffered: None,

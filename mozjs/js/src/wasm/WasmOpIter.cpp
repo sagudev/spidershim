@@ -35,11 +35,6 @@ using namespace js::wasm;
 #  else
 #    define WASM_REF_OP(code) break
 #  endif
-#  ifdef ENABLE_WASM_FUNCTION_REFERENCES
-#    define WASM_FUNCTION_REFERENCES_OP(code) return code
-#  else
-#    define WASM_FUNCTION_REFERENCES_OP(code) break
-#  endif
 #  ifdef ENABLE_WASM_GC
 #    define WASM_GC_OP(code) return code
 #  else
@@ -49,11 +44,6 @@ using namespace js::wasm;
 #    define WASM_SIMD_OP(code) return code
 #  else
 #    define WASM_SIMD_OP(code) break
-#  endif
-#  ifdef ENABLE_WASM_EXCEPTIONS
-#    define WASM_EXN_OP(code) return code
-#  else
-#    define WASM_EXN_OP(code) break
 #  endif
 
 OpKind wasm::Classify(OpBytes op) {
@@ -270,14 +260,6 @@ OpKind wasm::Classify(OpBytes op) {
       return OpKind::Else;
     case Op::End:
       return OpKind::End;
-#  ifdef ENABLE_WASM_EXCEPTIONS
-    case Op::Catch:
-      WASM_EXN_OP(OpKind::Catch);
-    case Op::Throw:
-      WASM_EXN_OP(OpKind::Throw);
-    case Op::Try:
-      WASM_EXN_OP(OpKind::Try);
-#  endif
     case Op::MemorySize:
       return OpKind::MemorySize;
     case Op::MemoryGrow:
@@ -288,10 +270,6 @@ OpKind wasm::Classify(OpBytes op) {
       WASM_REF_OP(OpKind::Conversion);
     case Op::RefFunc:
       WASM_REF_OP(OpKind::RefFunc);
-    case Op::RefAsNonNull:
-      WASM_FUNCTION_REFERENCES_OP(OpKind::RefAsNonNull);
-    case Op::BrOnNull:
-      WASM_FUNCTION_REFERENCES_OP(OpKind::BrOnNull);
     case Op::RefEq:
       WASM_GC_OP(OpKind::Comparison);
     case Op::GcPrefix: {
@@ -299,38 +277,14 @@ OpKind wasm::Classify(OpBytes op) {
         case GcOp::Limit:
           // Reject Limit for GcPrefix encoding
           break;
-        case GcOp::StructNewWithRtt:
-          WASM_GC_OP(OpKind::StructNewWithRtt);
-        case GcOp::StructNewDefaultWithRtt:
-          WASM_GC_OP(OpKind::StructNewDefaultWithRtt);
+        case GcOp::StructNew:
+          WASM_GC_OP(OpKind::StructNew);
         case GcOp::StructGet:
-        case GcOp::StructGetS:
-        case GcOp::StructGetU:
           WASM_GC_OP(OpKind::StructGet);
         case GcOp::StructSet:
           WASM_GC_OP(OpKind::StructSet);
-        case GcOp::ArrayNewWithRtt:
-          WASM_GC_OP(OpKind::ArrayNewWithRtt);
-        case GcOp::ArrayNewDefaultWithRtt:
-          WASM_GC_OP(OpKind::ArrayNewDefaultWithRtt);
-        case GcOp::ArrayGet:
-        case GcOp::ArrayGetS:
-        case GcOp::ArrayGetU:
-          WASM_GC_OP(OpKind::ArrayGet);
-        case GcOp::ArraySet:
-          WASM_GC_OP(OpKind::ArraySet);
-        case GcOp::ArrayLen:
-          WASM_GC_OP(OpKind::ArrayLen);
-        case GcOp::RttCanon:
-          WASM_GC_OP(OpKind::RttCanon);
-        case GcOp::RttSub:
-          WASM_GC_OP(OpKind::RttSub);
-        case GcOp::RefTest:
-          WASM_GC_OP(OpKind::RefTest);
-        case GcOp::RefCast:
-          WASM_GC_OP(OpKind::RefCast);
-        case GcOp::BrOnCast:
-          WASM_GC_OP(OpKind::BrOnCast);
+        case GcOp::StructNarrow:
+          WASM_GC_OP(OpKind::StructNarrow);
       }
       break;
     }
@@ -354,15 +308,12 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I64x2Splat:
         case SimdOp::F32x4Splat:
         case SimdOp::F64x2Splat:
-        case SimdOp::V128AnyTrue:
+        case SimdOp::I8x16AnyTrue:
         case SimdOp::I8x16AllTrue:
+        case SimdOp::I16x8AnyTrue:
         case SimdOp::I16x8AllTrue:
+        case SimdOp::I32x4AnyTrue:
         case SimdOp::I32x4AllTrue:
-        case SimdOp::I64x2AllTrue:
-        case SimdOp::I8x16Bitmask:
-        case SimdOp::I16x8Bitmask:
-        case SimdOp::I32x4Bitmask:
-        case SimdOp::I64x2Bitmask:
           WASM_SIMD_OP(OpKind::Conversion);
         case SimdOp::I8x16ReplaceLane:
         case SimdOp::I16x8ReplaceLane:
@@ -401,12 +352,6 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I32x4LeU:
         case SimdOp::I32x4GeS:
         case SimdOp::I32x4GeU:
-        case SimdOp::I64x2Eq:
-        case SimdOp::I64x2Ne:
-        case SimdOp::I64x2LtS:
-        case SimdOp::I64x2GtS:
-        case SimdOp::I64x2LeS:
-        case SimdOp::I64x2GeS:
         case SimdOp::F32x4Eq:
         case SimdOp::F32x4Ne:
         case SimdOp::F32x4Lt:
@@ -473,24 +418,6 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I16x8NarrowSI32x4:
         case SimdOp::I16x8NarrowUI32x4:
         case SimdOp::V8x16Swizzle:
-        case SimdOp::F32x4PMin:
-        case SimdOp::F32x4PMax:
-        case SimdOp::F64x2PMin:
-        case SimdOp::F64x2PMax:
-        case SimdOp::I32x4DotSI16x8:
-        case SimdOp::I16x8ExtMulLowSI8x16:
-        case SimdOp::I16x8ExtMulHighSI8x16:
-        case SimdOp::I16x8ExtMulLowUI8x16:
-        case SimdOp::I16x8ExtMulHighUI8x16:
-        case SimdOp::I32x4ExtMulLowSI16x8:
-        case SimdOp::I32x4ExtMulHighSI16x8:
-        case SimdOp::I32x4ExtMulLowUI16x8:
-        case SimdOp::I32x4ExtMulHighUI16x8:
-        case SimdOp::I64x2ExtMulLowSI32x4:
-        case SimdOp::I64x2ExtMulHighSI32x4:
-        case SimdOp::I64x2ExtMulLowUI32x4:
-        case SimdOp::I64x2ExtMulHighUI32x4:
-        case SimdOp::I16x8Q15MulrSatS:
           WASM_SIMD_OP(OpKind::Binary);
         case SimdOp::I8x16Neg:
         case SimdOp::I16x8Neg:
@@ -506,10 +433,6 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I32x4TruncSSatF32x4:
         case SimdOp::I32x4TruncUSatF32x4:
         case SimdOp::I64x2Neg:
-        case SimdOp::I64x2WidenLowSI32x4:
-        case SimdOp::I64x2WidenHighSI32x4:
-        case SimdOp::I64x2WidenLowUI32x4:
-        case SimdOp::I64x2WidenHighUI32x4:
         case SimdOp::F32x4Abs:
         case SimdOp::F32x4Neg:
         case SimdOp::F32x4Sqrt:
@@ -519,29 +442,9 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::F64x2Neg:
         case SimdOp::F64x2Sqrt:
         case SimdOp::V128Not:
-        case SimdOp::I8x16Popcnt:
         case SimdOp::I8x16Abs:
         case SimdOp::I16x8Abs:
         case SimdOp::I32x4Abs:
-        case SimdOp::I64x2Abs:
-        case SimdOp::F32x4Ceil:
-        case SimdOp::F32x4Floor:
-        case SimdOp::F32x4Trunc:
-        case SimdOp::F32x4Nearest:
-        case SimdOp::F64x2Ceil:
-        case SimdOp::F64x2Floor:
-        case SimdOp::F64x2Trunc:
-        case SimdOp::F64x2Nearest:
-        case SimdOp::F32x4DemoteF64x2Zero:
-        case SimdOp::F64x2PromoteLowF32x4:
-        case SimdOp::F64x2ConvertLowI32x4S:
-        case SimdOp::F64x2ConvertLowI32x4U:
-        case SimdOp::I32x4TruncSatF64x2SZero:
-        case SimdOp::I32x4TruncSatF64x2UZero:
-        case SimdOp::I16x8ExtAddPairwiseI8x16S:
-        case SimdOp::I16x8ExtAddPairwiseI8x16U:
-        case SimdOp::I32x4ExtAddPairwiseI16x8S:
-        case SimdOp::I32x4ExtAddPairwiseI16x8U:
           WASM_SIMD_OP(OpKind::Unary);
         case SimdOp::I8x16Shl:
         case SimdOp::I8x16ShrS:
@@ -573,27 +476,9 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I32x4LoadU16x4:
         case SimdOp::I64x2LoadS32x2:
         case SimdOp::I64x2LoadU32x2:
-        case SimdOp::V128Load32Zero:
-        case SimdOp::V128Load64Zero:
           WASM_SIMD_OP(OpKind::Load);
         case SimdOp::V128Store:
           WASM_SIMD_OP(OpKind::Store);
-        case SimdOp::V128Load8Lane:
-        case SimdOp::V128Load16Lane:
-        case SimdOp::V128Load32Lane:
-        case SimdOp::V128Load64Lane:
-          WASM_SIMD_OP(OpKind::LoadLane);
-        case SimdOp::V128Store8Lane:
-        case SimdOp::V128Store16Lane:
-        case SimdOp::V128Store32Lane:
-        case SimdOp::V128Store64Lane:
-          WASM_SIMD_OP(OpKind::StoreLane);
-#  ifdef ENABLE_WASM_SIMD_WORMHOLE
-        case SimdOp::MozWHSELFTEST:
-        case SimdOp::MozWHPMADDUBSW:
-        case SimdOp::MozWHPMADDWD:
-          MOZ_CRASH("Should not be seen");
-#  endif
       }
       break;
     }
@@ -761,10 +646,9 @@ OpKind wasm::Classify(OpBytes op) {
       break;
     }
   }
-  MOZ_CRASH("unimplemented opcode");
+  MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("unimplemented opcode");
 }
 
-#  undef WASM_EXN_OP
 #  undef WASM_GC_OP
 #  undef WASM_REF_OP
 

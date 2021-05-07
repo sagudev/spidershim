@@ -1,3 +1,5 @@
+// |reftest| skip-if(!Promise.any)
+
 // Smoke test for `Promise.any`, test262 should cover the function in
 // more detail.
 

@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
 pub enum TrapCode {
     /// The current stack space was exhausted.
+    ///
+    /// On some platforms, a stack overflow may also be indicated by a segmentation fault from the
+    /// stack guard page.
     StackOverflow,
 
     /// A `heap_addr` instruction detected an out-of-bounds error.
@@ -21,11 +24,11 @@ pub enum TrapCode {
     /// offset-guard pages.
     HeapOutOfBounds,
 
-    /// A wasm atomic operation was presented with a not-naturally-aligned linear-memory address.
-    HeapMisaligned,
-
     /// A `table_addr` instruction detected an out-of-bounds error.
     TableOutOfBounds,
+
+    /// Other bounds checking error.
+    OutOfBounds,
 
     /// Indirect call to a null table entry.
     IndirectCallToNull,
@@ -59,8 +62,8 @@ impl Display for TrapCode {
         let identifier = match *self {
             StackOverflow => "stk_ovf",
             HeapOutOfBounds => "heap_oob",
-            HeapMisaligned => "heap_misaligned",
             TableOutOfBounds => "table_oob",
+            OutOfBounds => "oob",
             IndirectCallToNull => "icall_null",
             BadSignature => "bad_sig",
             IntegerOverflow => "int_ovf",
@@ -82,8 +85,8 @@ impl FromStr for TrapCode {
         match s {
             "stk_ovf" => Ok(StackOverflow),
             "heap_oob" => Ok(HeapOutOfBounds),
-            "heap_misaligned" => Ok(HeapMisaligned),
             "table_oob" => Ok(TableOutOfBounds),
+            "oob" => Ok(OutOfBounds),
             "icall_null" => Ok(IndirectCallToNull),
             "bad_sig" => Ok(BadSignature),
             "int_ovf" => Ok(IntegerOverflow),
@@ -106,8 +109,8 @@ mod tests {
     const CODES: [TrapCode; 11] = [
         TrapCode::StackOverflow,
         TrapCode::HeapOutOfBounds,
-        TrapCode::HeapMisaligned,
         TrapCode::TableOutOfBounds,
+        TrapCode::OutOfBounds,
         TrapCode::IndirectCallToNull,
         TrapCode::BadSignature,
         TrapCode::IntegerOverflow,

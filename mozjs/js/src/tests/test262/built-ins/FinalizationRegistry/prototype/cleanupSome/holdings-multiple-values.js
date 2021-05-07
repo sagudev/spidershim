@@ -1,4 +1,3 @@
-// |reftest| skip-if(!this.hasOwnProperty('FinalizationRegistry')) async -- FinalizationRegistry is not enabled unconditionally
 // Copyright (C) 2019 Leo Balter. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -24,7 +23,7 @@ info: |
   ...
 
 
-features: [FinalizationRegistry.prototype.cleanupSome, cleanupSome, FinalizationRegistry, Symbol, host-gc-required]
+features: [FinalizationRegistry, Symbol, host-gc-required]
 includes: [async-gc.js]
 flags: [async, non-deterministic]
 ---*/

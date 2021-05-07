@@ -8,53 +8,65 @@ description: Create comments with any code
 ---*/
 
 /*CHECK#1*/
-/* Test262Error.thrower('#1: Correct interpretation multi line comments');
+/* $ERROR('#1: Correct interpretation multi line comments');
 */
 
 /*CHECK#2*/
 var x = 0;
 /* x = 1;*/
-assert.sameValue(x, 0, 'The value of `x` is 0');
+if (x !== 0) {
+  $ERROR('#2: var x = 0; /* x = 1;*/ x === 0. Actual: ' + (x));
+}
 
 //CHECK#3
-var /* y = 1;*/
+var /* y = 1;*/ 
 y;
-assert.sameValue(y, undefined, 'The value of `y` is expected to equal `undefined`');
+if (y !== undefined) {
+  $ERROR('#3: var /* y = 1; */ \\n y; y === undefined. Actual: ' + (y));
+}  
 
 //CHECK#4
 var /* y = 1;*/ y;
-assert.sameValue(y, undefined, 'The value of `y` is expected to equal `undefined`');
+if (y !== undefined) {
+  $ERROR('#4: var /* y = 1; */ y; y === undefined. Actual: ' + (y));
+}  
 
 /*CHECK#5*/
 /*var x = 1;
 if (x === 1) {
-  Test262Error.thrower('#5: Correct interpretation multi line comments');
+  $ERROR('#5: Correct interpretation multi line comments');
 }
 */
 
 /*CHECK#6*/
-/*var this.y = 1;*/
+/*var this.y = 1;*/ 
 this.y++;
-assert.sameValue(isNaN(y), true, 'isNaN(y) returns true');
+if (isNaN(y) !== true) {
+  $ERROR('#6: /*var this.y = 1;*/ \\n this.y++; y === Not-a-Number. Actual: ' + (y));
+}
 
 //CHECK#7
 var string = "/*var y = 0*/" /* y = 1;*/ 
-assert.sameValue(string, "/*var y = 0*/", 'The value of `string` is "/*var y = 0*/"');
+if (string !== "/*var y = 0*/") {
+$ERROR('#7: var string = "/*var y = 0*/" /* y = 1;*/ string === "//var y = 0"');
+}
 
 //CHECK#8
 var string = "/*var y = 0" /* y = 1;*/ 
-assert.sameValue(string, "/*var y = 0", 'The value of `string` is "/*var y = 0"');
+if (string !== "/*var y = 0") {
+$ERROR('#8: var string = "/*var y = 0" /* y = 1;*/ string === "//var y = 0"');
+}
 
 /*CHECK#9*/
-/** Test262Error.thrower('#9: Correct interpretation multi line comments');
+/** $ERROR('#9: Correct interpretation multi line comments');
 */
 
 /*CHECK#10*/
-/* Test262Error.thrower('#10: Correct interpretation multi line comments');
+/* $ERROR('#10: Correct interpretation multi line comments');
 **/
 
 /*CHECK#11*/
-/****** Test262Error.thrower('#11: Correct interpretation multi line comments');*********
+/****** $ERROR('#11: Correct interpretation multi line comments');*********
 ***********
 *
 

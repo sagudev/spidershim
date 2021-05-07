@@ -9,7 +9,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "FuzzerDefs.h"
-#include "FuzzerPlatform.h"
 
 extern "C" {
 // This function should be defined by the user.

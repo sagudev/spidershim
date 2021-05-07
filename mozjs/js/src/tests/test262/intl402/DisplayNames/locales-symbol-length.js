@@ -6,15 +6,12 @@ esid: sec-Intl.DisplayNames
 description: >
   CanonicalizeLocaleList tries to fetch length from Object.
 info: |
-  Intl.DisplayNames ( locales , options )
+  Intl.DisplayNames ([ locales [ , options ]])
 
   1. If NewTarget is undefined, throw a TypeError exception.
   2. Let displayNames be ? OrdinaryCreateFromConstructor(NewTarget, "%DisplayNamesPrototype%",
     « [[InitializedDisplayNames]], [[Locale]], [[Style]], [[Type]], [[Fallback]], [[Fields]] »).
   3. Let requestedLocales be ? CanonicalizeLocaleList(locales).
-  ...
-  12. Let type be ? GetOption(options, "type", "string", « "language", "region", "script", "currency" », undefined).
-  13. If type is undefined, throw a TypeError exception.
   ...
 
   CanonicalizeLocaleList ( locales )
@@ -32,8 +29,8 @@ locale: [en]
 includes: [compareArray.js]
 ---*/
 
-let calls = [];
-let symbol = Symbol();
+var calls = [];
+var symbol = Symbol();
 
 Symbol.prototype.length = 1;
 
@@ -57,7 +54,7 @@ Object.defineProperty(Symbol.prototype, '0', {
   }
 });
 
-new Intl.DisplayNames(symbol, {type: 'language'});
+new Intl.DisplayNames(symbol);
 
 assert.compareArray(calls, ['length', '0']);
 

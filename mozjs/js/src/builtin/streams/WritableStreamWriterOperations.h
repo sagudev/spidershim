@@ -9,6 +9,8 @@
 #ifndef builtin_streams_WritableStreamWriterOperations_h
 #define builtin_streams_WritableStreamWriterOperations_h
 
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
 #include "js/RootingAPI.h"  // JS::{,Mutable}Handle
 #include "js/Value.h"       // JS::Value
 
@@ -24,26 +26,22 @@ extern JSObject* WritableStreamDefaultWriterAbort(
     JSContext* cx, JS::Handle<WritableStreamDefaultWriter*> unwrappedWriter,
     JS::Handle<JS::Value> reason);
 
-extern PromiseObject* WritableStreamDefaultWriterClose(
+extern JSObject* WritableStreamDefaultWriterClose(
     JSContext* cx, JS::Handle<WritableStreamDefaultWriter*> unwrappedWriter);
 
-extern PromiseObject* WritableStreamDefaultWriterCloseWithErrorPropagation(
-    JSContext* cx, JS::Handle<WritableStreamDefaultWriter*> unwrappedWriter);
-
-[[nodiscard]] extern bool
-WritableStreamDefaultWriterEnsureClosedPromiseRejected(
+extern MOZ_MUST_USE bool WritableStreamDefaultWriterEnsureClosedPromiseRejected(
     JSContext* cx, JS::Handle<WritableStreamDefaultWriter*> unwrappedWriter,
     JS::Handle<JS::Value> error);
 
-[[nodiscard]] extern bool WritableStreamDefaultWriterEnsureReadyPromiseRejected(
+extern MOZ_MUST_USE bool WritableStreamDefaultWriterEnsureReadyPromiseRejected(
     JSContext* cx, JS::Handle<WritableStreamDefaultWriter*> unwrappedWriter,
     JS::Handle<JS::Value> error);
 
-[[nodiscard]] extern bool WritableStreamDefaultWriterGetDesiredSize(
+extern MOZ_MUST_USE bool WritableStreamDefaultWriterGetDesiredSize(
     JSContext* cx, JS::Handle<WritableStreamDefaultWriter*> unwrappedWriter,
     JS::MutableHandle<JS::Value> size);
 
-[[nodiscard]] extern bool WritableStreamDefaultWriterRelease(
+extern MOZ_MUST_USE bool WritableStreamDefaultWriterRelease(
     JSContext* cx, JS::Handle<WritableStreamDefaultWriter*> unwrappedWriter);
 
 extern PromiseObject* WritableStreamDefaultWriterWrite(

@@ -1,3 +1,5 @@
+extern crate crossbeam_utils;
+
 use std::cell::Cell;
 use std::mem;
 

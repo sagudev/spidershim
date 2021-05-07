@@ -67,7 +67,6 @@ class ProfiledThreadData final {
 
   void StreamJSON(const ProfileBuffer& aBuffer, SpliceableJSONWriter& aWriter,
                   const std::string& aProcessName,
-                  const std::string& aETLDplus1,
                   const TimeStamp& aProcessStartTime, double aSinceTime);
 
   const RefPtr<ThreadInfo> Info() const { return mThreadInfo; }
@@ -103,15 +102,14 @@ class ProfiledThreadData final {
   TimeStamp mUnregisterTime;
 };
 
-// Stream all samples and markers from aBuffer with the given aThreadId (or 0
-// for everything, which is assumed to be a single backtrace sample.)
-// Returns the thread id of the output sample(s), or 0 if none was present.
-int StreamSamplesAndMarkers(
-    const char* aName, int aThreadId, const ProfileBuffer& aBuffer,
-    SpliceableJSONWriter& aWriter, const std::string& aProcessName,
-    const std::string& aETLDplus1, const TimeStamp& aProcessStartTime,
-    const TimeStamp& aRegisterTime, const TimeStamp& aUnregisterTime,
-    double aSinceTime, UniqueStacks& aUniqueStacks);
+void StreamSamplesAndMarkers(const char* aName, int aThreadId,
+                             const ProfileBuffer& aBuffer,
+                             SpliceableJSONWriter& aWriter,
+                             const std::string& aProcessName,
+                             const TimeStamp& aProcessStartTime,
+                             const TimeStamp& aRegisterTime,
+                             const TimeStamp& aUnregisterTime,
+                             double aSinceTime, UniqueStacks& aUniqueStacks);
 
 }  // namespace baseprofiler
 }  // namespace mozilla

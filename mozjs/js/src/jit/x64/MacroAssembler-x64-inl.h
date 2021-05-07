@@ -18,8 +18,7 @@ namespace jit {
 // ===============================================================
 
 void MacroAssembler::move64(Imm64 imm, Register64 dest) {
-  // Use mov instead of movq because it has special optimizations for imm == 0.
-  mov(ImmWord(imm.value), dest.reg);
+  movq(ImmWord(imm.value), dest.reg);
 }
 
 void MacroAssembler::move64(Register64 src, Register64 dest) {
@@ -54,10 +53,6 @@ void MacroAssembler::move32To64SignExtend(Register src, Register64 dest) {
   movslq(src, dest.reg);
 }
 
-void MacroAssembler::move32SignExtendToPtr(Register src, Register dest) {
-  movslq(src, dest);
-}
-
 void MacroAssembler::move32ZeroExtendToPtr(Register src, Register dest) {
   movl(src, dest);
 }
@@ -68,11 +63,6 @@ void MacroAssembler::move32ZeroExtendToPtr(Register src, Register dest) {
 void MacroAssembler::load32SignExtendToPtr(const Address& src, Register dest) {
   movslq(Operand(src), dest);
 }
-
-// ===============================================================
-// Logical instructions
-
-void MacroAssembler::notPtr(Register reg) { notq(reg); }
 
 void MacroAssembler::andPtr(Register src, Register dest) { andq(src, dest); }
 
@@ -234,10 +224,6 @@ void MacroAssembler::sub64(Imm64 imm, Register64 dest) {
   subPtr(ImmWord(imm.value), dest.reg);
 }
 
-void MacroAssembler::mulPtr(Register rhs, Register srcDest) {
-  imulq(rhs, srcDest);
-}
-
 void MacroAssembler::mul64(Imm64 imm, const Register64& dest,
                            const Register temp) {
   MOZ_ASSERT(temp == InvalidReg);
@@ -297,25 +283,12 @@ void MacroAssembler::lshiftPtr(Imm32 imm, Register dest) {
   shlq(imm, dest);
 }
 
-void MacroAssembler::lshiftPtr(Register shift, Register srcDest) {
-  if (Assembler::HasBMI2()) {
-    shlxq(srcDest, shift, srcDest);
-    return;
-  }
-  MOZ_ASSERT(shift == rcx);
-  shlq_cl(srcDest);
-}
-
 void MacroAssembler::lshift64(Imm32 imm, Register64 dest) {
   MOZ_ASSERT(0 <= imm.value && imm.value < 64);
   lshiftPtr(imm, dest.reg);
 }
 
 void MacroAssembler::lshift64(Register shift, Register64 srcDest) {
-  if (Assembler::HasBMI2()) {
-    shlxq(srcDest.reg, shift, srcDest.reg);
-    return;
-  }
   MOZ_ASSERT(shift == rcx);
   shlq_cl(srcDest.reg);
 }
@@ -325,24 +298,11 @@ void MacroAssembler::rshiftPtr(Imm32 imm, Register dest) {
   shrq(imm, dest);
 }
 
-void MacroAssembler::rshiftPtr(Register shift, Register srcDest) {
-  if (Assembler::HasBMI2()) {
-    shrxq(srcDest, shift, srcDest);
-    return;
-  }
-  MOZ_ASSERT(shift == rcx);
-  shrq_cl(srcDest);
-}
-
 void MacroAssembler::rshift64(Imm32 imm, Register64 dest) {
   rshiftPtr(imm, dest.reg);
 }
 
 void MacroAssembler::rshift64(Register shift, Register64 srcDest) {
-  if (Assembler::HasBMI2()) {
-    shrxq(srcDest.reg, shift, srcDest.reg);
-    return;
-  }
   MOZ_ASSERT(shift == rcx);
   shrq_cl(srcDest.reg);
 }
@@ -358,10 +318,6 @@ void MacroAssembler::rshift64Arithmetic(Imm32 imm, Register64 dest) {
 }
 
 void MacroAssembler::rshift64Arithmetic(Register shift, Register64 srcDest) {
-  if (Assembler::HasBMI2()) {
-    sarxq(srcDest.reg, shift, srcDest.reg);
-    return;
-  }
   MOZ_ASSERT(shift == rcx);
   sarq_cl(srcDest.reg);
 }
@@ -434,10 +390,8 @@ void MacroAssembler::cmpPtrSet(Condition cond, T1 lhs, T2 rhs, Register dest) {
 // Bit counting functions
 
 void MacroAssembler::clz64(Register64 src, Register dest) {
-  if (AssemblerX86Shared::HasLZCNT()) {
-    lzcntq(src.reg, dest);
-    return;
-  }
+  // On very recent chips (Haswell and newer) there is actually an
+  // LZCNT instruction that does all of this.
 
   Label nonzero;
   bsrq(src.reg, dest);
@@ -448,11 +402,6 @@ void MacroAssembler::clz64(Register64 src, Register dest) {
 }
 
 void MacroAssembler::ctz64(Register64 src, Register dest) {
-  if (AssemblerX86Shared::HasBMI1()) {
-    tzcntq(src.reg, dest);
-    return;
-  }
-
   Label nonzero;
   bsfq(src.reg, dest);
   j(Assembler::NonZero, &nonzero);
@@ -731,13 +680,6 @@ void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs, Register rhs,
   cmovCCq(cond, src, dest);
 }
 
-void MacroAssembler::cmpPtrMovePtr(Condition cond, Register lhs,
-                                   const Address& rhs, Register src,
-                                   Register dest) {
-  cmpPtr(lhs, Operand(rhs));
-  cmovCCq(cond, src, dest);
-}
-
 void MacroAssembler::cmp32MovePtr(Condition cond, Register lhs, Imm32 rhs,
                                   Register src, Register dest) {
   cmp32(lhs, rhs);
@@ -815,52 +757,6 @@ void MacroAssembler::spectreBoundsCheck32(Register index, const Address& length,
   }
 }
 
-void MacroAssembler::spectreBoundsCheckPtr(Register index, Register length,
-                                           Register maybeScratch,
-                                           Label* failure) {
-  MOZ_ASSERT(length != maybeScratch);
-  MOZ_ASSERT(index != maybeScratch);
-
-  ScratchRegisterScope scratch(*this);
-  MOZ_ASSERT(index != scratch);
-  MOZ_ASSERT(length != scratch);
-
-  if (JitOptions.spectreIndexMasking) {
-    movePtr(ImmWord(0), scratch);
-  }
-
-  cmpPtr(index, length);
-  j(Assembler::AboveOrEqual, failure);
-
-  if (JitOptions.spectreIndexMasking) {
-    cmovCCq(Assembler::AboveOrEqual, scratch, index);
-  }
-}
-
-void MacroAssembler::spectreBoundsCheckPtr(Register index,
-                                           const Address& length,
-                                           Register maybeScratch,
-                                           Label* failure) {
-  MOZ_ASSERT(index != length.base);
-  MOZ_ASSERT(length.base != maybeScratch);
-  MOZ_ASSERT(index != maybeScratch);
-
-  ScratchRegisterScope scratch(*this);
-  MOZ_ASSERT(index != scratch);
-  MOZ_ASSERT(length.base != scratch);
-
-  if (JitOptions.spectreIndexMasking) {
-    movePtr(ImmWord(0), scratch);
-  }
-
-  cmpPtr(index, Operand(length));
-  j(Assembler::AboveOrEqual, failure);
-
-  if (JitOptions.spectreIndexMasking) {
-    cmovCCq(Assembler::AboveOrEqual, scratch, index);
-  }
-}
-
 // ========================================================================
 // SIMD.
 //
@@ -875,6 +771,42 @@ void MacroAssembler::anyTrueSimd128(FloatRegister src, Register dest) {
   movl(Imm32(0), dest);
   vptest(src, src);
   cmovCCl(NonZero, one, dest);
+}
+
+// Integer Multiply
+
+void MacroAssembler::mulInt64x2(FloatRegister rhs, FloatRegister lhsDest,
+                                Register64 temp) {
+  ScratchRegisterScope t1(*this);
+  Register t2 = temp.reg;
+  vpextrq(0, lhsDest, t1);
+  vpextrq(0, rhs, t2);
+  imulq(t2, t1);
+  vpinsrq(0, t1, lhsDest, lhsDest);
+  vpextrq(1, lhsDest, t1);
+  vpextrq(1, rhs, t2);
+  imulq(t2, t1);
+  vpinsrq(1, t1, lhsDest, lhsDest);
+}
+
+// Right shift by scalar
+
+void MacroAssembler::rightShiftInt64x2(Register rhs, FloatRegister lhsDest) {
+  ScratchRegisterScope scratch(*this);
+
+  MOZ_ASSERT(rhs == rcx);  // We need CL
+
+  vpextrq(0, lhsDest, scratch);
+  sarq_cl(scratch);
+  vpinsrq(0, scratch, lhsDest, lhsDest);
+  vpextrq(1, lhsDest, scratch);
+  sarq_cl(scratch);
+  vpinsrq(1, scratch, lhsDest, lhsDest);
+}
+
+void MacroAssembler::rightShiftInt64x2(Imm32 count, FloatRegister src,
+                                       FloatRegister dest) {
+  MacroAssemblerX64::rightShiftInt64x2(count, src, dest);
 }
 
 // Extract lane as scalar

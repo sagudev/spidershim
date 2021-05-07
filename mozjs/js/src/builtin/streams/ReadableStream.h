@@ -10,6 +10,7 @@
 #define builtin_streams_ReadableStream_h
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT{,_IF}
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
 #include <stdint.h>  // uint32_t
 
@@ -114,7 +115,7 @@ class ReadableStream : public NativeObject {
 
   bool locked() const;
 
-  [[nodiscard]] static ReadableStream* create(
+  static MOZ_MUST_USE ReadableStream* create(
       JSContext* cx, void* nsISupportsObject_alreadyAddreffed = nullptr,
       JS::Handle<JSObject*> proto = nullptr);
   static ReadableStream* createExternalSourceStream(
@@ -129,7 +130,7 @@ class ReadableStream : public NativeObject {
   static const JSClass protoClass_;
 };
 
-[[nodiscard]] extern bool SetUpExternalReadableByteStreamController(
+extern MOZ_MUST_USE bool SetUpExternalReadableByteStreamController(
     JSContext* cx, JS::Handle<ReadableStream*> stream,
     JS::ReadableStreamUnderlyingSource* source);
 

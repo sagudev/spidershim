@@ -11,6 +11,8 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/Casting.h"
+#include "mozilla/Compiler.h"
+#include "mozilla/EndianUtils.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Maybe.h"
@@ -20,9 +22,9 @@
 #include "js-config.h"
 #include "jstypes.h"
 
-#include "js/HeapAPI.h"
+#include "js/GCAPI.h"
 #include "js/RootingAPI.h"
-#include "js/TypeDecls.h"
+#include "js/Utility.h"
 
 namespace JS {
 class JS_PUBLIC_API Value;
@@ -245,6 +247,9 @@ enum JSWhyMagic {
   /** standard constructors are not created for off-thread parsing. */
   JS_OFF_THREAD_CONSTRUCTOR,
 
+  /** used in jit::TrySkipAwait */
+  JS_CANNOT_SKIP_AWAIT,
+
   /** for local use */
   JS_GENERIC_MAGIC,
 
@@ -256,15 +261,6 @@ enum JSWhyMagic {
    * as the |chunk| value within each of them.
    */
   JS_WRITABLESTREAM_CLOSE_RECORD,
-
-  /**
-   * The ReadableStream pipe-to operation concludes with a "finalize" operation
-   * that accepts an optional |error| argument.  In certain cases that optional
-   * |error| must be stored in a handler function, for use after a promise has
-   * settled.  We represent the argument not being provided, in those cases,
-   * using this magic value.
-   */
-  JS_READABLESTREAM_PIPETO_FINALIZE_WITHOUT_ERROR,
 
   JS_WHY_MAGIC_COUNT
 };
@@ -516,14 +512,13 @@ class alignas(8) Value {
     MOZ_ASSERT(magicUint32() == payload);
   }
 
-  void setNumber(float f) {
-    int32_t i;
-    if (mozilla::NumberIsInt32(f, &i)) {
-      setInt32(i);
+  void setNumber(uint32_t ui) {
+    if (ui > JSVAL_INT_MAX) {
+      setDouble((double)ui);
       return;
     }
 
-    setDouble(double(f));
+    setInt32((int32_t)ui);
   }
 
   void setNumber(double d) {
@@ -534,34 +529,6 @@ class alignas(8) Value {
     }
 
     setDouble(d);
-  }
-
-  template <typename T>
-  void setNumber(const T t) {
-    static_assert(std::is_integral<T>::value, "must be integral type");
-    MOZ_ASSERT(isNumberRepresentable(t), "value creation would be lossy");
-
-    if constexpr (std::numeric_limits<T>::is_signed) {
-      if constexpr (sizeof(t) <= sizeof(int32_t)) {
-        setInt32(int32_t(t));
-      } else {
-        if (JSVAL_INT_MIN <= t && t <= JSVAL_INT_MAX) {
-          setInt32(int32_t(t));
-        } else {
-          setDouble(double(t));
-        }
-      }
-    } else {
-      if constexpr (sizeof(t) <= sizeof(uint16_t)) {
-        setInt32(int32_t(t));
-      } else {
-        if (t <= JSVAL_INT_MAX) {
-          setInt32(int32_t(t));
-        } else {
-          setDouble(double(t));
-        }
-      }
-    }
   }
 
   void setObjectOrNull(JSObject* arg) {
@@ -931,7 +898,7 @@ static MOZ_ALWAYS_INLINE void ExposeValueToActiveJS(const Value& v) {
   MOZ_ASSERT(!js::gc::EdgeNeedsSweepUnbarrieredSlow(&tmp));
 #endif
   if (v.isGCThing()) {
-    js::gc::ExposeGCThingToActiveJS(v.toGCCellPtr());
+    js::gc::ExposeGCThingToActiveJS(GCCellPtr(v));
   }
 }
 
@@ -1025,16 +992,71 @@ static inline Value MagicValueUint32(uint32_t payload) {
   return v;
 }
 
+static inline Value NumberValue(float f) {
+  Value v;
+  v.setNumber(f);
+  return v;
+}
+
+static inline Value NumberValue(double dbl) {
+  Value v;
+  v.setNumber(dbl);
+  return v;
+}
+
+static inline Value NumberValue(int8_t i) { return Int32Value(i); }
+
+static inline Value NumberValue(uint8_t i) { return Int32Value(i); }
+
+static inline Value NumberValue(int16_t i) { return Int32Value(i); }
+
+static inline Value NumberValue(uint16_t i) { return Int32Value(i); }
+
+static inline Value NumberValue(int32_t i) { return Int32Value(i); }
+
 static constexpr Value NumberValue(uint32_t i) {
   return i <= JSVAL_INT_MAX ? Int32Value(int32_t(i))
                             : Value::fromDouble(double(i));
 }
 
+namespace detail {
+
+template <bool Signed>
+class MakeNumberValue {
+ public:
+  template <typename T>
+  static inline Value create(const T t) {
+    Value v;
+    if (JSVAL_INT_MIN <= t && t <= JSVAL_INT_MAX) {
+      v.setInt32(int32_t(t));
+    } else {
+      v.setDouble(double(t));
+    }
+    return v;
+  }
+};
+
+template <>
+class MakeNumberValue<false> {
+ public:
+  template <typename T>
+  static inline Value create(const T t) {
+    Value v;
+    if (t <= JSVAL_INT_MAX) {
+      v.setInt32(int32_t(t));
+    } else {
+      v.setDouble(double(t));
+    }
+    return v;
+  }
+};
+
+}  // namespace detail
+
 template <typename T>
 static inline Value NumberValue(const T t) {
-  Value v;
-  v.setNumber(t);
-  return v;
+  MOZ_ASSERT(Value::isNumberRepresentable(t), "value creation would be lossy");
+  return detail::MakeNumberValue<std::numeric_limits<T>::is_signed>::create(t);
 }
 
 static inline Value ObjectOrNullValue(JSObject* obj) {
@@ -1047,10 +1069,6 @@ static inline Value PrivateValue(void* ptr) {
   Value v;
   v.setPrivate(ptr);
   return v;
-}
-
-static inline Value PrivateValue(uintptr_t ptr) {
-  return PrivateValue(reinterpret_cast<void*>(ptr));
 }
 
 static inline Value PrivateUint32Value(uint32_t ui) {
@@ -1163,7 +1181,6 @@ class WrappedPtrOperations<JS::Value, Wrapper> {
   JS::BigInt* toBigInt() const { return value().toBigInt(); }
   JSObject& toObject() const { return value().toObject(); }
   JSObject* toObjectOrNull() const { return value().toObjectOrNull(); }
-  JS::GCCellPtr toGCCellPtr() const { return value().toGCCellPtr(); }
   gc::Cell* toGCThing() const { return value().toGCThing(); }
   JS::TraceKind traceKind() const { return value().traceKind(); }
   void* toPrivate() const { return value().toPrivate(); }
@@ -1203,10 +1220,8 @@ class MutableWrappedPtrOperations<JS::Value, Wrapper>
   void setInfinity() { set(JS::InfinityValue()); }
   void setBoolean(bool b) { set(JS::BooleanValue(b)); }
   void setMagic(JSWhyMagic why) { set(JS::MagicValue(why)); }
-  template <typename T>
-  void setNumber(T t) {
-    set(JS::NumberValue(t));
-  }
+  void setNumber(uint32_t ui) { set(JS::NumberValue(ui)); }
+  void setNumber(double d) { set(JS::NumberValue(d)); }
   void setString(JSString* str) { set(JS::StringValue(str)); }
   void setSymbol(JS::Symbol* sym) { set(JS::SymbolValue(sym)); }
   void setBigInt(JS::BigInt* bi) { set(JS::BigIntValue(bi)); }
@@ -1225,10 +1240,29 @@ class MutableWrappedPtrOperations<JS::Value, Wrapper>
  */
 template <typename Wrapper>
 class HeapBase<JS::Value, Wrapper>
-    : public MutableWrappedPtrOperations<JS::Value, Wrapper> {};
+    : public MutableWrappedPtrOperations<JS::Value, Wrapper> {
+ public:
+  void setMagic(JSWhyMagic why) { this->set(JS::MagicValueUint32(why)); }
 
-MOZ_HAVE_NORETURN MOZ_COLD MOZ_NEVER_INLINE void ReportBadValueTypeAndCrash(
-    const JS::Value& val);
+  void setNumber(uint32_t ui) {
+    if (ui > JSVAL_INT_MAX) {
+      this->setDouble((double)ui);
+      return;
+    }
+
+    this->setInt32((int32_t)ui);
+  }
+
+  void setNumber(double d) {
+    int32_t i;
+    if (mozilla::NumberIsInt32(d, &i)) {
+      this->setInt32(i);
+      return;
+    }
+
+    this->setDouble(d);
+  }
+};
 
 // If the Value is a GC pointer type, call |f| with the pointer cast to that
 // type and return the result wrapped in a Maybe, otherwise return None().
@@ -1271,7 +1305,7 @@ auto MapGCThingTyped(const JS::Value& val, F&& f) {
     }
   }
 
-  ReportBadValueTypeAndCrash(val);
+  MOZ_CRASH("no missing return");
 }
 
 // If the Value is a GC pointer type, call |f| with the pointer cast to that

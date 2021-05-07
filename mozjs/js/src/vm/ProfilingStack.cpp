@@ -7,7 +7,6 @@
 #include "js/ProfilingStack.h"
 
 #include "mozilla/IntegerRange.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
 
@@ -26,19 +25,11 @@ ProfilingStack::~ProfilingStack() {
 
 void ProfilingStack::ensureCapacitySlow() {
   MOZ_ASSERT(stackPointer >= capacity);
-  const uint32_t kInitialCapacity = 4096 / sizeof(ProfilingStackFrame);
+  const uint32_t kInitialCapacity = 128;
 
   uint32_t sp = stackPointer;
-
-  uint32_t newCapacity;
-  if (!capacity) {
-    newCapacity = kInitialCapacity;
-  } else {
-    size_t memoryGoal =
-        mozilla::RoundUpPow2(capacity * 2 * sizeof(ProfilingStackFrame));
-    newCapacity = memoryGoal / sizeof(ProfilingStackFrame);
-  }
-  newCapacity = std::max(sp + 1, newCapacity);
+  auto newCapacity =
+      std::max(sp + 1, capacity ? capacity * 2 : kInitialCapacity);
 
   auto* newFrames = new js::ProfilingStackFrame[newCapacity];
 

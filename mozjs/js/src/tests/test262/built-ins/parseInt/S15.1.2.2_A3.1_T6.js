@@ -8,16 +8,14 @@ description: Checking for String object
 esid: sec-parseint-string-radix
 ---*/
 
-assert.sameValue(
-  parseInt("11", new String("2")),
-  parseInt("11", 2),
-  'parseInt("11", new String("2")) must return the same value returned by parseInt("11", 2)'
-);
+//CHECK#1
+if (parseInt("11", new String("2")) !== parseInt("11", 2)) {
+  $ERROR('#1: parseInt("11", new String("2")) === parseInt("11", 2). Actual: ' + (parseInt("11", new String("2"))));
+}
 
-assert.sameValue(
-  parseInt("11", new String("Infinity")),
-  parseInt("11", Infinity),
-  'parseInt("11", new String("Infinity")) must return the same value returned by parseInt("11", Infinity)'
-);
+//CHECK#2
+if (parseInt("11", new String("Infinity")) !== parseInt("11", Infinity)) {
+  $ERROR('#2: parseInt("11", new String("Infinity")) === parseInt("11", Infinity). Actual: ' + (parseInt("11", new String("Infinity"))));
+}
 
 reportCompare(0, 0);

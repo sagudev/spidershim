@@ -10,7 +10,7 @@ PACKAGE_NAME = "mozproxy"
 PACKAGE_VERSION = "1.0"
 
 # dependencies
-deps = ["redo", "mozinfo", "mozlog >= 6.0"]
+deps = ["redo"]
 
 setup(
     name=PACKAGE_NAME,
@@ -28,12 +28,7 @@ setup(
     url="https://wiki.mozilla.org/Auto-tools/Projects/Mozbase",
     license="MPL",
     packages=["mozproxy"],
-    install_requires=deps,
-    entry_points={
-        "console_scripts": [
-            "mozproxy=mozproxy.driver:main",
-        ],
-    },
     include_package_data=True,
     zip_safe=False,
+    install_requires=deps,
 )

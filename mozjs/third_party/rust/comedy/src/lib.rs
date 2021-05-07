@@ -9,6 +9,8 @@
 //!
 //! See macros for examples.
 
+extern crate failure;
+extern crate failure_derive;
 extern crate winapi;
 
 pub mod com;

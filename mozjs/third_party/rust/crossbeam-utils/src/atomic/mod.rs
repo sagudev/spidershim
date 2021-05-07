@@ -1,7 +1,5 @@
 //! Atomic types.
 
-use cfg_if::cfg_if;
-
 cfg_if! {
     // Use "wide" sequence lock if the pointer width <= 32 for preventing its counter against wrap
     // around.

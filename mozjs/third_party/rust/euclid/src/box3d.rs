@@ -8,12 +8,13 @@
 // except according to those terms.
 
 use super::UnknownUnit;
-use crate::approxord::{max, min};
-use crate::num::*;
-use crate::point::{point3, Point3D};
-use crate::scale::Scale;
-use crate::size::Size3D;
-use crate::vector::Vector3D;
+use scale::Scale;
+use num::*;
+use point::{Point3D, point3};
+use vector::Vector3D;
+use size::Size3D;
+use approxord::{min, max};
+use nonempty::NonEmpty;
 
 use num_traits::NumCast;
 #[cfg(feature = "serde")]
@@ -23,15 +24,13 @@ use core::borrow::Borrow;
 use core::cmp::PartialOrd;
 use core::fmt;
 use core::hash::{Hash, Hasher};
-use core::ops::{Add, Div, DivAssign, Mul, MulAssign, Sub};
+use core::ops::{Add, Div, Mul, Sub};
+
 
 /// An axis aligned 3D box represented by its minimum and maximum coordinates.
 #[repr(C)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(
-    feature = "serde",
-    serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize<'de>"))
-)]
+#[cfg_attr(feature = "serde", serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize<'de>")))]
 pub struct Box3D<T, U> {
     pub min: Point3D<T, U>,
     pub max: Point3D<T, U>,
@@ -52,7 +51,7 @@ impl<T: Clone, U> Clone for Box3D<T, U> {
     }
 }
 
-impl<T: PartialEq, U> PartialEq for Box3D<T, U> {
+impl<T: PartialEq, U> PartialEq<Box3D<T, U>> for Box3D<T, U> {
     fn eq(&self, other: &Self) -> bool {
         self.min.eq(&other.min) && self.max.eq(&other.max)
     }
@@ -62,10 +61,13 @@ impl<T: Eq, U> Eq for Box3D<T, U> {}
 
 impl<T: fmt::Debug, U> fmt::Debug for Box3D<T, U> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("Box3D")
-            .field(&self.min)
-            .field(&self.max)
-            .finish()
+        write!(f, "Box3D({:?}, {:?})", self.min, self.max)
+    }
+}
+
+impl<T: fmt::Display, U> fmt::Display for Box3D<T, U> {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "Box3D({}, {})", self.min, self.max)
     }
 }
 
@@ -73,7 +75,23 @@ impl<T, U> Box3D<T, U> {
     /// Constructor.
     #[inline]
     pub const fn new(min: Point3D<T, U>, max: Point3D<T, U>) -> Self {
-        Box3D { min, max }
+        Box3D {
+            min,
+            max,
+        }
+    }
+}
+
+impl<T, U> Box3D<T, U>
+where
+    T: Copy + Zero + PartialOrd,
+{
+    /// Creates a Box3D of the given size, at offset zero.
+    #[inline]
+    pub fn from_size(size: Size3D<T, U>) -> Self {
+        let zero = Point3D::zero();
+        let point = size.to_vector().to_point();
+        Box3D::from_points(&[zero, point])
     }
 }
 
@@ -90,10 +108,10 @@ where
         self.max.x < self.min.x || self.max.y < self.min.y || self.max.z < self.min.z
     }
 
-    /// Returns true if the size is zero, negative or NaN.
+    /// Returns true if the size is zero or negative.
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        !(self.max.x > self.min.x && self.max.y > self.min.y && self.max.z > self.min.z)
+    pub fn is_empty_or_negative(&self) -> bool {
+        self.max.x <= self.min.x || self.max.y <= self.min.y || self.max.z <= self.min.z
     }
 
     #[inline]
@@ -111,12 +129,9 @@ where
     /// are on the back, right or bottom faces.
     #[inline]
     pub fn contains(&self, other: Point3D<T, U>) -> bool {
-        self.min.x <= other.x
-            && other.x < self.max.x
-            && self.min.y <= other.y
-            && other.y < self.max.y
-            && self.min.z <= other.z
-            && other.z < self.max.z
+        self.min.x <= other.x && other.x < self.max.x
+            && self.min.y <= other.y && other.y < self.max.y
+            && self.min.z <= other.z && other.z < self.max.z
     }
 
     /// Returns `true` if this box3d contains the interior of the other box3d. Always
@@ -124,13 +139,10 @@ where
     /// nonempty but this box3d is empty.
     #[inline]
     pub fn contains_box(&self, other: &Self) -> bool {
-        other.is_empty()
-            || (self.min.x <= other.min.x
-                && other.max.x <= self.max.x
-                && self.min.y <= other.min.y
-                && other.max.y <= self.max.y
-                && self.min.z <= other.min.z
-                && other.max.z <= self.max.z)
+        other.is_empty_or_negative()
+            || (self.min.x <= other.min.x && other.max.x <= self.max.x
+                && self.min.y <= other.min.y && other.max.y <= self.max.y
+                && self.min.z <= other.min.z && other.max.z <= self.max.z)
     }
 }
 
@@ -139,26 +151,24 @@ where
     T: Copy + PartialOrd,
 {
     #[inline]
-    pub fn to_non_empty(&self) -> Option<Self> {
-        if self.is_empty() {
+    pub fn to_non_empty(&self) -> Option<NonEmpty<Self>> {
+        if self.is_empty_or_negative() {
             return None;
         }
 
-        Some(*self)
+        Some(NonEmpty(*self))
     }
 
     #[inline]
-    pub fn intersection(&self, other: &Self) -> Option<Self> {
-        let b = self.intersection_unchecked(other);
-
-        if b.is_empty() {
+    pub fn try_intersection(&self, other: &Self) -> Option<NonEmpty<Self>> {
+        if !self.intersects(other) {
             return None;
         }
 
-        Some(b)
+        Some(NonEmpty(self.intersection(other)))
     }
 
-    pub fn intersection_unchecked(&self, other: &Self) -> Self {
+    pub fn intersection(&self, other: &Self) -> Self {
         let intersection_min = Point3D::new(
             max(self.min.x, other.min.x),
             max(self.min.y, other.min.y),
@@ -171,23 +181,9 @@ where
             min(self.max.z, other.max.z),
         );
 
-        Box3D::new(intersection_min, intersection_max)
-    }
-
-    /// Returns the smallest box containing both of the provided boxes.
-    #[inline]
-    pub fn union(&self, other: &Self) -> Self {
         Box3D::new(
-            Point3D::new(
-                min(self.min.x, other.min.x),
-                min(self.min.y, other.min.y),
-                min(self.min.z, other.min.z),
-            ),
-            Point3D::new(
-                max(self.max.x, other.max.x),
-                max(self.max.y, other.max.y),
-                max(self.max.z, other.max.z),
-            ),
+            intersection_min,
+            intersection_max,
         )
     }
 }
@@ -212,7 +208,7 @@ where
     T: Copy + Sub<T, Output = T>,
 {
     #[inline]
-    pub fn size(&self) -> Size3D<T, U> {
+    pub fn size(&self)-> Size3D<T, U> {
         Size3D::new(
             self.max.x - self.min.x,
             self.max.y - self.min.y,
@@ -238,7 +234,7 @@ where
 
 impl<T, U> Box3D<T, U>
 where
-    T: Copy + Add<T, Output = T> + Sub<T, Output = T>,
+    T: Copy + PartialEq + Add<T, Output = T> + Sub<T, Output = T>,
 {
     /// Inflates the box by the specified sizes on each side respectively.
     #[inline]
@@ -255,14 +251,6 @@ impl<T, U> Box3D<T, U>
 where
     T: Copy + Zero + PartialOrd,
 {
-    /// Creates a Box3D of the given size, at offset zero.
-    #[inline]
-    pub fn from_size(size: Size3D<T, U>) -> Self {
-        let zero = Point3D::zero();
-        let point = size.to_vector().to_point();
-        Box3D::from_points(&[zero, point])
-    }
-
     /// Returns the smallest box containing all of the provided points.
     pub fn from_points<I>(points: I) -> Self
     where
@@ -272,7 +260,7 @@ where
         let mut points = points.into_iter();
 
         let (mut min_x, mut min_y, mut min_z) = match points.next() {
-            Some(first) => first.borrow().to_tuple(),
+            Some(first) => (first.borrow().x, first.borrow().y, first.borrow().z),
             None => return Box3D::zero(),
         };
         let (mut max_x, mut max_y, mut max_z) = (min_x, min_y, min_z);
@@ -311,9 +299,15 @@ where
     T: Copy + One + Add<Output = T> + Sub<Output = T> + Mul<Output = T>,
 {
     /// Linearly interpolate between this box3d and another box3d.
+    ///
+    /// When `t` is `One::one()`, returned value equals to `other`,
+    /// otherwise equals to `self`.
     #[inline]
     pub fn lerp(&self, other: Self, t: T) -> Self {
-        Self::new(self.min.lerp(other.min, t), self.max.lerp(other.max, t))
+        Self::new(
+            self.min.lerp(other.min, t),
+            self.max.lerp(other.max, t),
+        )
     }
 }
 
@@ -324,6 +318,43 @@ where
     pub fn center(&self) -> Point3D<T, U> {
         let two = T::one() + T::one();
         (self.min + self.max.to_vector()) / two
+    }
+}
+
+impl<T, U> Box3D<T, U>
+where
+    T: Copy + PartialOrd + Add<T, Output = T> + Sub<T, Output = T> + Zero,
+{
+    #[inline]
+    pub fn union(&self, other: &Self) -> Self {
+        Box3D::new(
+            Point3D::new(
+                min(self.min.x, other.min.x),
+                min(self.min.y, other.min.y),
+                min(self.min.z, other.min.z),
+            ),
+            Point3D::new(
+                max(self.max.x, other.max.x),
+                max(self.max.y, other.max.y),
+                max(self.max.z, other.max.z),
+            ),
+        )
+    }
+}
+
+impl<T, U> Box3D<T, U>
+where
+    T: Copy,
+{
+    #[inline]
+    pub fn scale<S: Copy>(&self, x: S, y: S, z: S) -> Self
+    where
+        T: Mul<S, Output = T>
+    {
+        Box3D::new(
+            Point3D::new(self.min.x * x, self.min.y * y, self.min.z * z),
+            Point3D::new(self.max.x * x, self.max.y * y, self.max.z * z),
+        )
     }
 }
 
@@ -366,71 +397,58 @@ where
     }
 }
 
-impl<T: Copy + Mul, U> Mul<T> for Box3D<T, U> {
-    type Output = Box3D<T::Output, U>;
-
+impl<T, U> Box3D<T, U>
+where
+    T: PartialEq,
+{
+    /// Returns true if the volume is zero.
     #[inline]
-    fn mul(self, scale: T) -> Self::Output {
+    pub fn is_empty(&self) -> bool {
+        self.min.x == self.max.x || self.min.y == self.max.y || self.min.z == self.max.z
+    }
+}
+
+impl<T, U> Mul<T> for Box3D<T, U>
+where
+    T: Copy + Mul<T, Output = T>,
+{
+    type Output = Self;
+    #[inline]
+    fn mul(self, scale: T) -> Self {
         Box3D::new(self.min * scale, self.max * scale)
     }
 }
 
-impl<T: Copy + MulAssign, U> MulAssign<T> for Box3D<T, U> {
+impl<T, U> Div<T> for Box3D<T, U>
+where
+    T: Copy + Div<T, Output = T>,
+{
+    type Output = Self;
     #[inline]
-    fn mul_assign(&mut self, scale: T) {
-        self.min *= scale;
-        self.max *= scale;
+    fn div(self, scale: T) -> Self {
+        Box3D::new(self.min / scale, self.max / scale)
     }
 }
 
-impl<T: Copy + Div, U> Div<T> for Box3D<T, U> {
-    type Output = Box3D<T::Output, U>;
-
+impl<T, U1, U2> Mul<Scale<T, U1, U2>> for Box3D<T, U1>
+where
+    T: Copy + Mul<T, Output = T>,
+{
+    type Output = Box3D<T, U2>;
     #[inline]
-    fn div(self, scale: T) -> Self::Output {
-        Box3D::new(self.min / scale.clone(), self.max / scale)
+    fn mul(self, scale: Scale<T, U1, U2>) -> Box3D<T, U2> {
+        Box3D::new(self.min * scale, self.max * scale)
     }
 }
 
-impl<T: Copy + DivAssign, U> DivAssign<T> for Box3D<T, U> {
+impl<T, U1, U2> Div<Scale<T, U1, U2>> for Box3D<T, U2>
+where
+    T: Copy + Div<T, Output = T>,
+{
+    type Output = Box3D<T, U1>;
     #[inline]
-    fn div_assign(&mut self, scale: T) {
-        self.min /= scale;
-        self.max /= scale;
-    }
-}
-
-impl<T: Copy + Mul, U1, U2> Mul<Scale<T, U1, U2>> for Box3D<T, U1> {
-    type Output = Box3D<T::Output, U2>;
-
-    #[inline]
-    fn mul(self, scale: Scale<T, U1, U2>) -> Self::Output {
-        Box3D::new(self.min * scale.clone(), self.max * scale)
-    }
-}
-
-impl<T: Copy + MulAssign, U> MulAssign<Scale<T, U, U>> for Box3D<T, U> {
-    #[inline]
-    fn mul_assign(&mut self, scale: Scale<T, U, U>) {
-        self.min *= scale.clone();
-        self.max *= scale;
-    }
-}
-
-impl<T: Copy + Div, U1, U2> Div<Scale<T, U1, U2>> for Box3D<T, U2> {
-    type Output = Box3D<T::Output, U1>;
-
-    #[inline]
-    fn div(self, scale: Scale<T, U1, U2>) -> Self::Output {
-        Box3D::new(self.min / scale.clone(), self.max / scale)
-    }
-}
-
-impl<T: Copy + DivAssign, U> DivAssign<Scale<T, U, U>> for Box3D<T, U> {
-    #[inline]
-    fn div_assign(&mut self, scale: Scale<T, U, U>) {
-        self.min /= scale.clone();
-        self.max /= scale;
+    fn div(self, scale: Scale<T, U1, U2>) -> Box3D<T, U1> {
+        Box3D::new(self.min / scale, self.max / scale)
     }
 }
 
@@ -461,20 +479,12 @@ where
     pub fn cast_unit<V>(&self) -> Box3D<T, V> {
         Box3D::new(self.min.cast_unit(), self.max.cast_unit())
     }
-
-    #[inline]
-    pub fn scale<S: Copy>(&self, x: S, y: S, z: S) -> Self
-    where
-        T: Mul<S, Output = T>,
-    {
-        Box3D::new(
-            Point3D::new(self.min.x * x, self.min.y * y, self.min.z * z),
-            Point3D::new(self.max.x * x, self.max.y * y, self.max.z * z),
-        )
-    }
 }
 
-impl<T: NumCast + Copy, U> Box3D<T, U> {
+impl<T, U> Box3D<T, U>
+where
+    T: NumCast + Copy,
+{
     /// Cast from one numeric representation to another, preserving the units.
     ///
     /// When casting from floating point to integer coordinates, the decimals are truncated
@@ -482,7 +492,10 @@ impl<T: NumCast + Copy, U> Box3D<T, U> {
     /// geometrically. Consider using round(), round_in or round_out() before casting.
     #[inline]
     pub fn cast<NewT: NumCast>(&self) -> Box3D<NewT, U> {
-        Box3D::new(self.min.cast(), self.max.cast())
+        Box3D::new(
+            self.min.cast(),
+            self.max.cast(),
+        )
     }
 
     /// Fallible cast from one numeric representation to another, preserving the units.
@@ -496,9 +509,54 @@ impl<T: NumCast + Copy, U> Box3D<T, U> {
             _ => None,
         }
     }
+}
 
-    // Convenience functions for common casts
+impl<T, U> Box3D<T, U>
+where
+    T: Round,
+{
+    /// Return a box3d with edges rounded to integer coordinates, such that
+    /// the returned box3d has the same set of pixel centers as the original
+    /// one.
+    /// Values equal to 0.5 round up.
+    /// Suitable for most places where integral device coordinates
+    /// are needed, but note that any translation should be applied first to
+    /// avoid pixel rounding errors.
+    /// Note that this is *not* rounding to nearest integer if the values are negative.
+    /// They are always rounding as floor(n + 0.5).
+    #[must_use]
+    pub fn round(&self) -> Self {
+        Box3D::new(self.min.round(), self.max.round())
+    }
+}
 
+impl<T, U> Box3D<T, U>
+where
+    T: Floor + Ceil,
+{
+    /// Return a box3d with faces/edges rounded to integer coordinates, such that
+    /// the original box3d contains the resulting box3d.
+    #[must_use]
+    pub fn round_in(&self) -> Self {
+        Box3D {
+            min: self.min.ceil(),
+            max: self.max.floor(),
+        }
+    }
+
+    /// Return a box3d with faces/edges rounded to integer coordinates, such that
+    /// the original box3d is contained in the resulting box3d.
+    #[must_use]
+    pub fn round_out(&self) -> Self {
+        Box3D {
+            min: self.min.floor(),
+            max: self.max.ceil(),
+        }
+    }
+}
+
+// Convenience functions for common casts
+impl<T: NumCast + Copy, U> Box3D<T, U> {
     /// Cast into an `f32` box3d.
     #[inline]
     pub fn to_f32(&self) -> Box3D<f32, U> {
@@ -552,50 +610,6 @@ impl<T: NumCast + Copy, U> Box3D<T, U> {
     }
 }
 
-impl<T, U> Box3D<T, U>
-where
-    T: Round,
-{
-    /// Return a box3d with edges rounded to integer coordinates, such that
-    /// the returned box3d has the same set of pixel centers as the original
-    /// one.
-    /// Values equal to 0.5 round up.
-    /// Suitable for most places where integral device coordinates
-    /// are needed, but note that any translation should be applied first to
-    /// avoid pixel rounding errors.
-    /// Note that this is *not* rounding to nearest integer if the values are negative.
-    /// They are always rounding as floor(n + 0.5).
-    #[must_use]
-    pub fn round(&self) -> Self {
-        Box3D::new(self.min.round(), self.max.round())
-    }
-}
-
-impl<T, U> Box3D<T, U>
-where
-    T: Floor + Ceil,
-{
-    /// Return a box3d with faces/edges rounded to integer coordinates, such that
-    /// the original box3d contains the resulting box3d.
-    #[must_use]
-    pub fn round_in(&self) -> Self {
-        Box3D {
-            min: self.min.ceil(),
-            max: self.max.floor(),
-        }
-    }
-
-    /// Return a box3d with faces/edges rounded to integer coordinates, such that
-    /// the original box3d is contained in the resulting box3d.
-    #[must_use]
-    pub fn round_out(&self) -> Self {
-        Box3D {
-            min: self.min.floor(),
-            max: self.max.ceil(),
-        }
-    }
-}
-
 impl<T, U> From<Size3D<T, U>> for Box3D<T, U>
 where
     T: Copy + Zero + PartialOrd,
@@ -606,24 +620,14 @@ where
 }
 
 /// Shorthand for `Box3D::new(Point3D::new(x1, y1, z1), Point3D::new(x2, y2, z2))`.
-pub fn box3d<T: Copy, U>(
-    min_x: T,
-    min_y: T,
-    min_z: T,
-    max_x: T,
-    max_y: T,
-    max_z: T,
-) -> Box3D<T, U> {
-    Box3D::new(
-        Point3D::new(min_x, min_y, min_z),
-        Point3D::new(max_x, max_y, max_z),
-    )
+pub fn box3d<T: Copy, U>(min_x: T, min_y: T, min_z: T, max_x: T, max_y: T, max_z: T) -> Box3D<T, U> {
+    Box3D::new(Point3D::new(min_x, min_y, min_z), Point3D::new(max_x, max_y, max_z))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::default::{Box3D, Point3D};
-    use crate::{point3, size3, vec3};
+    use {point3, size3, vec3};
+    use default::{Box3D, Point3D};
 
     #[test]
     fn test_new() {
@@ -692,8 +696,7 @@ mod tests {
 
     #[test]
     fn test_round_in() {
-        let b =
-            Box3D::from_points(&[point3(-25.5, -40.4, -70.9), point3(60.3, 36.5, 89.8)]).round_in();
+        let b = Box3D::from_points(&[point3(-25.5, -40.4, -70.9), point3(60.3, 36.5, 89.8)]).round_in();
         assert!(b.min.x == -25.0);
         assert!(b.min.y == -40.0);
         assert!(b.min.z == -70.0);
@@ -704,8 +707,7 @@ mod tests {
 
     #[test]
     fn test_round_out() {
-        let b = Box3D::from_points(&[point3(-25.5, -40.4, -70.9), point3(60.3, 36.5, 89.8)])
-            .round_out();
+        let b = Box3D::from_points(&[point3(-25.5, -40.4, -70.9), point3(60.3, 36.5, 89.8)]).round_out();
         assert!(b.min.x == -26.0);
         assert!(b.min.y == -41.0);
         assert!(b.min.z == -71.0);
@@ -716,9 +718,8 @@ mod tests {
 
     #[test]
     fn test_round() {
-        let b =
-            Box3D::from_points(&[point3(-25.5, -40.4, -70.9), point3(60.3, 36.5, 89.8)]).round();
-        assert!(b.min.x == -25.0);
+        let b = Box3D::from_points(&[point3(-25.5, -40.4, -70.9), point3(60.3, 36.5, 89.8)]).round();
+        assert!(b.min.x == -26.0);
         assert!(b.min.y == -40.0);
         assert!(b.min.z == -71.0);
         assert!(b.max.x == 60.0);
@@ -775,10 +776,10 @@ mod tests {
     }
 
     #[test]
-    fn test_intersection_unchecked() {
+    fn test_intersection() {
         let b1 = Box3D::from_points(&[point3(-15.0, -20.0, -20.0), point3(10.0, 20.0, 20.0)]);
         let b2 = Box3D::from_points(&[point3(-10.0, 20.0, 20.0), point3(15.0, -20.0, -20.0)]);
-        let b = b1.intersection_unchecked(&b2);
+        let b = b1.intersection(&b2);
         assert!(b.max.x == 10.0);
         assert!(b.max.y == 20.0);
         assert!(b.max.z == 20.0);
@@ -789,14 +790,14 @@ mod tests {
     }
 
     #[test]
-    fn test_intersection() {
+    fn test_try_intersection() {
         let b1 = Box3D::from_points(&[point3(-15.0, -20.0, -20.0), point3(10.0, 20.0, 20.0)]);
         let b2 = Box3D::from_points(&[point3(-10.0, 20.0, 20.0), point3(15.0, -20.0, -20.0)]);
-        assert!(b1.intersection(&b2).is_some());
+        assert!(b1.try_intersection(&b2).is_some());
 
         let b1 = Box3D::from_points(&[point3(-15.0, -20.0, -20.0), point3(-10.0, 20.0, 20.0)]);
         let b2 = Box3D::from_points(&[point3(10.0, 20.0, 20.0), point3(15.0, -20.0, -20.0)]);
-        assert!(b1.intersection(&b2).is_none());
+        assert!(b1.try_intersection(&b2).is_none());
     }
 
     #[test]
@@ -866,16 +867,5 @@ mod tests {
             let b = Box3D::from_points(&[Point3D::from(coords_neg), Point3D::from(coords_pos)]);
             assert!(b.is_empty());
         }
-    }
-
-    #[test]
-    fn test_nan_empty_or_negative() {
-        use std::f32::NAN;
-        assert!(Box3D { min: point3(NAN, 2.0, 1.0), max: point3(1.0, 3.0, 5.0) }.is_empty());
-        assert!(Box3D { min: point3(0.0, NAN, 1.0), max: point3(1.0, 2.0, 5.0) }.is_empty());
-        assert!(Box3D { min: point3(1.0, -2.0, NAN), max: point3(3.0, 2.0, 5.0) }.is_empty());
-        assert!(Box3D { min: point3(1.0, -2.0, 1.0), max: point3(NAN, 2.0, 5.0) }.is_empty());
-        assert!(Box3D { min: point3(1.0, -2.0, 1.0), max: point3(0.0, NAN, 5.0) }.is_empty());
-        assert!(Box3D { min: point3(1.0, -2.0, 1.0), max: point3(0.0, 1.0, NAN) }.is_empty());
     }
 }

@@ -36,18 +36,13 @@ class LIRGeneratorARM64 : public LIRGeneratorShared {
 
   void lowerUntypedPhiInput(MPhi* phi, uint32_t inputPosition, LBlock* block,
                             size_t lirIndex);
-  void lowerInt64PhiInput(MPhi* phi, uint32_t inputPosition, LBlock* block,
-                          size_t lirIndex) {
-    lowerTypedPhiInput(phi, inputPosition, block, lirIndex);
+  void lowerInt64PhiInput(MPhi*, uint32_t, LBlock*, size_t) {
+    MOZ_CRASH("NYI");
   }
-  void defineInt64Phi(MPhi* phi, size_t lirIndex) {
-    defineTypedPhi(phi, lirIndex);
-  }
+  void defineInt64Phi(MPhi*, size_t) { MOZ_CRASH("NYI"); }
   void lowerForShift(LInstructionHelper<1, 2, 0>* ins, MDefinition* mir,
                      MDefinition* lhs, MDefinition* rhs);
   void lowerUrshD(MUrsh* mir);
-
-  void lowerPowOfTwoI(MPow* mir);
 
   void lowerForALU(LInstructionHelper<1, 1, 0>* ins, MDefinition* mir,
                    MDefinition* input);
@@ -64,10 +59,6 @@ class LIRGeneratorARM64 : public LIRGeneratorShared {
       LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, Temps>* ins,
       MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
 
-  void lowerForCompareI64AndBranch(MTest* mir, MCompare* comp, JSOp op,
-                                   MDefinition* left, MDefinition* right,
-                                   MBasicBlock* ifTrue, MBasicBlock* ifFalse);
-
   void lowerForFPU(LInstructionHelper<1, 1, 0>* ins, MDefinition* mir,
                    MDefinition* input);
 
@@ -75,32 +66,17 @@ class LIRGeneratorARM64 : public LIRGeneratorShared {
   void lowerForFPU(LInstructionHelper<1, 2, Temps>* ins, MDefinition* mir,
                    MDefinition* lhs, MDefinition* rhs);
 
-  void lowerBuiltinInt64ToFloatingPoint(MBuiltinInt64ToFloatingPoint* ins);
-  void lowerWasmBuiltinTruncateToInt64(MWasmBuiltinTruncateToInt64* ins);
   void lowerForBitAndAndBranch(LBitAndAndBranch* baab, MInstruction* mir,
                                MDefinition* lhs, MDefinition* rhs);
-  void lowerWasmBuiltinTruncateToInt32(MWasmBuiltinTruncateToInt32* ins);
   void lowerTruncateDToInt32(MTruncateToInt32* ins);
   void lowerTruncateFToInt32(MTruncateToInt32* ins);
   void lowerDivI(MDiv* div);
   void lowerModI(MMod* mod);
   void lowerDivI64(MDiv* div);
-  void lowerWasmBuiltinDivI64(MWasmBuiltinDivI64* div);
   void lowerModI64(MMod* mod);
-  void lowerWasmBuiltinModI64(MWasmBuiltinModI64* mod);
-  void lowerUDivI64(MDiv* div);
-  void lowerUModI64(MMod* mod);
   void lowerMulI(MMul* mul, MDefinition* lhs, MDefinition* rhs);
   void lowerUDiv(MDiv* div);
   void lowerUMod(MMod* mod);
-
-  void lowerBigIntLsh(MBigIntLsh* ins);
-  void lowerBigIntRsh(MBigIntRsh* ins);
-  void lowerBigIntDiv(MBigIntDiv* ins);
-  void lowerBigIntMod(MBigIntMod* ins);
-
-  void lowerAtomicLoad64(MLoadUnboxedScalar* ins);
-  void lowerAtomicStore64(MStoreUnboxedScalar* ins);
 
   LTableSwitchV* newLTableSwitchV(MTableSwitch* ins);
   LTableSwitch* newLTableSwitch(const LAllocation& in,

@@ -9,6 +9,8 @@
 #ifndef builtin_streams_ReadableStreamOperations_h
 #define builtin_streams_ReadableStreamOperations_h
 
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
 #include "js/RootingAPI.h"  // JS::Handle
 #include "js/Value.h"       // JS::Value
 
@@ -22,20 +24,20 @@ class ReadableStreamDefaultController;
 class TeeState;
 class WritableStream;
 
-[[nodiscard]] extern PromiseObject* ReadableStreamTee_Pull(
+extern MOZ_MUST_USE PromiseObject* ReadableStreamTee_Pull(
     JSContext* cx, JS::Handle<TeeState*> unwrappedTeeState);
 
-[[nodiscard]] extern JSObject* ReadableStreamTee_Cancel(
+extern MOZ_MUST_USE JSObject* ReadableStreamTee_Cancel(
     JSContext* cx, JS::Handle<TeeState*> unwrappedTeeState,
     JS::Handle<ReadableStreamDefaultController*> unwrappedBranch,
     JS::Handle<JS::Value> reason);
 
-[[nodiscard]] extern bool ReadableStreamTee(
+extern MOZ_MUST_USE bool ReadableStreamTee(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedStream,
     bool cloneForBranch2, JS::MutableHandle<ReadableStream*> branch1Stream,
     JS::MutableHandle<ReadableStream*> branch2Stream);
 
-[[nodiscard]] extern PromiseObject* ReadableStreamPipeTo(
+extern MOZ_MUST_USE PromiseObject* ReadableStreamPipeTo(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedSource,
     JS::Handle<WritableStream*> unwrappedDest, bool preventClose,
     bool preventAbort, bool preventCancel, JS::Handle<JSObject*> signal);

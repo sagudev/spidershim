@@ -18,7 +18,7 @@ namespace js {
 
 namespace jit {
 
-enum class ScriptGCThingType { Atom, RegExp, Object, Function, Scope, BigInt };
+enum class ScriptGCThingType { Atom, RegExp, Function, Scope, BigInt };
 
 // Base class for BaselineCompiler and BaselineInterpreterGenerator. The Handler
 // template is a class storing fields/methods that are interpreter or compiler
@@ -87,6 +87,7 @@ class BaselineCodeGen {
   void pushUint16BytecodeOperandArg(Register scratch);
 
   void loadInt32LengthBytecodeOperand(Register dest);
+  void loadInt32IndexBytecodeOperand(ValueOperand dest);
   void loadNumFormalArguments(Register dest);
 
   // Loads the current JSScript* in dest.
@@ -134,69 +135,67 @@ class BaselineCodeGen {
   // debuggee script. ifNotDebuggee (if present) is called to emit code for
   // non-debuggee scripts.
   template <typename F1, typename F2>
-  [[nodiscard]] bool emitDebugInstrumentation(
+  MOZ_MUST_USE bool emitDebugInstrumentation(
       const F1& ifDebuggee, const mozilla::Maybe<F2>& ifNotDebuggee);
   template <typename F>
-  [[nodiscard]] bool emitDebugInstrumentation(const F& ifDebuggee) {
+  MOZ_MUST_USE bool emitDebugInstrumentation(const F& ifDebuggee) {
     return emitDebugInstrumentation(ifDebuggee, mozilla::Maybe<F>());
   }
 
-  bool emitSuspend(JSOp op);
-
   template <typename F>
-  [[nodiscard]] bool emitAfterYieldDebugInstrumentation(const F& ifDebuggee,
-                                                        Register scratch);
+  MOZ_MUST_USE bool emitAfterYieldDebugInstrumentation(const F& ifDebuggee,
+                                                       Register scratch);
 
   // ifSet should be a function emitting code for when the script has |flag|
   // set. ifNotSet emits code for when the flag isn't set.
   template <typename F1, typename F2>
-  [[nodiscard]] bool emitTestScriptFlag(JSScript::ImmutableFlags flag,
-                                        const F1& ifSet, const F2& ifNotSet,
-                                        Register scratch);
+  MOZ_MUST_USE bool emitTestScriptFlag(JSScript::ImmutableFlags flag,
+                                       const F1& ifSet, const F2& ifNotSet,
+                                       Register scratch);
 
   // If |script->hasFlag(flag) == value|, execute the code emitted by |emit|.
   template <typename F>
-  [[nodiscard]] bool emitTestScriptFlag(JSScript::ImmutableFlags flag,
-                                        bool value, const F& emit,
-                                        Register scratch);
+  MOZ_MUST_USE bool emitTestScriptFlag(JSScript::ImmutableFlags flag,
+                                       bool value, const F& emit,
+                                       Register scratch);
   template <typename F>
-  [[nodiscard]] bool emitTestScriptFlag(JSScript::MutableFlags flag, bool value,
-                                        const F& emit, Register scratch);
+  MOZ_MUST_USE bool emitTestScriptFlag(JSScript::MutableFlags flag, bool value,
+                                       const F& emit, Register scratch);
 
-  [[nodiscard]] bool emitEnterGeneratorCode(Register script,
-                                            Register resumeIndex,
-                                            Register scratch);
+  MOZ_MUST_USE bool emitEnterGeneratorCode(Register script,
+                                           Register resumeIndex,
+                                           Register scratch);
 
   void emitInterpJumpToResumeEntry(Register script, Register resumeIndex,
                                    Register scratch);
   void emitJumpToInterpretOpLabel();
 
-  [[nodiscard]] bool emitCheckThis(ValueOperand val, bool reinit = false);
+  MOZ_MUST_USE bool emitCheckThis(ValueOperand val, bool reinit = false);
   void emitLoadReturnValue(ValueOperand val);
   void emitPushNonArrowFunctionNewTarget();
   void emitGetAliasedVar(ValueOperand dest);
 
-  [[nodiscard]] bool emitNextIC();
-  [[nodiscard]] bool emitInterruptCheck();
-  [[nodiscard]] bool emitWarmUpCounterIncrement();
-  [[nodiscard]] bool emitTraceLoggerResume(Register script,
-                                           AllocatableGeneralRegisterSet& regs);
+  MOZ_MUST_USE bool emitNextIC();
+  MOZ_MUST_USE bool emitInterruptCheck();
+  MOZ_MUST_USE bool emitWarmUpCounterIncrement();
+  MOZ_MUST_USE bool emitTraceLoggerResume(Register script,
+                                          AllocatableGeneralRegisterSet& regs);
 
 #define EMIT_OP(op, ...) bool emit_##op();
   FOR_EACH_OPCODE(EMIT_OP)
 #undef EMIT_OP
 
   // JSOp::Pos, JSOp::Neg, JSOp::BitNot, JSOp::Inc, JSOp::Dec, JSOp::ToNumeric.
-  [[nodiscard]] bool emitUnaryArith();
+  MOZ_MUST_USE bool emitUnaryArith();
 
   // JSOp::BitXor, JSOp::Lsh, JSOp::Add etc.
-  [[nodiscard]] bool emitBinaryArith();
+  MOZ_MUST_USE bool emitBinaryArith();
 
   // Handles JSOp::Lt, JSOp::Gt, and friends
-  [[nodiscard]] bool emitCompare();
+  MOZ_MUST_USE bool emitCompare();
 
-  // Handles JSOp::NewObject and JSOp::NewInit.
-  [[nodiscard]] bool emitNewObject();
+  // Handles JSOp::NewObject, JSOp::NewObjectWithGroup, and JSOp::NewInit.
+  MOZ_MUST_USE bool emitNewObject();
 
   // For a JOF_JUMP op, jumps to the op's jump target.
   void emitJump();
@@ -214,60 +213,62 @@ class BaselineCodeGen {
   // firstResumeIndex stored in JSOp::TableSwitch.
   void emitTableSwitchJump(Register key, Register scratch1, Register scratch2);
 
-  [[nodiscard]] bool emitReturn();
+  MOZ_MUST_USE bool emitReturn();
 
-  [[nodiscard]] bool emitToBoolean();
-  [[nodiscard]] bool emitTest(bool branchIfTrue);
-  [[nodiscard]] bool emitAndOr(bool branchIfTrue);
-  [[nodiscard]] bool emitCoalesce();
+  MOZ_MUST_USE bool emitToBoolean();
+  MOZ_MUST_USE bool emitTest(bool branchIfTrue);
+  MOZ_MUST_USE bool emitAndOr(bool branchIfTrue);
+  MOZ_MUST_USE bool emitCoalesce();
 
-  [[nodiscard]] bool emitCall(JSOp op);
-  [[nodiscard]] bool emitSpreadCall(JSOp op);
+  MOZ_MUST_USE bool emitCall(JSOp op);
+  MOZ_MUST_USE bool emitSpreadCall(JSOp op);
 
-  [[nodiscard]] bool emitDelElem(bool strict);
-  [[nodiscard]] bool emitDelProp(bool strict);
-  [[nodiscard]] bool emitSetElemSuper(bool strict);
-  [[nodiscard]] bool emitSetPropSuper(bool strict);
+  MOZ_MUST_USE bool emitDelElem(bool strict);
+  MOZ_MUST_USE bool emitDelProp(bool strict);
+  MOZ_MUST_USE bool emitSetElemSuper(bool strict);
+  MOZ_MUST_USE bool emitSetPropSuper(bool strict);
 
-  [[nodiscard]] bool emitBindName(JSOp op);
+  MOZ_MUST_USE bool emitBindName(JSOp op);
+  MOZ_MUST_USE bool emitDefLexical(JSOp op);
 
   // Try to bake in the result of GETGNAME/BINDGNAME instead of using an IC.
   // Return true if we managed to optimize the op.
   bool tryOptimizeGetGlobalName();
   bool tryOptimizeBindGlobalName();
 
-  [[nodiscard]] bool emitInitPropGetterSetter();
-  [[nodiscard]] bool emitInitElemGetterSetter();
+  MOZ_MUST_USE bool emitInitPropGetterSetter();
+  MOZ_MUST_USE bool emitInitElemGetterSetter();
 
-  [[nodiscard]] bool emitFormalArgAccess(JSOp op);
+  MOZ_MUST_USE bool emitFormalArgAccess(JSOp op);
 
-  [[nodiscard]] bool emitUninitializedLexicalCheck(const ValueOperand& val);
+  MOZ_MUST_USE bool emitUninitializedLexicalCheck(const ValueOperand& val);
 
-  [[nodiscard]] bool emitIsMagicValue();
+  MOZ_MUST_USE bool emitIsMagicValue();
 
   void getEnvironmentCoordinateObject(Register reg);
   Address getEnvironmentCoordinateAddressFromObject(Register objReg,
                                                     Register reg);
   Address getEnvironmentCoordinateAddress(Register reg);
 
-  [[nodiscard]] bool emitPrologue();
-  [[nodiscard]] bool emitEpilogue();
-  [[nodiscard]] bool emitOutOfLinePostBarrierSlot();
-  [[nodiscard]] bool emitStackCheck();
-  [[nodiscard]] bool emitDebugPrologue();
-  [[nodiscard]] bool emitDebugEpilogue();
+  MOZ_MUST_USE bool emitPrologue();
+  MOZ_MUST_USE bool emitEpilogue();
+  MOZ_MUST_USE bool emitOutOfLinePostBarrierSlot();
+  MOZ_MUST_USE bool emitStackCheck();
+  MOZ_MUST_USE bool emitArgumentTypeChecks();
+  MOZ_MUST_USE bool emitDebugPrologue();
+  MOZ_MUST_USE bool emitDebugEpilogue();
 
   template <typename F>
-  [[nodiscard]] bool initEnvironmentChainHelper(const F& initFunctionEnv);
-  [[nodiscard]] bool initEnvironmentChain();
+  MOZ_MUST_USE bool initEnvironmentChainHelper(const F& initFunctionEnv);
+  MOZ_MUST_USE bool initEnvironmentChain();
 
-  [[nodiscard]] bool emitTraceLoggerEnter();
-  [[nodiscard]] bool emitTraceLoggerExit();
+  MOZ_MUST_USE bool emitTraceLoggerEnter();
+  MOZ_MUST_USE bool emitTraceLoggerExit();
 
-  [[nodiscard]] bool emitHandleCodeCoverageAtPrologue();
+  MOZ_MUST_USE bool emitHandleCodeCoverageAtPrologue();
 
   void emitInitFrameFields(Register nonFunctionEnv);
-  [[nodiscard]] bool emitIsDebuggeeCheck();
+  MOZ_MUST_USE bool emitIsDebuggeeCheck();
   void emitInitializeLocals();
 
   void emitProfilerEnterFrame();
@@ -307,7 +308,7 @@ class BaselineCompilerHandler {
   BaselineCompilerHandler(JSContext* cx, MacroAssembler& masm,
                           TempAllocator& alloc, JSScript* script);
 
-  [[nodiscard]] bool init(JSContext* cx);
+  MOZ_MUST_USE bool init(JSContext* cx);
 
   CompilerFrameInfo& frame() { return frame_; }
 
@@ -349,8 +350,8 @@ class BaselineCompilerHandler {
   RetAddrEntryVector& retAddrEntries() { return retAddrEntries_; }
   OSREntryVector& osrEntries() { return osrEntries_; }
 
-  [[nodiscard]] bool recordCallRetAddr(JSContext* cx, RetAddrEntry::Kind kind,
-                                       uint32_t retOffset);
+  MOZ_MUST_USE bool recordCallRetAddr(JSContext* cx, RetAddrEntry::Kind kind,
+                                      uint32_t retOffset);
 
   // If a script has more |nslots| than this the stack check must account
   // for these slots explicitly.
@@ -359,7 +360,7 @@ class BaselineCompilerHandler {
     return script()->nslots() > NumSlotsLimit;
   }
 
-  bool canHaveFixedSlots() const { return script()->nfixed() != 0; }
+  JSObject* maybeNoCloneSingletonObject();
 };
 
 using BaselineCompilerCodeGen = BaselineCodeGen<BaselineCompilerHandler>;
@@ -380,7 +381,7 @@ class BaselineCompiler final : private BaselineCompilerCodeGen {
 
  public:
   BaselineCompiler(JSContext* cx, TempAllocator& alloc, JSScript* script);
-  [[nodiscard]] bool init();
+  MOZ_MUST_USE bool init();
 
   MethodStatus compile();
 
@@ -394,7 +395,7 @@ class BaselineCompiler final : private BaselineCompilerCodeGen {
  private:
   MethodStatus emitBody();
 
-  [[nodiscard]] bool emitDebugTrap();
+  MOZ_MUST_USE bool emitDebugTrap();
 };
 
 // Interface used by BaselineCodeGen for BaselineInterpreterGenerator.
@@ -466,15 +467,15 @@ class BaselineInterpreterHandler {
     return false;
   }
 
-  [[nodiscard]] bool addDebugInstrumentationOffset(JSContext* cx,
-                                                   CodeOffset offset);
+  MOZ_MUST_USE bool addDebugInstrumentationOffset(JSContext* cx,
+                                                  CodeOffset offset);
 
   const BaselineInterpreter::CallVMOffsets& callVMOffsets() const {
     return callVMOffsets_;
   }
 
-  [[nodiscard]] bool recordCallRetAddr(JSContext* cx, RetAddrEntry::Kind kind,
-                                       uint32_t retOffset);
+  MOZ_MUST_USE bool recordCallRetAddr(JSContext* cx, RetAddrEntry::Kind kind,
+                                      uint32_t retOffset);
 
   bool maybeIonCompileable() const { return true; }
 
@@ -482,7 +483,7 @@ class BaselineInterpreterHandler {
   // include them.
   bool mustIncludeSlotsInStackCheck() const { return true; }
 
-  bool canHaveFixedSlots() const { return true; }
+  JSObject* maybeNoCloneSingletonObject() { return nullptr; }
 };
 
 using BaselineInterpreterCodeGen = BaselineCodeGen<BaselineInterpreterHandler>;
@@ -510,11 +511,11 @@ class BaselineInterpreterGenerator final : private BaselineInterpreterCodeGen {
  public:
   explicit BaselineInterpreterGenerator(JSContext* cx);
 
-  [[nodiscard]] bool generate(BaselineInterpreter& interpreter);
+  MOZ_MUST_USE bool generate(BaselineInterpreter& interpreter);
 
  private:
-  [[nodiscard]] bool emitInterpreterLoop();
-  [[nodiscard]] bool emitDebugTrap();
+  MOZ_MUST_USE bool emitInterpreterLoop();
+  MOZ_MUST_USE bool emitDebugTrap();
 
   void emitOutOfLineCodeCoverageInstrumentation();
 };

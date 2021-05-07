@@ -17,7 +17,6 @@
 #include "gc/Marking.h"
 #include "js/AllocPolicy.h"
 #include "js/Debug.h"
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
 #include "js/TracingAPI.h"
 #include "js/UbiNode.h"
@@ -204,7 +203,7 @@ bool DebuggerMemory::CallData::drainAllocationsLog() {
   if (!result) {
     return false;
   }
-  result->ensureDenseInitializedLength(0, length);
+  result->ensureDenseInitializedLength(cx, 0, length);
 
   for (size_t i = 0; i < length; i++) {
     RootedPlainObject obj(cx, NewBuiltinClassInstance<PlainObject>(cx));
@@ -237,6 +236,14 @@ bool DebuggerMemory::CallData::drainAllocationsLog() {
     }
     RootedValue classNameValue(cx, StringValue(className));
     if (!DefineDataProperty(cx, obj, cx->names().class_, classNameValue)) {
+      return false;
+    }
+
+    RootedValue ctorName(cx, NullValue());
+    if (entry.ctorName) {
+      ctorName.setString(entry.ctorName);
+    }
+    if (!DefineDataProperty(cx, obj, cx->names().constructor, ctorName)) {
       return false;
     }
 
@@ -343,11 +350,13 @@ bool DebuggerMemory::CallData::getAllocationsLogOverflowed() {
 }
 
 bool DebuggerMemory::CallData::getOnGarbageCollection() {
-  return Debugger::getGarbageCollectionHook(cx, args, *memory->getDebugger());
+  return Debugger::getHookImpl(cx, args, *memory->getDebugger(),
+                               Debugger::OnGarbageCollection);
 }
 
 bool DebuggerMemory::CallData::setOnGarbageCollection() {
-  return Debugger::setGarbageCollectionHook(cx, args, *memory->getDebugger());
+  return Debugger::setHookImpl(cx, args, *memory->getDebugger(),
+                               Debugger::OnGarbageCollection);
 }
 
 /* Debugger.Memory.prototype.takeCensus */

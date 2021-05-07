@@ -1,5 +1,3 @@
-// |jit-test| skip-if: fuzzingSafe()
-
 // Tests that function imports and function exports descriptors have
 // signatures, in the test mode only, for fuzzers.
 

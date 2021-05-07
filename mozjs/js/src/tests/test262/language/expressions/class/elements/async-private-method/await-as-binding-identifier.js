@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) error:SyntaxError -- requires shell-options
+// |reftest| skip error:SyntaxError -- class-methods-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/async-functions/await-as-binding-identifier.case
 // - src/async-functions/syntax/async-class-expr-private-method.template
@@ -32,8 +32,6 @@ info: |
 $DONOTEVALUATE();
 
 
-var C = class {
-  async #method() {
+var C = class { async #method() {
     var await;
-  }
-};
+}};

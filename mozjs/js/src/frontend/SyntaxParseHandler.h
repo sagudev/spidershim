@@ -8,14 +8,12 @@
 #define frontend_SyntaxParseHandler_h
 
 #include "mozilla/Assertions.h"
-#include "mozilla/Maybe.h"  // mozilla::Maybe
+#include "mozilla/Attributes.h"
 
 #include <string.h>
 
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
-#include "frontend/NameAnalysisTypes.h"   // PrivateNameKind
 #include "frontend/ParseNode.h"
-#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
 #include "frontend/TokenStream.h"
 #include "js/GCAnnotations.h"
 #include "vm/JSContext.h"
@@ -36,8 +34,19 @@ namespace frontend {
 // amounts of code that never executes (which happens often).
 class SyntaxParseHandler {
   // Remember the last encountered name or string literal during syntax parses.
-  TaggedParserAtomIndex lastAtom;
+  JSAtom* lastAtom;
   TokenPos lastStringPos;
+
+  // WARNING: Be careful about adding fields to this function, that might be
+  //          GC things (like JSAtom*).  The JS_HAZ_ROOTED causes the GC
+  //          analysis to *ignore* anything that might be a rooting hazard in
+  //          this class.  The |lastAtom| field above is safe because
+  //          SyntaxParseHandler only appears as a field in
+  //          PerHandlerParser<SyntaxParseHandler>, and that class inherits
+  //          from ParserBase which contains a reference to a CompilationInfo,
+  //          which has an AutoKeepAtoms field that prevents atoms from being
+  //          moved around while the AutoKeepAtoms lives -- which is longer
+  //          than the lifetime of any of the parser classes.
 
  public:
   enum Node {
@@ -81,16 +90,10 @@ class SyntaxParseHandler {
     // contextual keyword.
     NodePotentialAsyncKeyword,
 
-    // Node representing private names.
-    NodePrivateName,
-
     NodeDottedProperty,
     NodeOptionalDottedProperty,
     NodeElement,
     NodeOptionalElement,
-    // A distinct node for [PrivateName], to make detecting delete this.#x
-    // detectable in syntax parse
-    NodePrivateElement,
 
     // Destructuring target patterns can't be parenthesized: |([a]) = [3];|
     // must be a syntax error.  (We can't use NodeGeneric instead of these
@@ -143,8 +146,7 @@ class SyntaxParseHandler {
   }
 
   bool isPropertyAccess(Node node) {
-    return node == NodeDottedProperty || node == NodeElement ||
-           node == NodePrivateElement;
+    return node == NodeDottedProperty || node == NodeElement;
   }
 
   bool isOptionalPropertyAccess(Node node) {
@@ -171,7 +173,8 @@ class SyntaxParseHandler {
 
  public:
   SyntaxParseHandler(JSContext* cx, LifoAlloc& alloc,
-                     BaseScript* lazyOuterFunction) {}
+                     BaseScript* lazyOuterFunction)
+      : lastAtom(nullptr) {}
 
   static NullNode null() { return NodeFailure; }
 
@@ -180,16 +183,15 @@ class SyntaxParseHandler {
   FOR_EACH_PARSENODE_SUBCLASS(DECLARE_AS)
 #undef DECLARE_AS
 
-  NameNodeType newName(TaggedParserAtomIndex name, const TokenPos& pos) {
+  NameNodeType newName(PropertyName* name, const TokenPos& pos, JSContext* cx) {
     lastAtom = name;
-    if (name == TaggedParserAtomIndex::WellKnown::arguments()) {
+    if (name == cx->names().arguments) {
       return NodeArgumentsName;
     }
-    if (pos.begin + strlen("async") == pos.end &&
-        name == TaggedParserAtomIndex::WellKnown::async()) {
+    if (pos.begin + strlen("async") == pos.end && name == cx->names().async) {
       return NodePotentialAsyncKeyword;
     }
-    if (name == TaggedParserAtomIndex::WellKnown::eval()) {
+    if (name == cx->names().eval) {
       return NodeEvalName;
     }
     return NodeName;
@@ -199,18 +201,8 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-  UnaryNodeType newSyntheticComputedName(Node expr, uint32_t start,
-                                         uint32_t end) {
-    return NodeGeneric;
-  }
-
-  NameNodeType newObjectLiteralPropertyName(TaggedParserAtomIndex atom,
-                                            const TokenPos& pos) {
+  NameNodeType newObjectLiteralPropertyName(JSAtom* atom, const TokenPos& pos) {
     return NodeName;
-  }
-
-  NameNodeType newPrivateName(TaggedParserAtomIndex atom, const TokenPos& pos) {
-    return NodePrivateName;
   }
 
   NumericLiteralType newNumber(double value, DecimalPoint decimalPoint,
@@ -224,15 +216,13 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-  NameNodeType newStringLiteral(TaggedParserAtomIndex atom,
-                                const TokenPos& pos) {
+  NameNodeType newStringLiteral(JSAtom* atom, const TokenPos& pos) {
     lastAtom = atom;
     lastStringPos = pos;
     return NodeUnparenthesizedString;
   }
 
-  NameNodeType newTemplateStringLiteral(TaggedParserAtomIndex atom,
-                                        const TokenPos& pos) {
+  NameNodeType newTemplateStringLiteral(JSAtom* atom, const TokenPos& pos) {
     return NodeGeneric;
   }
 
@@ -257,6 +247,8 @@ class SyntaxParseHandler {
                                            Node elseExpr) {
     return NodeGeneric;
   }
+
+  Node newElision() { return NodeGeneric; }
 
   UnaryNodeType newDelete(uint32_t begin, Node expr) {
     return NodeUnparenthesizedUnary;
@@ -286,11 +278,11 @@ class SyntaxParseHandler {
   ListNodeType newArrayLiteral(uint32_t begin) {
     return NodeUnparenthesizedArray;
   }
-  [[nodiscard]] bool addElision(ListNodeType literal, const TokenPos& pos) {
+  MOZ_MUST_USE bool addElision(ListNodeType literal, const TokenPos& pos) {
     return true;
   }
-  [[nodiscard]] bool addSpreadElement(ListNodeType literal, uint32_t begin,
-                                      Node inner) {
+  MOZ_MUST_USE bool addSpreadElement(ListNodeType literal, uint32_t begin,
+                                     Node inner) {
     return true;
   }
   void addArrayElement(ListNodeType literal, Node element) {}
@@ -336,47 +328,43 @@ class SyntaxParseHandler {
     return NodeSuperBase;
   }
 
-  [[nodiscard]] bool addPrototypeMutation(ListNodeType literal, uint32_t begin,
-                                          Node expr) {
+  MOZ_MUST_USE bool addPrototypeMutation(ListNodeType literal, uint32_t begin,
+                                         Node expr) {
     return true;
   }
   BinaryNodeType newPropertyDefinition(Node key, Node val) {
     return NodeGeneric;
   }
   void addPropertyDefinition(ListNodeType literal, BinaryNodeType propdef) {}
-  [[nodiscard]] bool addPropertyDefinition(ListNodeType literal, Node key,
-                                           Node expr) {
+  MOZ_MUST_USE bool addPropertyDefinition(ListNodeType literal, Node key,
+                                          Node expr) {
     return true;
   }
-  [[nodiscard]] bool addShorthand(ListNodeType literal, NameNodeType name,
-                                  NameNodeType expr) {
+  MOZ_MUST_USE bool addShorthand(ListNodeType literal, NameNodeType name,
+                                 NameNodeType expr) {
     return true;
   }
-  [[nodiscard]] bool addSpreadProperty(ListNodeType literal, uint32_t begin,
-                                       Node inner) {
+  MOZ_MUST_USE bool addSpreadProperty(ListNodeType literal, uint32_t begin,
+                                      Node inner) {
     return true;
   }
-  [[nodiscard]] bool addObjectMethodDefinition(ListNodeType literal, Node key,
-                                               FunctionNodeType funNode,
-                                               AccessorType atype) {
+  MOZ_MUST_USE bool addObjectMethodDefinition(ListNodeType literal, Node key,
+                                              FunctionNodeType funNode,
+                                              AccessorType atype) {
     return true;
   }
-  [[nodiscard]] Node newDefaultClassConstructor(Node key,
-                                                FunctionNodeType funNode) {
-    return NodeGeneric;
-  }
-  [[nodiscard]] Node newClassMethodDefinition(
-      Node key, FunctionNodeType funNode, AccessorType atype, bool isStatic,
-      mozilla::Maybe<FunctionNodeType> initializerIfPrivate) {
-    return NodeGeneric;
-  }
-  [[nodiscard]] Node newClassFieldDefinition(Node name,
-                                             FunctionNodeType initializer,
+  MOZ_MUST_USE Node newClassMethodDefinition(Node key, FunctionNodeType funNode,
+                                             AccessorType atype,
                                              bool isStatic) {
     return NodeGeneric;
   }
-  [[nodiscard]] bool addClassMemberDefinition(ListNodeType memberList,
-                                              Node member) {
+  MOZ_MUST_USE Node newClassFieldDefinition(Node name,
+                                            FunctionNodeType initializer,
+                                            bool isStatic) {
+    return NodeGeneric;
+  }
+  MOZ_MUST_USE bool addClassMemberDefinition(ListNodeType memberList,
+                                             Node member) {
     return true;
   }
   UnaryNodeType newYieldExpression(uint32_t begin, Node value) {
@@ -386,7 +374,7 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
   UnaryNodeType newAwaitExpression(uint32_t begin, Node value) {
-    return NodeUnparenthesizedUnary;
+    return NodeGeneric;
   }
   UnaryNodeType newOptionalChain(uint32_t begin, Node value) {
     return NodeGeneric;
@@ -398,23 +386,13 @@ class SyntaxParseHandler {
   void addStatementToList(ListNodeType list, Node stmt) {}
   void setListEndPosition(ListNodeType list, const TokenPos& pos) {}
   void addCaseStatementToList(ListNodeType list, CaseClauseType caseClause) {}
-  [[nodiscard]] bool prependInitialYield(ListNodeType stmtList, Node genName) {
+  MOZ_MUST_USE bool prependInitialYield(ListNodeType stmtList, Node genName) {
     return true;
   }
   NullaryNodeType newEmptyStatement(const TokenPos& pos) {
     return NodeEmptyStatement;
   }
 
-  BinaryNodeType newImportDeclaration(Node importSpecSet, Node moduleSpec,
-                                      const TokenPos& pos) {
-    return NodeGeneric;
-  }
-  BinaryNodeType newImportSpec(Node importNameNode, Node bindingName) {
-    return NodeGeneric;
-  }
-  UnaryNodeType newImportNamespaceSpec(uint32_t begin, Node bindingName) {
-    return NodeGeneric;
-  }
   UnaryNodeType newExportDeclaration(Node kid, const TokenPos& pos) {
     return NodeGeneric;
   }
@@ -427,9 +405,6 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
   BinaryNodeType newExportSpec(Node bindingName, Node exportName) {
-    return NodeGeneric;
-  }
-  UnaryNodeType newExportNamespaceSpec(uint32_t begin, Node exportName) {
     return NodeGeneric;
   }
   NullaryNodeType newExportBatchSpec(const TokenPos& pos) {
@@ -469,11 +444,11 @@ class SyntaxParseHandler {
   CaseClauseType newCaseOrDefault(uint32_t begin, Node expr, Node body) {
     return NodeGeneric;
   }
-  ContinueStatementType newContinueStatement(TaggedParserAtomIndex label,
+  ContinueStatementType newContinueStatement(PropertyName* label,
                                              const TokenPos& pos) {
     return NodeGeneric;
   }
-  BreakStatementType newBreakStatement(TaggedParserAtomIndex label,
+  BreakStatementType newBreakStatement(PropertyName* label,
                                        const TokenPos& pos) {
     return NodeBreak;
   }
@@ -485,8 +460,8 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-  LabeledStatementType newLabeledStatement(TaggedParserAtomIndex label,
-                                           Node stmt, uint32_t begin) {
+  LabeledStatementType newLabeledStatement(PropertyName* label, Node stmt,
+                                           uint32_t begin) {
     return NodeGeneric;
   }
 
@@ -502,8 +477,7 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-  NameNodeType newPropertyName(TaggedParserAtomIndex name,
-                               const TokenPos& pos) {
+  NameNodeType newPropertyName(PropertyName* name, const TokenPos& pos) {
     lastAtom = name;
     return NodeGeneric;
   }
@@ -517,9 +491,6 @@ class SyntaxParseHandler {
   }
 
   PropertyByValueType newPropertyByValue(Node lhs, Node index, uint32_t end) {
-    if (isPrivateName(index)) {
-      return NodePrivateElement;
-    }
     return NodeElement;
   }
 
@@ -528,12 +499,12 @@ class SyntaxParseHandler {
     return NodeOptionalElement;
   }
 
-  [[nodiscard]] bool setupCatchScope(LexicalScopeNodeType lexicalScope,
-                                     Node catchName, Node catchBody) {
+  MOZ_MUST_USE bool setupCatchScope(LexicalScopeNodeType lexicalScope,
+                                    Node catchName, Node catchBody) {
     return true;
   }
 
-  [[nodiscard]] bool setLastFunctionFormalParameterDefault(
+  MOZ_MUST_USE bool setLastFunctionFormalParameterDefault(
       FunctionNodeType funNode, Node defaultValue) {
     return true;
   }
@@ -661,7 +632,7 @@ class SyntaxParseHandler {
   bool isSuperBase(Node pn) { return pn == NodeSuperBase; }
 
   void setListHasNonConstInitializer(ListNodeType literal) {}
-  [[nodiscard]] Node parenthesize(Node node) {
+  MOZ_MUST_USE Node parenthesize(Node node) {
     // A number of nodes have different behavior upon parenthesization, but
     // only in some circumstances.  Convert these nodes to special
     // parenthesized forms.
@@ -690,7 +661,7 @@ class SyntaxParseHandler {
     return node;
   }
   template <typename NodeType>
-  [[nodiscard]] NodeType setLikelyIIFE(NodeType node) {
+  MOZ_MUST_USE NodeType setLikelyIIFE(NodeType node) {
     return node;  // Remain in syntax-parse mode.
   }
 
@@ -699,31 +670,34 @@ class SyntaxParseHandler {
            node == NodeEvalName || node == NodePotentialAsyncKeyword;
   }
 
-  bool isArgumentsName(Node node) { return node == NodeArgumentsName; }
-  bool isEvalName(Node node) { return node == NodeEvalName; }
-  bool isAsyncKeyword(Node node) { return node == NodePotentialAsyncKeyword; }
+  bool isArgumentsName(Node node, JSContext* cx) {
+    return node == NodeArgumentsName;
+  }
 
-  bool isPrivateName(Node node) { return node == NodePrivateName; }
-  bool isPrivateField(Node node) { return node == NodePrivateElement; }
+  bool isEvalName(Node node, JSContext* cx) { return node == NodeEvalName; }
 
-  TaggedParserAtomIndex maybeDottedProperty(Node node) {
+  bool isAsyncKeyword(Node node, JSContext* cx) {
+    return node == NodePotentialAsyncKeyword;
+  }
+
+  PropertyName* maybeDottedProperty(Node node) {
     // Note: |super.apply(...)| is a special form that calls an "apply"
     // method retrieved from one value, but using a *different* value as
     // |this|.  It's not really eligible for the funapply/funcall
     // optimizations as they're currently implemented (assuming a single
     // value is used for both retrieval and |this|).
     if (node != NodeDottedProperty && node != NodeOptionalDottedProperty) {
-      return TaggedParserAtomIndex::null();
+      return nullptr;
     }
-    return lastAtom;
+    return lastAtom->asPropertyName();
   }
 
-  TaggedParserAtomIndex isStringExprStatement(Node pn, TokenPos* pos) {
+  JSAtom* isStringExprStatement(Node pn, TokenPos* pos) {
     if (pn == NodeStringExprStatement) {
       *pos = lastStringPos;
       return lastAtom;
     }
-    return TaggedParserAtomIndex::null();
+    return nullptr;
   }
 
   bool canSkipLazyInnerFunctions() { return false; }
@@ -732,9 +706,7 @@ class SyntaxParseHandler {
     MOZ_CRASH(
         "SyntaxParseHandler::canSkipLazyClosedOverBindings must return false");
   }
-
-  void setPrivateNameKind(Node node, PrivateNameKind kind) {}
-};
+} JS_HAZ_ROOTED;  // See the top of SyntaxParseHandler for why this is safe.
 
 }  // namespace frontend
 }  // namespace js

@@ -1,3 +1,5 @@
+// |reftest| skip-if(release_or_beta)
+
 const testCasesAnd = [];
 const testCasesOr = [];
 const testCasesCoalesce = [];

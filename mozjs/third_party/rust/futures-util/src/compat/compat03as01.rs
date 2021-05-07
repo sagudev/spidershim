@@ -40,7 +40,6 @@ pub struct Compat<T> {
 /// Converts a futures 0.3 [`Sink`](futures_sink::Sink) into a futures 0.1
 /// [`Sink`](futures_01::sink::Sink).
 #[cfg(feature = "sink")]
-#[cfg_attr(docsrs, doc(cfg(feature = "sink")))]
 #[derive(Debug)]
 #[must_use = "sinks do nothing unless polled"]
 pub struct CompatSink<T, Item> {
@@ -54,8 +53,8 @@ impl<T> Compat<T> {
     /// For types which implement appropriate futures `0.3`
     /// traits, the result will be a type which implements
     /// the corresponding futures 0.1 type.
-    pub fn new(inner: T) -> Self {
-        Self { inner }
+    pub fn new(inner: T) -> Compat<T> {
+        Compat { inner }
     }
 
     /// Get a reference to 0.3 Future, Stream, AsyncRead, or AsyncWrite object
@@ -80,7 +79,7 @@ impl<T> Compat<T> {
 impl<T, Item> CompatSink<T, Item> {
     /// Creates a new [`CompatSink`].
     pub fn new(inner: T) -> Self {
-        Self {
+        CompatSink {
             inner,
             _phantom: PhantomData,
         }
@@ -174,8 +173,8 @@ where
 struct Current(task01::Task);
 
 impl Current {
-    fn new() -> Self {
-        Self(task01::current())
+    fn new() -> Current {
+        Current(task01::current())
     }
 
     fn as_waker(&self) -> WakerRef<'_> {
@@ -237,7 +236,6 @@ where
 }
 
 #[cfg(feature = "io-compat")]
-#[cfg_attr(docsrs, doc(cfg(feature = "io-compat")))]
 mod io {
     use super::*;
     use futures_io::{AsyncRead as AsyncRead03, AsyncWrite as AsyncWrite03};

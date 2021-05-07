@@ -17,10 +17,6 @@ importSpecifier = (id, name) => Pattern({
     id: id,
     name: name
 });
-importNamespaceSpecifier = (name) => Pattern({
-  type: "ImportNamespaceSpecifier",
-  name: name
-});
 ident = (name) => Pattern({
     type: "Identifier",
     name: name
@@ -50,7 +46,8 @@ program([
 program([
     importDeclaration(
         [
-            importNamespaceSpecifier(
+            importSpecifier(
+                ident("*"),
                 ident("a")
             )
         ],
@@ -120,7 +117,8 @@ program([
                 ident("default"),
                 ident("a")
             ),
-            importNamespaceSpecifier(
+            importSpecifier(
+                ident("*"),
                 ident("b")
             )
         ],

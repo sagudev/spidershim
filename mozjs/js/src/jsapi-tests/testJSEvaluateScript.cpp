@@ -5,7 +5,8 @@
 #include "js/CompilationAndEvaluation.h"
 #include "js/SourceText.h"
 #include "jsapi-tests/tests.h"
-#include "util/Text.h"
+
+using mozilla::ArrayLength;
 
 BEGIN_TEST(testJSEvaluateScript) {
   JS::RootedObject obj(cx, JS_NewPlainObject(cx));
@@ -19,7 +20,8 @@ BEGIN_TEST(testJSEvaluateScript) {
   CHECK(scopeChain.append(obj));
 
   JS::SourceText<char16_t> srcBuf;
-  CHECK(srcBuf.init(cx, src, js_strlen(src), JS::SourceOwnership::Borrowed));
+  CHECK(srcBuf.init(cx, src, ArrayLength(src) - 1,
+                    JS::SourceOwnership::Borrowed));
 
   CHECK(JS::Evaluate(cx, scopeChain, opts.setFileAndLine(__FILE__, __LINE__),
                      srcBuf, &retval));

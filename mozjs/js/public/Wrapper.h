@@ -12,7 +12,6 @@
 #include "js/Proxy.h"
 
 namespace js {
-struct CompartmentFilter;
 
 /*
  * Helper for Wrapper::New default options.
@@ -47,75 +46,67 @@ class JS_FRIEND_API ForwardingProxyHandler : public BaseProxyHandler {
 
   /* Standard internal methods. */
   virtual bool getOwnPropertyDescriptor(
-      JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-      JS::MutableHandle<JS::PropertyDescriptor> desc) const override;
-  virtual bool defineProperty(JSContext* cx, JS::HandleObject proxy,
-                              JS::HandleId id,
-                              JS::Handle<JS::PropertyDescriptor> desc,
-                              JS::ObjectOpResult& result) const override;
-  virtual bool ownPropertyKeys(JSContext* cx, JS::HandleObject proxy,
-                               JS::MutableHandleIdVector props) const override;
-  virtual bool delete_(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-                       JS::ObjectOpResult& result) const override;
-  virtual bool enumerate(JSContext* cx, JS::HandleObject proxy,
-                         JS::MutableHandleIdVector props) const override;
-  virtual bool getPrototype(JSContext* cx, JS::HandleObject proxy,
-                            JS::MutableHandleObject protop) const override;
-  virtual bool setPrototype(JSContext* cx, JS::HandleObject proxy,
-                            JS::HandleObject proto,
-                            JS::ObjectOpResult& result) const override;
+      JSContext* cx, HandleObject proxy, HandleId id,
+      MutableHandle<PropertyDescriptor> desc) const override;
+  virtual bool defineProperty(JSContext* cx, HandleObject proxy, HandleId id,
+                              Handle<PropertyDescriptor> desc,
+                              ObjectOpResult& result) const override;
+  virtual bool ownPropertyKeys(JSContext* cx, HandleObject proxy,
+                               MutableHandleIdVector props) const override;
+  virtual bool delete_(JSContext* cx, HandleObject proxy, HandleId id,
+                       ObjectOpResult& result) const override;
+  virtual bool enumerate(JSContext* cx, HandleObject proxy,
+                         MutableHandleIdVector props) const override;
+  virtual bool getPrototype(JSContext* cx, HandleObject proxy,
+                            MutableHandleObject protop) const override;
+  virtual bool setPrototype(JSContext* cx, HandleObject proxy,
+                            HandleObject proto,
+                            ObjectOpResult& result) const override;
   virtual bool getPrototypeIfOrdinary(
-      JSContext* cx, JS::HandleObject proxy, bool* isOrdinary,
-      JS::MutableHandleObject protop) const override;
-  virtual bool setImmutablePrototype(JSContext* cx, JS::HandleObject proxy,
+      JSContext* cx, HandleObject proxy, bool* isOrdinary,
+      MutableHandleObject protop) const override;
+  virtual bool setImmutablePrototype(JSContext* cx, HandleObject proxy,
                                      bool* succeeded) const override;
-  virtual bool preventExtensions(JSContext* cx, JS::HandleObject proxy,
-                                 JS::ObjectOpResult& result) const override;
-  virtual bool isExtensible(JSContext* cx, JS::HandleObject proxy,
+  virtual bool preventExtensions(JSContext* cx, HandleObject proxy,
+                                 ObjectOpResult& result) const override;
+  virtual bool isExtensible(JSContext* cx, HandleObject proxy,
                             bool* extensible) const override;
-  virtual bool has(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
+  virtual bool has(JSContext* cx, HandleObject proxy, HandleId id,
                    bool* bp) const override;
-  virtual bool get(JSContext* cx, JS::HandleObject proxy,
-                   JS::HandleValue receiver, JS::HandleId id,
-                   JS::MutableHandleValue vp) const override;
-  virtual bool set(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-                   JS::HandleValue v, JS::HandleValue receiver,
-                   JS::ObjectOpResult& result) const override;
-  virtual bool call(JSContext* cx, JS::HandleObject proxy,
-                    const JS::CallArgs& args) const override;
-  virtual bool construct(JSContext* cx, JS::HandleObject proxy,
-                         const JS::CallArgs& args) const override;
+  virtual bool get(JSContext* cx, HandleObject proxy, HandleValue receiver,
+                   HandleId id, MutableHandleValue vp) const override;
+  virtual bool set(JSContext* cx, HandleObject proxy, HandleId id,
+                   HandleValue v, HandleValue receiver,
+                   ObjectOpResult& result) const override;
+  virtual bool call(JSContext* cx, HandleObject proxy,
+                    const CallArgs& args) const override;
+  virtual bool construct(JSContext* cx, HandleObject proxy,
+                         const CallArgs& args) const override;
 
   /* SpiderMonkey extensions. */
-  virtual bool hasOwn(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
+  virtual bool hasOwn(JSContext* cx, HandleObject proxy, HandleId id,
                       bool* bp) const override;
   virtual bool getOwnEnumerablePropertyKeys(
-      JSContext* cx, JS::HandleObject proxy,
-      JS::MutableHandleIdVector props) const override;
-  virtual bool nativeCall(JSContext* cx, JS::IsAcceptableThis test,
-                          JS::NativeImpl impl,
-                          const JS::CallArgs& args) const override;
-  virtual bool hasInstance(JSContext* cx, JS::HandleObject proxy,
-                           JS::MutableHandleValue v, bool* bp) const override;
-  virtual bool getBuiltinClass(JSContext* cx, JS::HandleObject proxy,
+      JSContext* cx, HandleObject proxy,
+      MutableHandleIdVector props) const override;
+  virtual bool nativeCall(JSContext* cx, IsAcceptableThis test, NativeImpl impl,
+                          const CallArgs& args) const override;
+  virtual bool hasInstance(JSContext* cx, HandleObject proxy,
+                           MutableHandleValue v, bool* bp) const override;
+  virtual bool getBuiltinClass(JSContext* cx, HandleObject proxy,
                                ESClass* cls) const override;
-  virtual bool isArray(JSContext* cx, JS::HandleObject proxy,
+  virtual bool isArray(JSContext* cx, HandleObject proxy,
                        JS::IsArrayAnswer* answer) const override;
   virtual const char* className(JSContext* cx,
-                                JS::HandleObject proxy) const override;
-  virtual JSString* fun_toString(JSContext* cx, JS::HandleObject proxy,
+                                HandleObject proxy) const override;
+  virtual JSString* fun_toString(JSContext* cx, HandleObject proxy,
                                  bool isToSource) const override;
   virtual RegExpShared* regexp_toShared(JSContext* cx,
-                                        JS::HandleObject proxy) const override;
-  virtual bool boxedValue_unbox(JSContext* cx, JS::HandleObject proxy,
-                                JS::MutableHandleValue vp) const override;
+                                        HandleObject proxy) const override;
+  virtual bool boxedValue_unbox(JSContext* cx, HandleObject proxy,
+                                MutableHandleValue vp) const override;
   virtual bool isCallable(JSObject* obj) const override;
   virtual bool isConstructor(JSObject* obj) const override;
-
-  // Use the target object for private fields.
-  virtual bool useProxyExpandoObjectForPrivateFields() const override {
-    return false;
-  }
 };
 
 /*
@@ -140,14 +131,14 @@ class JS_FRIEND_API Wrapper : public ForwardingProxyHandler {
       : ForwardingProxyHandler(&family, aHasPrototype, aHasSecurityPolicy),
         mFlags(aFlags) {}
 
-  virtual bool finalizeInBackground(const JS::Value& priv) const override;
+  virtual bool finalizeInBackground(const Value& priv) const override;
 
   /**
    * A hook subclasses can override to implement CheckedUnwrapDynamic
    * behavior.  The JSContext represents the "who is trying to unwrap?" Realm.
    * The JSObject is the wrapper that the caller is trying to unwrap.
    */
-  virtual bool dynamicCheckedUnwrapAllowed(JS::HandleObject obj,
+  virtual bool dynamicCheckedUnwrapAllowed(HandleObject obj,
                                            JSContext* cx) const {
     MOZ_ASSERT(hasSecurityPolicy(), "Why are you asking?");
     return false;
@@ -159,6 +150,10 @@ class JS_FRIEND_API Wrapper : public ForwardingProxyHandler {
 
   static JSObject* New(JSContext* cx, JSObject* obj, const Wrapper* handler,
                        const WrapperOptions& options = WrapperOptions());
+
+  static JSObject* NewSingleton(
+      JSContext* cx, JSObject* obj, const Wrapper* handler,
+      const WrapperOptions& options = WrapperOptions());
 
   static JSObject* Renew(JSObject* existing, JSObject* obj,
                          const Wrapper* handler);
@@ -195,65 +190,62 @@ class JS_FRIEND_API CrossCompartmentWrapper : public Wrapper {
 
   /* Standard internal methods. */
   virtual bool getOwnPropertyDescriptor(
-      JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
-      JS::MutableHandle<JS::PropertyDescriptor> desc) const override;
-  virtual bool defineProperty(JSContext* cx, JS::HandleObject wrapper,
-                              JS::HandleId id,
-                              JS::Handle<JS::PropertyDescriptor> desc,
-                              JS::ObjectOpResult& result) const override;
-  virtual bool ownPropertyKeys(JSContext* cx, JS::HandleObject wrapper,
-                               JS::MutableHandleIdVector props) const override;
-  virtual bool delete_(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
-                       JS::ObjectOpResult& result) const override;
-  virtual bool enumerate(JSContext* cx, JS::HandleObject proxy,
-                         JS::MutableHandleIdVector props) const override;
-  virtual bool getPrototype(JSContext* cx, JS::HandleObject proxy,
-                            JS::MutableHandleObject protop) const override;
-  virtual bool setPrototype(JSContext* cx, JS::HandleObject proxy,
-                            JS::HandleObject proto,
-                            JS::ObjectOpResult& result) const override;
+      JSContext* cx, HandleObject wrapper, HandleId id,
+      MutableHandle<PropertyDescriptor> desc) const override;
+  virtual bool defineProperty(JSContext* cx, HandleObject wrapper, HandleId id,
+                              Handle<PropertyDescriptor> desc,
+                              ObjectOpResult& result) const override;
+  virtual bool ownPropertyKeys(JSContext* cx, HandleObject wrapper,
+                               MutableHandleIdVector props) const override;
+  virtual bool delete_(JSContext* cx, HandleObject wrapper, HandleId id,
+                       ObjectOpResult& result) const override;
+  virtual bool enumerate(JSContext* cx, HandleObject proxy,
+                         MutableHandleIdVector props) const override;
+  virtual bool getPrototype(JSContext* cx, HandleObject proxy,
+                            MutableHandleObject protop) const override;
+  virtual bool setPrototype(JSContext* cx, HandleObject proxy,
+                            HandleObject proto,
+                            ObjectOpResult& result) const override;
 
   virtual bool getPrototypeIfOrdinary(
-      JSContext* cx, JS::HandleObject proxy, bool* isOrdinary,
-      JS::MutableHandleObject protop) const override;
-  virtual bool setImmutablePrototype(JSContext* cx, JS::HandleObject proxy,
+      JSContext* cx, HandleObject proxy, bool* isOrdinary,
+      MutableHandleObject protop) const override;
+  virtual bool setImmutablePrototype(JSContext* cx, HandleObject proxy,
                                      bool* succeeded) const override;
-  virtual bool preventExtensions(JSContext* cx, JS::HandleObject wrapper,
-                                 JS::ObjectOpResult& result) const override;
-  virtual bool isExtensible(JSContext* cx, JS::HandleObject wrapper,
+  virtual bool preventExtensions(JSContext* cx, HandleObject wrapper,
+                                 ObjectOpResult& result) const override;
+  virtual bool isExtensible(JSContext* cx, HandleObject wrapper,
                             bool* extensible) const override;
-  virtual bool has(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
+  virtual bool has(JSContext* cx, HandleObject wrapper, HandleId id,
                    bool* bp) const override;
-  virtual bool get(JSContext* cx, JS::HandleObject wrapper,
-                   JS::HandleValue receiver, JS::HandleId id,
-                   JS::MutableHandleValue vp) const override;
-  virtual bool set(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
-                   JS::HandleValue v, JS::HandleValue receiver,
-                   JS::ObjectOpResult& result) const override;
-  virtual bool call(JSContext* cx, JS::HandleObject wrapper,
-                    const JS::CallArgs& args) const override;
-  virtual bool construct(JSContext* cx, JS::HandleObject wrapper,
-                         const JS::CallArgs& args) const override;
+  virtual bool get(JSContext* cx, HandleObject wrapper, HandleValue receiver,
+                   HandleId id, MutableHandleValue vp) const override;
+  virtual bool set(JSContext* cx, HandleObject wrapper, HandleId id,
+                   HandleValue v, HandleValue receiver,
+                   ObjectOpResult& result) const override;
+  virtual bool call(JSContext* cx, HandleObject wrapper,
+                    const CallArgs& args) const override;
+  virtual bool construct(JSContext* cx, HandleObject wrapper,
+                         const CallArgs& args) const override;
 
   /* SpiderMonkey extensions. */
-  virtual bool hasOwn(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
+  virtual bool hasOwn(JSContext* cx, HandleObject wrapper, HandleId id,
                       bool* bp) const override;
   virtual bool getOwnEnumerablePropertyKeys(
-      JSContext* cx, JS::HandleObject wrapper,
-      JS::MutableHandleIdVector props) const override;
-  virtual bool nativeCall(JSContext* cx, JS::IsAcceptableThis test,
-                          JS::NativeImpl impl,
-                          const JS::CallArgs& args) const override;
-  virtual bool hasInstance(JSContext* cx, JS::HandleObject wrapper,
-                           JS::MutableHandleValue v, bool* bp) const override;
+      JSContext* cx, HandleObject wrapper,
+      MutableHandleIdVector props) const override;
+  virtual bool nativeCall(JSContext* cx, IsAcceptableThis test, NativeImpl impl,
+                          const CallArgs& args) const override;
+  virtual bool hasInstance(JSContext* cx, HandleObject wrapper,
+                           MutableHandleValue v, bool* bp) const override;
   virtual const char* className(JSContext* cx,
-                                JS::HandleObject proxy) const override;
-  virtual JSString* fun_toString(JSContext* cx, JS::HandleObject wrapper,
+                                HandleObject proxy) const override;
+  virtual JSString* fun_toString(JSContext* cx, HandleObject wrapper,
                                  bool isToSource) const override;
   virtual RegExpShared* regexp_toShared(JSContext* cx,
-                                        JS::HandleObject proxy) const override;
-  virtual bool boxedValue_unbox(JSContext* cx, JS::HandleObject proxy,
-                                JS::MutableHandleValue vp) const override;
+                                        HandleObject proxy) const override;
+  virtual bool boxedValue_unbox(JSContext* cx, HandleObject proxy,
+                                MutableHandleValue vp) const override;
 
   // Allocate CrossCompartmentWrappers in the nursery.
   virtual bool canNurseryAllocate() const override { return true; }
@@ -270,60 +262,58 @@ class JS_FRIEND_API OpaqueCrossCompartmentWrapper
 
   /* Standard internal methods. */
   virtual bool getOwnPropertyDescriptor(
-      JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
-      JS::MutableHandle<JS::PropertyDescriptor> desc) const override;
-  virtual bool defineProperty(JSContext* cx, JS::HandleObject wrapper,
-                              JS::HandleId id,
-                              JS::Handle<JS::PropertyDescriptor> desc,
-                              JS::ObjectOpResult& result) const override;
-  virtual bool ownPropertyKeys(JSContext* cx, JS::HandleObject wrapper,
-                               JS::MutableHandleIdVector props) const override;
-  virtual bool delete_(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
-                       JS::ObjectOpResult& result) const override;
-  virtual bool enumerate(JSContext* cx, JS::HandleObject proxy,
-                         JS::MutableHandleIdVector props) const override;
-  virtual bool getPrototype(JSContext* cx, JS::HandleObject wrapper,
-                            JS::MutableHandleObject protop) const override;
-  virtual bool setPrototype(JSContext* cx, JS::HandleObject wrapper,
-                            JS::HandleObject proto,
-                            JS::ObjectOpResult& result) const override;
+      JSContext* cx, HandleObject wrapper, HandleId id,
+      MutableHandle<PropertyDescriptor> desc) const override;
+  virtual bool defineProperty(JSContext* cx, HandleObject wrapper, HandleId id,
+                              Handle<PropertyDescriptor> desc,
+                              ObjectOpResult& result) const override;
+  virtual bool ownPropertyKeys(JSContext* cx, HandleObject wrapper,
+                               MutableHandleIdVector props) const override;
+  virtual bool delete_(JSContext* cx, HandleObject wrapper, HandleId id,
+                       ObjectOpResult& result) const override;
+  virtual bool enumerate(JSContext* cx, HandleObject proxy,
+                         MutableHandleIdVector props) const override;
+  virtual bool getPrototype(JSContext* cx, HandleObject wrapper,
+                            MutableHandleObject protop) const override;
+  virtual bool setPrototype(JSContext* cx, HandleObject wrapper,
+                            HandleObject proto,
+                            ObjectOpResult& result) const override;
   virtual bool getPrototypeIfOrdinary(
-      JSContext* cx, JS::HandleObject wrapper, bool* isOrdinary,
-      JS::MutableHandleObject protop) const override;
-  virtual bool setImmutablePrototype(JSContext* cx, JS::HandleObject wrapper,
+      JSContext* cx, HandleObject wrapper, bool* isOrdinary,
+      MutableHandleObject protop) const override;
+  virtual bool setImmutablePrototype(JSContext* cx, HandleObject wrapper,
                                      bool* succeeded) const override;
-  virtual bool preventExtensions(JSContext* cx, JS::HandleObject wrapper,
-                                 JS::ObjectOpResult& result) const override;
-  virtual bool isExtensible(JSContext* cx, JS::HandleObject wrapper,
+  virtual bool preventExtensions(JSContext* cx, HandleObject wrapper,
+                                 ObjectOpResult& result) const override;
+  virtual bool isExtensible(JSContext* cx, HandleObject wrapper,
                             bool* extensible) const override;
-  virtual bool has(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
+  virtual bool has(JSContext* cx, HandleObject wrapper, HandleId id,
                    bool* bp) const override;
-  virtual bool get(JSContext* cx, JS::HandleObject wrapper,
-                   JS::HandleValue receiver, JS::HandleId id,
-                   JS::MutableHandleValue vp) const override;
-  virtual bool set(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
-                   JS::HandleValue v, JS::HandleValue receiver,
-                   JS::ObjectOpResult& result) const override;
-  virtual bool call(JSContext* cx, JS::HandleObject wrapper,
-                    const JS::CallArgs& args) const override;
-  virtual bool construct(JSContext* cx, JS::HandleObject wrapper,
-                         const JS::CallArgs& args) const override;
+  virtual bool get(JSContext* cx, HandleObject wrapper, HandleValue receiver,
+                   HandleId id, MutableHandleValue vp) const override;
+  virtual bool set(JSContext* cx, HandleObject wrapper, HandleId id,
+                   HandleValue v, HandleValue receiver,
+                   ObjectOpResult& result) const override;
+  virtual bool call(JSContext* cx, HandleObject wrapper,
+                    const CallArgs& args) const override;
+  virtual bool construct(JSContext* cx, HandleObject wrapper,
+                         const CallArgs& args) const override;
 
   /* SpiderMonkey extensions. */
-  virtual bool hasOwn(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
+  virtual bool hasOwn(JSContext* cx, HandleObject wrapper, HandleId id,
                       bool* bp) const override;
   virtual bool getOwnEnumerablePropertyKeys(
-      JSContext* cx, JS::HandleObject wrapper,
-      JS::MutableHandleIdVector props) const override;
-  virtual bool getBuiltinClass(JSContext* cx, JS::HandleObject wrapper,
+      JSContext* cx, HandleObject wrapper,
+      MutableHandleIdVector props) const override;
+  virtual bool getBuiltinClass(JSContext* cx, HandleObject wrapper,
                                ESClass* cls) const override;
-  virtual bool isArray(JSContext* cx, JS::HandleObject obj,
+  virtual bool isArray(JSContext* cx, HandleObject obj,
                        JS::IsArrayAnswer* answer) const override;
-  virtual bool hasInstance(JSContext* cx, JS::HandleObject wrapper,
-                           JS::MutableHandleValue v, bool* bp) const override;
+  virtual bool hasInstance(JSContext* cx, HandleObject wrapper,
+                           MutableHandleValue v, bool* bp) const override;
   virtual const char* className(JSContext* cx,
-                                JS::HandleObject wrapper) const override;
-  virtual JSString* fun_toString(JSContext* cx, JS::HandleObject proxy,
+                                HandleObject wrapper) const override;
+  virtual JSString* fun_toString(JSContext* cx, HandleObject proxy,
                                  bool isToSource) const override;
 
   static const OpaqueCrossCompartmentWrapper singleton;
@@ -344,35 +334,33 @@ class JS_FRIEND_API SecurityWrapper : public Base {
   explicit constexpr SecurityWrapper(unsigned flags, bool hasPrototype = false)
       : Base(flags, hasPrototype, /* hasSecurityPolicy = */ true) {}
 
-  virtual bool enter(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
+  virtual bool enter(JSContext* cx, HandleObject wrapper, HandleId id,
                      Wrapper::Action act, bool mayThrow,
                      bool* bp) const override;
 
-  virtual bool defineProperty(JSContext* cx, JS::HandleObject wrapper,
-                              JS::HandleId id,
-                              JS::Handle<JS::PropertyDescriptor> desc,
-                              JS::ObjectOpResult& result) const override;
-  virtual bool isExtensible(JSContext* cx, JS::HandleObject wrapper,
+  virtual bool defineProperty(JSContext* cx, HandleObject wrapper, HandleId id,
+                              Handle<PropertyDescriptor> desc,
+                              ObjectOpResult& result) const override;
+  virtual bool isExtensible(JSContext* cx, HandleObject wrapper,
                             bool* extensible) const override;
-  virtual bool preventExtensions(JSContext* cx, JS::HandleObject wrapper,
-                                 JS::ObjectOpResult& result) const override;
-  virtual bool setPrototype(JSContext* cx, JS::HandleObject proxy,
-                            JS::HandleObject proto,
-                            JS::ObjectOpResult& result) const override;
-  virtual bool setImmutablePrototype(JSContext* cx, JS::HandleObject proxy,
+  virtual bool preventExtensions(JSContext* cx, HandleObject wrapper,
+                                 ObjectOpResult& result) const override;
+  virtual bool setPrototype(JSContext* cx, HandleObject proxy,
+                            HandleObject proto,
+                            ObjectOpResult& result) const override;
+  virtual bool setImmutablePrototype(JSContext* cx, HandleObject proxy,
                                      bool* succeeded) const override;
 
-  virtual bool nativeCall(JSContext* cx, JS::IsAcceptableThis test,
-                          JS::NativeImpl impl,
-                          const JS::CallArgs& args) const override;
-  virtual bool getBuiltinClass(JSContext* cx, JS::HandleObject wrapper,
+  virtual bool nativeCall(JSContext* cx, IsAcceptableThis test, NativeImpl impl,
+                          const CallArgs& args) const override;
+  virtual bool getBuiltinClass(JSContext* cx, HandleObject wrapper,
                                ESClass* cls) const override;
-  virtual bool isArray(JSContext* cx, JS::HandleObject wrapper,
+  virtual bool isArray(JSContext* cx, HandleObject wrapper,
                        JS::IsArrayAnswer* answer) const override;
   virtual RegExpShared* regexp_toShared(JSContext* cx,
-                                        JS::HandleObject proxy) const override;
-  virtual bool boxedValue_unbox(JSContext* cx, JS::HandleObject proxy,
-                                JS::MutableHandleValue vp) const override;
+                                        HandleObject proxy) const override;
+  virtual bool boxedValue_unbox(JSContext* cx, HandleObject proxy,
+                                MutableHandleValue vp) const override;
 
   // Allow isCallable and isConstructor. They used to be class-level, and so
   // could not be guarded against.
@@ -388,9 +376,8 @@ class JS_FRIEND_API SecurityWrapper : public Base {
 typedef SecurityWrapper<CrossCompartmentWrapper>
     CrossCompartmentSecurityWrapper;
 
-extern JSObject* TransparentObjectWrapper(JSContext* cx,
-                                          JS::HandleObject existing,
-                                          JS::HandleObject obj);
+extern JSObject* TransparentObjectWrapper(JSContext* cx, HandleObject existing,
+                                          HandleObject obj);
 
 inline bool IsWrapper(const JSObject* obj) {
   return IsProxy(obj) && GetProxyHandler(obj)->family() == &Wrapper::family;
@@ -468,8 +455,7 @@ JS_FRIEND_API JSObject* CheckedUnwrapDynamic(JSObject* obj, JSContext* cx,
 
 // Unwrap only the outermost security wrapper, with the same semantics as
 // above. This is the checked version of Wrapper::wrappedObject.
-JS_FRIEND_API JSObject* UnwrapOneCheckedDynamic(JS::HandleObject obj,
-                                                JSContext* cx,
+JS_FRIEND_API JSObject* UnwrapOneCheckedDynamic(HandleObject obj, JSContext* cx,
                                                 bool stopAtWindowProxy = true);
 
 // Given a JSObject, returns that object stripped of wrappers. This returns the
@@ -490,12 +476,11 @@ JS_FRIEND_API void NukeCrossCompartmentWrapperIfExists(JSContext* cx,
                                                        JSObject* target);
 
 void RemapWrapper(JSContext* cx, JSObject* wobj, JSObject* newTarget);
-void RemapDeadWrapper(JSContext* cx, JS::HandleObject wobj,
-                      JS::HandleObject newTarget);
+void RemapDeadWrapper(JSContext* cx, HandleObject wobj, HandleObject newTarget);
 
 JS_FRIEND_API bool RemapAllWrappersForObject(JSContext* cx,
-                                             JS::HandleObject oldTarget,
-                                             JS::HandleObject newTarget);
+                                             HandleObject oldTarget,
+                                             HandleObject newTarget);
 
 // API to recompute all cross-compartment wrappers whose source and target
 // match the given filters.

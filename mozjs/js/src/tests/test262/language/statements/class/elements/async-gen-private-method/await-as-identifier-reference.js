@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) error:SyntaxError -- requires shell-options
+// |reftest| skip error:SyntaxError -- class-methods-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/async-generators/await-as-identifier-reference.case
 // - src/async-generators/syntax/async-class-decl-private-method.template

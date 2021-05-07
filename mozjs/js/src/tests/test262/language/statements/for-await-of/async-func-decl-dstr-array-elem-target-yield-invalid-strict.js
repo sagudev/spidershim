@@ -7,7 +7,7 @@
 description: When a `yield` token appears within the DestructuringAssignmentTarget of an AssignmentElement and outside of a generator function body, it behaves as an IdentifierReference. (for-await-of statement in an async function declaration)
 esid: sec-for-in-and-for-of-statements-runtime-semantics-labelledevaluation
 features: [destructuring-binding, async-iteration]
-flags: [generated, onlyStrict]
+flags: [generated, onlyStrict, async]
 negative:
   phase: parse
   type: SyntaxError

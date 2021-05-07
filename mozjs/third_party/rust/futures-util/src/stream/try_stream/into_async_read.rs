@@ -1,6 +1,5 @@
 use crate::stream::TryStreamExt;
 use core::pin::Pin;
-use futures_core::ready;
 use futures_core::stream::TryStream;
 use futures_core::task::{Context, Poll};
 use futures_io::{AsyncRead, AsyncWrite, AsyncBufRead};
@@ -10,7 +9,6 @@ use std::io::{Error, Result};
 /// Reader for the [`into_async_read`](super::TryStreamExt::into_async_read) method.
 #[derive(Debug)]
 #[must_use = "readers do nothing unless polled"]
-#[cfg_attr(docsrs, doc(cfg(feature = "io")))]
 pub struct IntoAsyncRead<St>
 where
     St: TryStream<Error = Error> + Unpin,
@@ -40,7 +38,7 @@ where
     St::Ok: AsRef<[u8]>,
 {
     pub(super) fn new(stream: St) -> Self {
-        Self {
+        IntoAsyncRead {
             stream,
             state: ReadState::PendingChunk,
         }

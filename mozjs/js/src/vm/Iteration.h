@@ -14,8 +14,8 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/MemoryReporting.h"
 
-#include "builtin/SelfHostingDefines.h"
 #include "gc/Barrier.h"
+#include "vm/ReceiverGuard.h"
 #include "vm/Stack.h"
 
 namespace js {
@@ -32,37 +32,38 @@ struct NativeIterator {
   // Internal iterator object.
   const GCPtrObject iterObj_ = {};
 
-  // The end of GCPtrShapes that appear directly after |this|, as part of an
-  // overall allocation that stores |*this|, shapes, and iterated strings.
-  // Once this has been fully initialized, it also equals the start of iterated
-  // strings.
-  GCPtrShape* shapesEnd_;  // initialized by constructor
+  // The end of HeapReceiverGuards that appear directly after |this|, as part
+  // of an overall allocation that stores |*this|, receiver guards, and
+  // iterated strings.  Once this has been fully initialized, it also equals
+  // the start of iterated strings.
+  HeapReceiverGuard* guardsEnd_;  // initialized by constructor
 
   // The next property, pointing into an array of strings directly after any
-  // GCPtrShapes that appear directly after |*this|, as part of an overall
-  // allocation that stores |*this|, shapes, and iterated strings.
+  // HeapReceiverGuards that appear directly after |*this|, as part of an
+  // overall allocation that stores |*this|, receiver guards, and iterated
+  // strings.
   GCPtrLinearString* propertyCursor_;  // initialized by constructor
 
   // The limit/end of properties to iterate (and, assuming no error occurred
   // while constructing this NativeIterator, the end of the full allocation
-  // storing |*this|, shapes, and strings).  Beware!  This value may change as
-  // properties are deleted from the observed object.
+  // storing |*this|, receiver guards, and strings).  Beware!  This value may
+  // change as properties are deleted from the observed object.
   GCPtrLinearString* propertiesEnd_;  // initialized by constructor
 
-  HashNumber shapesHash_;  // initialized by constructor
+  uint32_t guardKey_;  // initialized by constructor
 
  public:
   // For cacheable native iterators, whether the iterator is currently
   // active.  Not serialized by XDR.
   struct Flags {
-    // This flag is set when all shapes and properties associated with this
-    // NativeIterator have been initialized, such that |shapesEnd_|, in
-    // addition to being the end of shapes, is also the beginning of
+    // This flag is set when all guards and properties associated with this
+    // NativeIterator have been initialized, such that |guardsEnd_|, in
+    // addition to being the end of guards, is also the beginning of
     // properties.
     //
     // This flag is only *not* set when a NativeIterator is in the process
-    // of being constructed.  At such time |shapesEnd_| accounts only for
-    // shapes that have been initialized -- potentially none of them.
+    // of being constructed.  At such time |guardsEnd_| accounts only for
+    // guards that have been initialized -- potentially none of them.
     // Instead, |propertyCursor_| is initialized to the ultimate/actual
     // start of properties and must be used instead of |propertiesBegin()|,
     // which asserts that this flag is present to guard against misuse.
@@ -89,36 +90,27 @@ struct NativeIterator {
  private:
   static constexpr uint32_t FlagsBits = 3;
   static constexpr uint32_t FlagsMask = (1 << FlagsBits) - 1;
-
- public:
   static constexpr uint32_t PropCountLimit = 1 << (32 - FlagsBits);
-
- private:
-  // While in compartment->enumerators, these form a doubly linked list.
-  NativeIterator* next_ = nullptr;
-  NativeIterator* prev_ = nullptr;
 
   // Stores Flags bits in the lower bits and the initial property count above
   // them.
   uint32_t flagsAndCount_ = 0;
 
-#ifdef DEBUG
-  // If true, this iterator may contain indexed properties that came from
-  // objects on the prototype chain. This is used by certain debug assertions.
-  bool maybeHasIndexedPropertiesFromProto_ = false;
-#endif
+  /* While in compartment->enumerators, these form a doubly linked list. */
+  NativeIterator* next_ = nullptr;
+  NativeIterator* prev_ = nullptr;
 
   // END OF PROPERTIES
 
   // No further fields appear after here *in NativeIterator*, but this class
   // is always allocated with space tacked on immediately after |this| to
-  // store iterated property names up to |props_end| and |numShapes| shapes
-  // after that.
+  // store iterated property names up to |props_end| and |guard_length|
+  // HeapReceiverGuards after that.
 
  public:
   /**
    * Initialize a NativeIterator properly allocated for |props.length()|
-   * properties and |numShapes| shapes.
+   * properties and |numGuards| guards.
    *
    * Despite being a constructor, THIS FUNCTION CAN REPORT ERRORS.  Users
    * MUST set |*hadError = false| on entry and consider |*hadError| on return
@@ -126,7 +118,7 @@ struct NativeIterator {
    */
   NativeIterator(JSContext* cx, Handle<PropertyIteratorObject*> propIter,
                  Handle<JSObject*> objBeingIterated, HandleIdVector props,
-                 uint32_t numShapes, HashNumber shapesHash, bool* hadError);
+                 uint32_t numGuards, uint32_t guardKey, bool* hadError);
 
   /** Initialize an |ObjectRealm::enumerators| sentinel. */
   NativeIterator();
@@ -135,42 +127,44 @@ struct NativeIterator {
 
   void changeObjectBeingIterated(JSObject& obj) { objectBeingIterated_ = &obj; }
 
-  GCPtrShape* shapesBegin() const {
-    static_assert(alignof(GCPtrShape) <= alignof(NativeIterator),
+  HeapReceiverGuard* guardsBegin() const {
+    static_assert(alignof(HeapReceiverGuard) <= alignof(NativeIterator),
                   "NativeIterator must be aligned to begin storing "
-                  "GCPtrShapes immediately after it with no required padding");
+                  "HeapReceiverGuards immediately after it with no "
+                  "required padding");
     const NativeIterator* immediatelyAfter = this + 1;
     auto* afterNonConst = const_cast<NativeIterator*>(immediatelyAfter);
-    return reinterpret_cast<GCPtrShape*>(afterNonConst);
+    return reinterpret_cast<HeapReceiverGuard*>(afterNonConst);
   }
 
-  GCPtrShape* shapesEnd() const { return shapesEnd_; }
+  HeapReceiverGuard* guardsEnd() const { return guardsEnd_; }
 
-  uint32_t shapeCount() const {
-    return mozilla::PointerRangeSize(shapesBegin(), shapesEnd());
+  uint32_t guardCount() const {
+    return mozilla::PointerRangeSize(guardsBegin(), guardsEnd());
   }
 
   GCPtrLinearString* propertiesBegin() const {
-    static_assert(alignof(GCPtrShape) >= alignof(GCPtrLinearString),
+    static_assert(alignof(HeapReceiverGuard) >= alignof(GCPtrLinearString),
                   "GCPtrLinearStrings for properties must be able to appear "
-                  "directly after any GCPtrShapes after this NativeIterator, "
-                  "with no padding space required for correct alignment");
+                  "directly after any HeapReceiverGuards after this "
+                  "NativeIterator, with no padding space required for "
+                  "correct alignment");
     static_assert(alignof(NativeIterator) >= alignof(GCPtrLinearString),
                   "GCPtrLinearStrings for properties must be able to appear "
-                  "directly after this NativeIterator when no GCPtrShapes are "
-                  "present, with no padding space required for correct "
-                  "alignment");
+                  "directly after this NativeIterator when no "
+                  "HeapReceiverGuards are present, with no padding space "
+                  "required for correct alignment");
 
     // We *could* just check the assertion below if we wanted, but the
     // incompletely-initialized NativeIterator case matters for so little
     // code that we prefer not imposing the condition-check on every single
     // user.
     MOZ_ASSERT(isInitialized(),
-               "NativeIterator must be initialized, or else |shapesEnd_| "
+               "NativeIterator must be initialized, or else |guardsEnd_| "
                "isn't necessarily the start of properties and instead "
-               "|propertyCursor_| is");
+               "|propertyCursor_| instead is");
 
-    return reinterpret_cast<GCPtrLinearString*>(shapesEnd_);
+    return reinterpret_cast<GCPtrLinearString*>(guardsEnd_);
   }
 
   GCPtrLinearString* propertiesEnd() const { return propertiesEnd_; }
@@ -234,35 +228,28 @@ struct NativeIterator {
     propertyCursor_++;
   }
 
-  HashNumber shapesHash() const { return shapesHash_; }
+  uint32_t guardKey() const { return guardKey_; }
 
   bool isInitialized() const { return flags() & Flags::Initialized; }
 
   size_t allocationSize() const;
-
-#ifdef DEBUG
-  void setMaybeHasIndexedPropertiesFromProto() {
-    maybeHasIndexedPropertiesFromProto_ = true;
-  }
-  bool maybeHasIndexedPropertiesFromProto() const {
-    return maybeHasIndexedPropertiesFromProto_;
-  }
-#endif
 
  private:
   uint32_t flags() const { return flagsAndCount_ & FlagsMask; }
 
   uint32_t initialPropertyCount() const { return flagsAndCount_ >> FlagsBits; }
 
-  static uint32_t initialFlagsAndCount(uint32_t count) {
-    // No flags are initially set.
-    MOZ_ASSERT(count < PropCountLimit);
-    return count << FlagsBits;
-  }
-
   void setFlags(uint32_t flags) {
     MOZ_ASSERT((flags & ~FlagsMask) == 0);
     flagsAndCount_ = (initialPropertyCount() << FlagsBits) | flags;
+  }
+
+  MOZ_MUST_USE bool setInitialPropertyCount(uint32_t count) {
+    if (count >= PropCountLimit) {
+      return false;
+    }
+    flagsAndCount_ = (count << FlagsBits) | flags();
+    return true;
   }
 
   void markInitialized() {
@@ -337,8 +324,8 @@ struct NativeIterator {
     return offsetof(NativeIterator, objectBeingIterated_);
   }
 
-  static constexpr size_t offsetOfShapesEnd() {
-    return offsetof(NativeIterator, shapesEnd_);
+  static constexpr size_t offsetOfGuardsEnd() {
+    return offsetof(NativeIterator, guardsEnd_);
   }
 
   static constexpr size_t offsetOfPropertyCursor() {
@@ -408,8 +395,8 @@ class RegExpStringIteratorObject : public NativeObject {
 RegExpStringIteratorObject* NewRegExpStringIteratorTemplate(JSContext* cx);
 RegExpStringIteratorObject* NewRegExpStringIterator(JSContext* cx);
 
-[[nodiscard]] bool EnumerateProperties(JSContext* cx, HandleObject obj,
-                                       MutableHandleIdVector props);
+MOZ_MUST_USE bool EnumerateProperties(JSContext* cx, HandleObject obj,
+                                      MutableHandleIdVector props);
 
 PropertyIteratorObject* LookupInIteratorCache(JSContext* cx, HandleObject obj);
 
@@ -425,12 +412,6 @@ extern bool SuppressDeletedProperty(JSContext* cx, HandleObject obj, jsid id);
 
 extern bool SuppressDeletedElement(JSContext* cx, HandleObject obj,
                                    uint32_t index);
-
-#ifdef DEBUG
-extern void AssertDenseElementsNotIterated(NativeObject* obj);
-#else
-inline void AssertDenseElementsNotIterated(NativeObject* obj) {}
-#endif
 
 /*
  * IteratorMore() returns the next iteration value. If no value is available,
@@ -449,55 +430,7 @@ inline Value IteratorMore(JSObject* iterobj) {
 extern PlainObject* CreateIterResultObject(JSContext* cx, HandleValue value,
                                            bool done);
 
-/*
- * Global Iterator constructor.
- * Iterator Helpers proposal 2.1.3.
- */
-class IteratorObject : public NativeObject {
- public:
-  static const JSClass class_;
-  static const JSClass protoClass_;
-};
-
-/*
- * Wrapper for iterators created via Iterator.from.
- * Iterator Helpers proposal 2.1.3.3.1.1.
- */
-class WrapForValidIteratorObject : public NativeObject {
- public:
-  static const JSClass class_;
-
-  enum { IteratedSlot, SlotCount };
-
-  static_assert(
-      IteratedSlot == ITERATED_SLOT,
-      "IteratedSlot must match self-hosting define for iterated object slot.");
-};
-
-WrapForValidIteratorObject* NewWrapForValidIterator(JSContext* cx);
-
-/*
- * Generator-esque object returned by Iterator Helper methods.
- */
-class IteratorHelperObject : public NativeObject {
- public:
-  static const JSClass class_;
-
-  enum {
-    // The implementation (an instance of one of the generators in
-    // builtin/Iterator.js).
-    // Never null.
-    GeneratorSlot,
-
-    SlotCount,
-  };
-
-  static_assert(GeneratorSlot == ITERATOR_HELPER_GENERATOR_SLOT,
-                "GeneratorSlot must match self-hosting define for generator "
-                "object slot.");
-};
-
-IteratorHelperObject* NewIteratorHelper(JSContext* cx);
+enum class IteratorKind { Sync, Async };
 
 } /* namespace js */
 

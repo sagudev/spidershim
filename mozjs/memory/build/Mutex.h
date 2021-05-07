@@ -14,7 +14,7 @@
 #else
 #  include <pthread.h>
 #endif
-#include "mozilla/Attributes.h"
+#include "mozilla/GuardObjects.h"
 
 // Mutexes based on spinlocks.  We can't use normal pthread spinlocks in all
 // places, because they require malloc()ed memory, which causes bootstrapping
@@ -112,11 +112,16 @@ typedef Mutex StaticMutex;
 
 template <typename T>
 struct MOZ_RAII AutoLock {
-  explicit AutoLock(T& aMutex) : mMutex(aMutex) { mMutex.Lock(); }
+  explicit AutoLock(T& aMutex MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : mMutex(aMutex) {
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+    mMutex.Lock();
+  }
 
   ~AutoLock() { mMutex.Unlock(); }
 
  private:
+  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER;
   T& mMutex;
 };
 

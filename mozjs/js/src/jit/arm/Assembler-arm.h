@@ -7,20 +7,20 @@
 #ifndef jit_arm_Assembler_arm_h
 #define jit_arm_Assembler_arm_h
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/MathAlgorithms.h"
 
 #include <algorithm>
-#include <iterator>
 
 #include "jit/arm/Architecture-arm.h"
 #include "jit/arm/disasm/Disasm-arm.h"
 #include "jit/CompactBuffer.h"
 #include "jit/JitCode.h"
+#include "jit/JitRealm.h"
 #include "jit/shared/Assembler-shared.h"
 #include "jit/shared/Disassembler-shared.h"
 #include "jit/shared/IonAssemblerBufferWithConstantPools.h"
-#include "wasm/WasmTypes.h"
 
 union PoolHintPun;
 
@@ -80,7 +80,8 @@ static constexpr Register IntArgReg2 = r2;
 static constexpr Register IntArgReg3 = r3;
 static constexpr Register HeapReg = r10;
 static constexpr Register CallTempNonArgRegs[] = {r5, r6, r7, r8};
-static const uint32_t NumCallTempNonArgRegs = std::size(CallTempNonArgRegs);
+static const uint32_t NumCallTempNonArgRegs =
+    mozilla::ArrayLength(CallTempNonArgRegs);
 
 // These register assignments for the 64-bit atomic ops are frequently too
 // constraining, but we have no way of expressing looser constraints to the
@@ -99,8 +100,6 @@ static constexpr Register64 CmpXchgNew64 =
     Register64(CmpXchgNewHi, CmpXchgNewLo);
 static constexpr Register CmpXchgOutLo = IntArgReg0;
 static constexpr Register CmpXchgOutHi = IntArgReg1;
-static constexpr Register64 CmpXchgOut64 =
-    Register64(CmpXchgOutHi, CmpXchgOutLo);
 
 // Exchange: Any two non-equal odd/even pairs would do for `new` and `out`.
 
@@ -119,12 +118,8 @@ static constexpr Register64 FetchOpVal64 =
     Register64(FetchOpValHi, FetchOpValLo);
 static constexpr Register FetchOpTmpLo = IntArgReg2;
 static constexpr Register FetchOpTmpHi = IntArgReg3;
-static constexpr Register64 FetchOpTmp64 =
-    Register64(FetchOpTmpHi, FetchOpTmpLo);
 static constexpr Register FetchOpOutLo = IntArgReg0;
 static constexpr Register FetchOpOutHi = IntArgReg1;
-static constexpr Register64 FetchOpOut64 =
-    Register64(FetchOpOutHi, FetchOpOutLo);
 
 class ABIArgGenerator {
   unsigned intRegIndex_;
@@ -152,7 +147,6 @@ class ABIArgGenerator {
   ABIArg next(MIRType argType);
   ABIArg& current() { return current_; }
   uint32_t stackBytesConsumedSoFar() const { return stackOffset_; }
-  void increaseStackOffset(uint32_t bytes) { stackOffset_ += bytes; }
 };
 
 bool IsUnaligned(const wasm::MemoryAccessDesc& access);
@@ -195,10 +189,6 @@ static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 // code.  This must not overlap ReturnReg, JSReturnOperand, or WasmTlsReg.  It
 // must be a volatile register.
 static constexpr Register WasmJitEntryReturnScratch = r5;
-
-// Register used to store a reference to an exception thrown by Wasm to an
-// exception handling block. Should not overlap with WasmTlsReg.
-static constexpr Register WasmExceptionReg = ABINonArgReg2;
 
 static constexpr Register PreBarrierReg = r1;
 
@@ -304,11 +294,6 @@ static_assert(JitStackAlignment % SimdMemoryAlignment == 0,
 
 static const uint32_t WasmStackAlignment = SimdMemoryAlignment;
 static const uint32_t WasmTrapInstructionLength = 4;
-
-// The offsets are dynamically asserted during
-// code generation in the prologue/epilogue.
-static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
-static constexpr uint32_t WasmCheckedTailEntryOffset = 16u;
 
 static const Scale ScalePointer = TimesFour;
 
@@ -1265,6 +1250,10 @@ class Assembler : public AssemblerShared {
 
   static DoubleCondition InvertCondition(DoubleCondition cond);
 
+  void writeRelocation(BufferOffset src) {
+    jumpRelocations_.writeUnsigned(src.getOffset());
+  }
+
   void writeDataRelocation(BufferOffset offset, ImmGCPtr ptr) {
     // Raw GC pointer relocations and Value relocations both end up in
     // Assembler::TraceDataRelocations.
@@ -1684,7 +1673,7 @@ class Assembler : public AssemblerShared {
   void addPendingJump(BufferOffset src, ImmPtr target, RelocationKind kind) {
     enoughMemory_ &= jumps_.append(RelativePatch(target.value, kind));
     if (kind == RelocationKind::JITCODE) {
-      jumpRelocations_.writeUnsigned(src.getOffset());
+      writeRelocation(src);
     }
   }
 
@@ -2198,6 +2187,16 @@ static inline bool GetTempRegForIntArg(uint32_t usedIntArgs,
   return true;
 }
 
+#if !defined(JS_CODEGEN_ARM_HARDFP) || defined(JS_SIMULATOR_ARM)
+
+static inline uint32_t GetArgStackDisp(uint32_t arg) {
+  MOZ_ASSERT(!UseHardFpABI());
+  MOZ_ASSERT(arg >= NumIntArgRegs);
+  return (arg - NumIntArgRegs) * sizeof(intptr_t);
+}
+
+#endif
+
 #if defined(JS_CODEGEN_ARM_HARDFP) || defined(JS_SIMULATOR_ARM)
 
 static inline bool GetFloat32ArgReg(uint32_t usedIntArgs,
@@ -2219,6 +2218,47 @@ static inline bool GetDoubleArgReg(uint32_t usedIntArgs, uint32_t usedFloatArgs,
   }
   *out = VFPRegister(usedFloatArgs >> 1, VFPRegister::Double);
   return true;
+}
+
+static inline uint32_t GetIntArgStackDisp(uint32_t usedIntArgs,
+                                          uint32_t usedFloatArgs,
+                                          uint32_t* padding) {
+  MOZ_ASSERT(UseHardFpABI());
+  MOZ_ASSERT(usedIntArgs >= NumIntArgRegs);
+  uint32_t doubleSlots =
+      std::max(0, (int32_t)usedFloatArgs - (int32_t)NumFloatArgRegs);
+  doubleSlots *= 2;
+  int intSlots = usedIntArgs - NumIntArgRegs;
+  return (intSlots + doubleSlots + *padding) * sizeof(intptr_t);
+}
+
+static inline uint32_t GetFloat32ArgStackDisp(uint32_t usedIntArgs,
+                                              uint32_t usedFloatArgs,
+                                              uint32_t* padding) {
+  MOZ_ASSERT(UseHardFpABI());
+  MOZ_ASSERT(usedFloatArgs >= NumFloatArgRegs);
+  uint32_t intSlots = 0;
+  if (usedIntArgs > NumIntArgRegs) {
+    intSlots = usedIntArgs - NumIntArgRegs;
+  }
+  uint32_t float32Slots = usedFloatArgs - NumFloatArgRegs;
+  return (intSlots + float32Slots + *padding) * sizeof(intptr_t);
+}
+
+static inline uint32_t GetDoubleArgStackDisp(uint32_t usedIntArgs,
+                                             uint32_t usedFloatArgs,
+                                             uint32_t* padding) {
+  MOZ_ASSERT(UseHardFpABI());
+  MOZ_ASSERT(usedFloatArgs >= NumFloatArgRegs);
+  uint32_t intSlots = 0;
+  if (usedIntArgs > NumIntArgRegs) {
+    intSlots = usedIntArgs - NumIntArgRegs;
+    // Update the amount of padding required.
+    *padding += (*padding + usedIntArgs) % 2;
+  }
+  uint32_t doubleSlots = usedFloatArgs - NumFloatArgRegs;
+  doubleSlots *= 2;
+  return (intSlots + doubleSlots + *padding) * sizeof(intptr_t);
 }
 
 #endif

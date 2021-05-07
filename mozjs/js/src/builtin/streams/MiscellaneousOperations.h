@@ -9,6 +9,8 @@
 #ifndef builtin_streams_MiscellaneousOperations_h
 #define builtin_streams_MiscellaneousOperations_h
 
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
 #include "jstypes.h"           // JS_PUBLIC_API
 #include "js/CallArgs.h"       // JS::CallArgs
 #include "js/RootingAPI.h"     // JS::{,Mutable}Handle
@@ -22,10 +24,10 @@ namespace js {
 
 class PropertyName;
 
-[[nodiscard]] extern PromiseObject* PromiseRejectedWithPendingError(
+extern MOZ_MUST_USE PromiseObject* PromiseRejectedWithPendingError(
     JSContext* cx);
 
-[[nodiscard]] inline bool ReturnPromiseRejectedWithPendingError(
+inline MOZ_MUST_USE bool ReturnPromiseRejectedWithPendingError(
     JSContext* cx, const JS::CallArgs& args) {
   PromiseObject* promise = PromiseRejectedWithPendingError(cx);
   if (!promise) {
@@ -47,7 +49,7 @@ class PropertyName;
  * caller's responsibility to make sure that later, when the algorithm is
  * "performed", the appropriate steps are carried out.
  */
-[[nodiscard]] extern bool CreateAlgorithmFromUnderlyingMethod(
+extern MOZ_MUST_USE bool CreateAlgorithmFromUnderlyingMethod(
     JSContext* cx, JS::Handle<JS::Value> underlyingObject,
     const char* methodNameForErrorMessage, JS::Handle<PropertyName*> methodName,
     JS::MutableHandle<JS::Value> method);
@@ -56,22 +58,22 @@ class PropertyName;
  * Streams spec, 6.3.2. InvokeOrNoop ( O, P, args )
  * As it happens, all callers pass exactly one argument.
  */
-[[nodiscard]] extern bool InvokeOrNoop(JSContext* cx, JS::Handle<JS::Value> O,
-                                       JS::Handle<PropertyName*> P,
-                                       JS::Handle<JS::Value> arg,
-                                       JS::MutableHandle<JS::Value> rval);
+extern MOZ_MUST_USE bool InvokeOrNoop(JSContext* cx, JS::Handle<JS::Value> O,
+                                      JS::Handle<PropertyName*> P,
+                                      JS::Handle<JS::Value> arg,
+                                      JS::MutableHandle<JS::Value> rval);
 
 /**
  * Streams spec, 6.3.7. ValidateAndNormalizeHighWaterMark ( highWaterMark )
  */
-[[nodiscard]] extern bool ValidateAndNormalizeHighWaterMark(
+extern MOZ_MUST_USE bool ValidateAndNormalizeHighWaterMark(
     JSContext* cx, JS::Handle<JS::Value> highWaterMarkVal,
     double* highWaterMark);
 
 /**
  * Streams spec, 6.3.8. MakeSizeAlgorithmFromSizeFunction ( size )
  */
-[[nodiscard]] extern bool MakeSizeAlgorithmFromSizeFunction(
+extern MOZ_MUST_USE bool MakeSizeAlgorithmFromSizeFunction(
     JSContext* cx, JS::Handle<JS::Value> size);
 
 template <class T>

@@ -8,6 +8,7 @@
 #define vm_PromiseObject_h
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
 #include <stdint.h>  // int32_t, uint64_t
 
@@ -166,12 +167,12 @@ class PromiseObject : public NativeObject {
     return getFixedSlot(PromiseSlot_ReactionsOrResult);
   }
 
-  [[nodiscard]] static bool resolve(JSContext* cx,
-                                    JS::Handle<PromiseObject*> promise,
-                                    JS::Handle<JS::Value> resolutionValue);
-  [[nodiscard]] static bool reject(JSContext* cx,
+  static MOZ_MUST_USE bool resolve(JSContext* cx,
                                    JS::Handle<PromiseObject*> promise,
-                                   JS::Handle<JS::Value> rejectionValue);
+                                   JS::Handle<JS::Value> resolutionValue);
+  static MOZ_MUST_USE bool reject(JSContext* cx,
+                                  JS::Handle<PromiseObject*> promise,
+                                  JS::Handle<JS::Value> rejectionValue);
 
   static void onSettled(JSContext* cx, JS::Handle<PromiseObject*> promise,
                         JS::Handle<js::SavedFrame*> rejectionStack);
@@ -186,7 +187,7 @@ class PromiseObject : public NativeObject {
     return resolutionTime() - allocationTime();
   }
 
-  [[nodiscard]] bool dependentPromises(
+  MOZ_MUST_USE bool dependentPromises(
       JSContext* cx, JS::MutableHandle<GCVector<Value>> values);
 
   // Return the process-unique ID of this promise. Only used by the debugger.
@@ -205,7 +206,7 @@ class PromiseObject : public NativeObject {
   // false. If a builder call returns false, iteration stops, and this function
   // returns false; the build should set an error on 'cx' as appropriate.
   // Otherwise, this function returns true.
-  [[nodiscard]] bool forEachReactionRecord(
+  MOZ_MUST_USE bool forEachReactionRecord(
       JSContext* cx, PromiseReactionRecordBuilder& builder);
 
   bool isUnhandled() {

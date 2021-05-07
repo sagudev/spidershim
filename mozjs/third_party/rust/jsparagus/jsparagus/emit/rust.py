@@ -4,16 +4,14 @@ import json
 import re
 import unicodedata
 import sys
-import itertools
-import collections
-from contextlib import contextmanager
 
 from ..runtime import (ERROR, ErrorToken, SPECIAL_CASE_TAG)
 from ..ordered import OrderedSet
 
-from ..grammar import (Some, Nt, InitNt, End, ErrorSymbol)
-from ..actions import (Accept, Action, Replay, Unwind, Reduce, CheckNotOnNewLine, FilterStates,
-                       PushFlag, PopFlag, FunCall, Seq)
+from ..grammar import (CallMethod, Some, is_concrete_element, Nt, InitNt, Optional, End,
+                       ErrorSymbol)
+from ..actions import (Accept, Action, Reduce, Lookahead, CheckNotOnNewLine, FilterFlag, PushFlag,
+                       PopFlag, FunCall, Seq)
 
 from .. import types
 
@@ -77,55 +75,16 @@ TERMINAL_NAMES = {
     '...': 'Ellipsis',
 }
 
-
-@contextmanager
-def indent(writer):
-    """This function is meant to be used with the `with` keyword of python, and
-    allow the user of it to add an indentation level to the code which is
-    enclosed in the `with` statement.
-
-    This has the advantage that the indentation of the python code is reflected
-    to the generated code when `with indent(self):` is used. """
-    writer.indent += 1
-    yield None
-    writer.indent -= 1
-
-def extract_ranges(iterator):
-    """Given a sorted iterator of integer, yield the contiguous ranges"""
-    # Identify contiguous ranges of states.
-    ranges = collections.defaultdict(list)
-    # A sorted list of contiguous integers implies that elements are separated
-    # by 1, as well as their indexes. Thus we can categorize them into buckets
-    # of contiguous integers using the base, which is the value v from which we
-    # remove the index i.
-    for i, v in enumerate(iterator):
-        ranges[v - i].append(v)
-    for l in ranges.values():
-        yield (l[0], l[-1])
-
-def rust_range(riter):
-    """Prettify a list of tuple of (min, max) of matched ranges into Rust
-    syntax."""
-    def minmax_join(rmin, rmax):
-        if rmin == rmax:
-            return str(rmin)
-        else:
-            return "{}..={}".format(rmin, rmax)
-    return " | ".join(minmax_join(rmin, rmax) for rmin, rmax in riter)
-
 class RustActionWriter:
     """Write epsilon state transitions for a given action function."""
     ast_builder = types.Type("AstBuilderDelegate", (types.Lifetime("alloc"),))
 
-    def __init__(self, writer, mode, traits, indent):
-        self.states = writer.states
+    def __init__(self, writer, traits, indent):
         self.writer = writer
-        self.mode = mode
         self.traits = traits
         self.indent = indent
         self.has_ast_builder = self.ast_builder in traits
         self.used_variables = set()
-        self.replay_args = []
 
     def implement_trait(self, funcall):
         "Returns True if this function call should be encoded"
@@ -145,17 +104,13 @@ class RustActionWriter:
     def collect_uses(self, act):
         "Generator which visit all used variables."
         assert isinstance(act, Action)
-        if isinstance(act, (Reduce, Unwind)):
+        if isinstance(act, Reduce):
             yield "value"
         elif isinstance(act, FunCall):
-            arg_offset = act.offset
-            if arg_offset < 0:
-                # See write_funcall.
-                arg_offset = 0
             def map_with_offset(args):
                 for a in args:
                     if isinstance(a, int):
-                        yield a + arg_offset
+                        yield a + act.offset
                     if isinstance(a, str):
                         yield a
                     elif isinstance(a, Some):
@@ -173,14 +128,13 @@ class RustActionWriter:
         "Delegate to the RustParserWriter.write function"
         self.writer.write(self.indent, string, *format_args)
 
-    def write_state_transitions(self, state, replay_args):
+    def write_state_transitions(self, state):
         "Given a state, generate the code corresponding to all outgoing epsilon edges."
+        assert not state.is_inconsistent()
+        assert len(list(state.shifted_edges())) == 0
+        for ctx in self.writer.parse_table.debug_context(state.index, None):
+            self.write("// {}", ctx)
         try:
-            self.replay_args = replay_args
-            assert not state.is_inconsistent()
-            assert len(list(state.shifted_edges())) == 0
-            for ctx in self.writer.parse_table.debug_context(state.index, None):
-                self.write("// {}", ctx)
             first, dest = next(state.edges(), (None, None))
             if first is None:
                 return
@@ -196,25 +150,13 @@ class RustActionWriter:
             print(self.writer.parse_table.debug_context(state.index, "\n", "# "))
             raise exc
 
-    def write_replay_args(self, n):
-        rp_args = self.replay_args[:n]
-        rp_stck = self.replay_args[n:]
-        for tv in rp_stck:
-            self.write("parser.replay({});", tv)
-        return rp_args
-
-
     def write_epsilon_transition(self, dest):
-        # Replay arguments which are not accepted as input of the next state.
-        dest = self.states[dest]
-        rp_args = self.write_replay_args(dest.arguments)
-        self.write("// --> {}", dest.index)
-        if dest.index >= self.writer.shift_count:
-            self.write("{}_{}(parser{})", self.mode, dest.index, "".join(map(lambda v: ", " + v, rp_args)))
+        self.write("// --> {}", dest)
+        if dest >= self.writer.shift_count:
+            self.write("state = {}", dest)
         else:
-            assert dest.arguments == 0
-            self.write("parser.epsilon({});", dest.index)
-            self.write("Ok(false)")
+            self.write("parser.epsilon({});", dest)
+            self.write("return Ok(false)")
 
     def write_condition(self, state, first_act):
         "Write code to test a conditions, and dispatch to the matching destination"
@@ -232,53 +174,14 @@ class RustActionWriter:
             # to make this backtracking visible through APS.
             assert len(list(state.edges())) == 1
             act, dest = next(state.edges())
-            assert len(self.replay_args) == 0
             assert -act.offset > 0
             self.write("// {}", str(act))
             self.write("if !parser.check_not_on_new_line({})? {{", -act.offset)
-            with indent(self):
-                self.write("return Ok(false);")
+            self.indent += 1
+            self.write("return Ok(false);")
+            self.indent -= 1
             self.write("}")
             self.write_epsilon_transition(dest)
-        elif isinstance(first_act, FilterStates):
-            if len(state.epsilon) == 1:
-                # This is an attempt to avoid huge unending compilations.
-                _, dest = next(iter(state.epsilon), (None, None))
-                pattern = rust_range(extract_ranges(first_act.states))
-                self.write("// parser.top_state() in ({})", pattern)
-                self.write_epsilon_transition(dest)
-            else:
-                self.write("match parser.top_state() {")
-                with indent(self):
-                    # Consider the branch which has the largest number of
-                    # potential top-states to be most likely, and therefore the
-                    # default branch to go to if all other fail to match.
-                    default_weight = max(len(act.states) for act, dest in state.edges())
-                    default_states = []
-                    default_dest = None
-                    for act, dest in state.edges():
-                        assert first_act.check_same_variable(act)
-                        if default_dest is None and default_weight == len(act.states):
-                            # This range has the same weight as the default
-                            # branch. Ignore it and use it as the default
-                            # branch which would be generated at the end.
-                            default_states = act.states
-                            default_dest = dest
-                            continue
-                        pattern = rust_range(extract_ranges(act.states))
-                        self.write("{} => {{", pattern)
-                        with indent(self):
-                            self.write_epsilon_transition(dest)
-                        self.write("}")
-                    # Generate code for the default branch, which got skipped
-                    # while producing the loop.
-                    self.write("_ => {")
-                    with indent(self):
-                        pattern = rust_range(extract_ranges(default_states))
-                        self.write("// {}", pattern)
-                        self.write_epsilon_transition(default_dest)
-                    self.write("}")
-                self.write("}")
         else:
             raise ValueError("Unexpected action type")
 
@@ -286,54 +189,25 @@ class RustActionWriter:
         assert isinstance(act, Action)
         assert not act.is_condition()
         is_packed = {}
-
-        # Do not pop any of the stack elements if the reduce action has an
-        # accept function call. Ideally we should be returning the result
-        # instead of keeping it on the parser stack.
-        if act.update_stack() and not act.contains_accept():
-            stack_diff = act.update_stack_with()
-            start = 0
-            depth = stack_diff.pop
-            args = len(self.replay_args)
-            replay = stack_diff.replay
-            if replay < 0:
-                # At the moment, we do not handle having more arguments than
-                # what is being popped and replay, thus write back the extra
-                # arguments and continue.
-                if stack_diff.pop + replay < 0:
-                    self.replay_args = self.write_replay_args(replay)
-                replay = 0
-            if replay + stack_diff.pop - args > 0:
-                assert (replay >= 0 and args == 0) or \
-                    (replay == 0 and args >= 0)
-            if replay > 0:
-                # At the moment, assume that arguments are only added once we
-                # consumed all replayed terms. Thus the replay_args can only be
-                # non-empty once replay is 0. Otherwise some of the replay_args
-                # would have to be replayed.
-                assert args == 0
-                self.write("parser.rewind({});", replay)
-                start = replay
-                depth += start
-
-            inputs = []
-            for i in range(start, depth):
-                name = 's{}'.format(i + 1)
-                if i + 1 not in self.used_variables:
-                    name = '_' + name
-                inputs.append(name)
-            if stack_diff.pop > 0:
-                args_pop = min(len(self.replay_args), stack_diff.pop)
-                # Pop by moving arguments of the action function.
-                for i, name in enumerate(inputs[:args_pop]):
-                    self.write("let {} = {};", name, self.replay_args[-i - 1])
-                # Pop by removing elements from the parser stack.
-                for name in inputs[args_pop:]:
-                    self.write("let {} = parser.pop();", name)
-                if args_pop > 0:
-                    del self.replay_args[-args_pop:]
-
         if isinstance(act, Seq):
+            # Do not pop any of the stack elements if the reduce action has
+            # an accept function call. Ideally we should be returning the
+            # result instead of keeping it on the parser stack.
+            if act.update_stack() and not act.contains_accept():
+                assert not act.contains_accept()
+                reducer = act.reduce_with()
+                start = 0
+                depth = reducer.pop
+                if reducer.replay > 0:
+                    self.write("parser.rewind({});", reducer.replay)
+                    start = reducer.replay
+                    depth += start
+                for i in range(start, depth):
+                    name = 's'
+                    if i + 1 not in self.used_variables:
+                        name = '_s'
+                    self.write("let {}{} = parser.pop();", name, i + 1)
+
             for a in act.actions:
                 self.write_single_action(a, is_packed)
                 if a.contains_accept():
@@ -343,15 +217,13 @@ class RustActionWriter:
 
         # If we fallthrough the execution of the action, then generate an
         # epsilon transition.
-        if act.follow_edge() and not act.contains_accept():
+        if not act.update_stack() and not act.contains_accept():
             assert 0 <= dest < self.writer.shift_count + self.writer.action_count
             self.write_epsilon_transition(dest)
 
     def write_single_action(self, act, is_packed):
         self.write("// {}", str(act))
-        if isinstance(act, Replay):
-            self.write_replay(act)
-        elif isinstance(act, (Reduce, Unwind)):
+        if isinstance(act, Reduce):
             self.write_reduce(act, is_packed)
         elif isinstance(act, Accept):
             self.write_accept()
@@ -363,11 +235,6 @@ class RustActionWriter:
             self.write_funcall(act, is_packed)
         else:
             raise ValueError("Unexpected action type")
-
-    def write_replay(self, act):
-        assert len(self.replay_args) == 0
-        for shift_state in act.replay_steps:
-            self.write("parser.shift_replayed({});", shift_state)
 
     def write_reduce(self, act, is_packed):
         value = "value"
@@ -387,29 +254,17 @@ class RustActionWriter:
             # Convert into a StackValue (when no ast-builder)
             value = "value"
 
-        stack_diff = act.update_stack_with()
-        assert stack_diff.nt is not None
-        self.write("let term = NonterminalId::{}.into();",
-                   self.writer.nonterminal_to_camel(stack_diff.nt))
+        self.write("let term = Term::Nonterminal(NonterminalId::{});",
+                   self.writer.nonterminal_to_camel(act.nt))
         if value != "value":
             self.write("let value = {};", value)
-        self.write("let reduced = TermValue { term, value };")
-        self.replay_args.append("reduced")
+        self.write("parser.replay(TermValue { term, value });")
+        self.write("return Ok(false)")
 
     def write_accept(self):
         self.write("return Ok(true);")
 
     def write_funcall(self, act, is_packed):
-        arg_offset = act.offset
-        if arg_offset < 0:
-            # NOTE: When replacing replayed stack elements by arguments, the
-            # offset is reduced by -1, and can become negative for cases where
-            # we read the value associated with an argument instead of the
-            # value read from the stack. However, write_action shift everything
-            # as-if we had replayed all the necessary terms, and therefore
-            # variables are named as-if the offset were 0.
-            arg_offset = 0
-
         def no_unpack(val):
             return val
 
@@ -426,7 +281,7 @@ class RustActionWriter:
             get_value = "s{}"
             for a in args:
                 if isinstance(a, int):
-                    yield unpack(get_value.format(a + arg_offset))
+                    yield unpack(get_value.format(a + act.offset))
                 elif isinstance(a, str):
                     yield unpack(a)
                 elif isinstance(a, Some):
@@ -493,7 +348,6 @@ class RustParserWriter:
         self.states = pt.states
         self.shift_count = pt.count_shift_states()
         self.action_count = pt.count_action_states()
-        self.action_from_shift_count = pt.count_action_from_shift_states()
         self.init_state_map = pt.named_goals
         self.terminals = list(OrderedSet(pt.terminals))
         # This extra terminal is used to represent any ErrorySymbol transition,
@@ -508,6 +362,7 @@ class RustParserWriter:
         self.shift()
         self.error_codes()
         self.check_camel_case()
+        self.parser_trait()
         self.actions()
         self.entry()
 
@@ -523,7 +378,6 @@ class RustParserWriter:
         self.write(0, "")
         self.write(0, "use crate::ast_builder::AstBuilderDelegate;")
         self.write(0, "use crate::stack_value_generated::{StackValue, TryIntoStack};")
-        self.write(0, "use crate::traits::{TermValue, ParserTrait};")
         self.write(0, "use crate::error::Result;")
         traits = OrderedSet()
         for mode_traits in self.parse_table.exec_modes.values():
@@ -564,7 +418,6 @@ class RustParserWriter:
 
     def terms_id(self):
         self.write(0, "#[derive(Copy, Clone, Debug, PartialEq)]")
-        self.write(0, "#[repr(u32)]")
         self.write(0, "pub enum TerminalId {")
         for i, t in enumerate(self.terminals):
             name = self.terminal_name(t)
@@ -572,7 +425,6 @@ class RustParserWriter:
         self.write(0, "}")
         self.write(0, "")
         self.write(0, "#[derive(Clone, Copy, Debug, PartialEq)]")
-        self.write(0, "#[repr(u32)]")
         self.write(0, "pub enum NonterminalId {")
         offset = len(self.terminals)
         for i, nt in enumerate(self.nonterminals):
@@ -580,45 +432,29 @@ class RustParserWriter:
         self.write(0, "}")
         self.write(0, "")
         self.write(0, "#[derive(Clone, Copy, Debug, PartialEq)]")
-        self.write(0, "pub struct Term(u32);")
-        self.write(0, "")
-        self.write(0, "impl Term {")
-        self.write(1, "pub fn is_terminal(&self) -> bool {")
-        self.write(2, "self.0 < {}", offset)
-        self.write(1, "}")
-        self.write(1, "pub fn to_terminal(&self) -> TerminalId {")
-        self.write(2, "assert!(self.is_terminal());")
-        self.write(2, "unsafe { std::mem::transmute(self.0) }")
-        self.write(1, "}")
-        self.write(0, "}")
-        self.write(0, "")
-        self.write(0, "impl From<TerminalId> for Term {")
-        self.write(1, "fn from(t: TerminalId) -> Self {")
-        self.write(2, "Term(t as _)")
-        self.write(1, "}")
-        self.write(0, "}")
-        self.write(0, "")
-        self.write(0, "impl From<NonterminalId> for Term {")
-        self.write(1, "fn from(nt: NonterminalId) -> Self {")
-        self.write(2, "Term(nt as _)")
-        self.write(1, "}")
+        self.write(0, "pub enum Term {")
+        self.write(1, "Terminal(TerminalId),")
+        self.write(1, "Nonterminal(NonterminalId),")
         self.write(0, "}")
         self.write(0, "")
         self.write(0, "impl From<Term> for usize {")
         self.write(1, "fn from(term: Term) -> Self {")
-        self.write(2, "term.0 as _")
+        self.write(2, "match term {")
+        self.write(3, "Term::Terminal(t) => t as usize,")
+        self.write(3, "Term::Nonterminal(nt) => nt as usize,")
+        self.write(2, "}")
         self.write(1, "}")
         self.write(0, "}")
         self.write(0, "")
         self.write(0, "impl From<Term> for &'static str {")
         self.write(1, "fn from(term: Term) -> Self {")
-        self.write(2, "match term.0 {")
-        for i, t in enumerate(self.terminals):
-            self.write(3, "{} => &\"{}\",", i, repr(t))
-        for j, nt in enumerate(self.nonterminals):
-            i = j + offset
-            self.write(3, "{} => &\"{}\",", i, str(nt.name))
-        self.write(3, "_ => panic!(\"unknown Term\")", i, str(nt.name))
+        self.write(2, "match term {")
+        for t in self.terminals:
+            name = self.terminal_name(t)
+            self.write(3, "Term::Terminal(TerminalId::{}) => &\"{}\",", name, repr(t))
+        for nt in self.nonterminals:
+            name = self.nonterminal_to_camel(nt)
+            self.write(3, "Term::Nonterminal(NonterminalId::{}) => &\"{}\",", name, str(nt.name))
         self.write(2, "}")
         self.write(1, "}")
         self.write(0, "}")
@@ -790,74 +626,60 @@ class RustParserWriter:
         else:
             return rty
 
+    def parser_trait(self):
+        self.write(0, "#[derive(Debug)]")
+        self.write(0, "pub struct TermValue<Value> {")
+        self.write(1, "pub term: Term,")
+        self.write(1, "pub value: Value,")
+        self.write(0, "}")
+        self.write(0, "")
+        self.write(0, "pub trait ParserTrait<'alloc, Value> {")
+        self.write(1, "fn shift(&mut self, tv: TermValue<Value>) -> Result<'alloc, bool>;")
+        self.write(1, "fn unshift(&mut self);")
+        self.write(1, "fn rewind(&mut self, n: usize) {")
+        self.write(2, "for _ in 0..n {")
+        self.write(3, "self.unshift();")
+        self.write(2, "}")
+        self.write(1, "}")
+        self.write(1, "fn pop(&mut self) -> TermValue<Value>;")
+        self.write(1, "fn replay(&mut self, tv: TermValue<Value>);")
+        self.write(1, "fn epsilon(&mut self, state: usize);")
+        self.write(1, "fn check_not_on_new_line(&mut self, peek: usize) -> Result<'alloc, bool>;")
+        self.write(0, "}")
+        self.write(0, "")
+
     def actions(self):
         # For each execution mode, add a corresponding function which
         # implements various traits. The trait list is used for filtering which
         # function is added in the generated code.
         for mode, traits in self.parse_table.exec_modes.items():
-            action_writer = RustActionWriter(self, mode, traits, 2)
-            start_at = self.shift_count
-            end_at = start_at + self.action_from_shift_count
-            assert len(self.states[self.shift_count:]) == self.action_count
-            traits_text = ' + '.join(map(self.type_to_rust, traits))
-            table_holder_name = self.to_camel_case(mode)
-            table_holder_type = table_holder_name + "<'alloc, Handler>"
-            # As we do not have default associated types yet in Rust
-            # (rust-lang#29661), we have to peak from the parameter of the
-            # ParserTrait.
-            assert list(traits)[0].name == "ParserTrait"
-            arg_type = "TermValue<" + self.type_to_rust(list(traits)[0].args[1]) + ">"
-            self.write(0, "struct {} {{", table_holder_type)
-            self.write(1, "fns: [fn(&mut Handler) -> Result<'alloc, bool>; {}]",
-                       self.action_from_shift_count)
-            self.write(0, "}")
-            self.write(0, "impl<'alloc, Handler> {}", table_holder_type)
-            self.write(0, "where")
-            self.write(1, "Handler: {}", traits_text)
-            self.write(0, "{")
-            self.write(1, "const TABLE : {} = {} {{", table_holder_type, table_holder_name)
-            self.write(2, "fns: [")
-            for state in self.states[start_at:end_at]:
-                assert state.arguments == 0
-                self.write(3, "{}_{},", mode, state.index)
-            self.write(2, "],")
-            self.write(1, "};")
-            self.write(0, "}")
-            self.write(0, "")
+            action_writer = RustActionWriter(self, traits, 4)
             self.write(0,
                        "pub fn {}<'alloc, Handler>(parser: &mut Handler, state: usize) "
                        "-> Result<'alloc, bool>",
                        mode)
             self.write(0, "where")
-            self.write(1, "Handler: {}", traits_text)
+            self.write(1, "Handler: {}", ' + '.join(map(self.type_to_rust, traits)))
             self.write(0, "{")
-            self.write(1, "{}::<'alloc, Handler>::TABLE.fns[state - {}](parser)",
-                       table_holder_name, start_at)
+            self.write(1, "let mut state = state;")
+            self.write(1, "loop {")
+            self.write(2, "match state {")
+            assert len(self.states[self.shift_count:]) == self.action_count
+            for state in self.states[self.shift_count:]:
+                self.write(3, "{} => {{", state.index)
+                action_writer.write_state_transitions(state)
+                self.write(3, "}")
+            self.write(3, '_ => panic!("no such state: {}", state),')
+            self.write(2, "}")
+            self.write(1, "}")
             self.write(0, "}")
             self.write(0, "")
-            for state in self.states[self.shift_count:]:
-                state_args = ""
-                for i in range(state.arguments):
-                    state_args += ", v{}: {}".format(i, arg_type)
-                replay_args = ["v{}".format(i) for i in range(state.arguments)]
-                self.write(0, "#[inline]")
-                self.write(0, "#[allow(unused)]")
-                self.write(0,
-                           "pub fn {}_{}<'alloc, Handler>(parser: &mut Handler{}) "
-                           "-> Result<'alloc, bool>",
-                           mode, state.index, state_args)
-                self.write(0, "where")
-                self.write(1, "Handler: {}", ' + '.join(map(self.type_to_rust, traits)))
-                self.write(0, "{")
-                action_writer.write_state_transitions(state, replay_args)
-                self.write(0, "}")
 
     def entry(self):
         self.write(0, "#[derive(Clone, Copy)]")
         self.write(0, "pub struct ParseTable<'a> {")
         self.write(1, "pub shift_count: usize,")
         self.write(1, "pub action_count: usize,")
-        self.write(1, "pub action_from_shift_count: usize,")
         self.write(1, "pub shift_table: &'a [i64],")
         self.write(1, "pub shift_width: usize,")
         self.write(1, "pub error_codes: &'a [Option<ErrorCode>],")
@@ -877,7 +699,6 @@ class RustParserWriter:
         self.write(0, "pub static TABLES: ParseTable<'static> = ParseTable {")
         self.write(1, "shift_count: {},", self.shift_count)
         self.write(1, "action_count: {},", self.action_count)
-        self.write(1, "action_from_shift_count: {},", self.action_from_shift_count)
         self.write(1, "shift_table: &SHIFT,")
         self.write(1, "shift_width: {},", len(self.terminals) + len(self.nonterminals))
         self.write(1, "error_codes: &STATE_TO_ERROR_CODE,")

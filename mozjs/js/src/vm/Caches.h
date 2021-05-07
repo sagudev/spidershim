@@ -7,8 +7,9 @@
 #ifndef vm_Caches_h
 #define vm_Caches_h
 
-#include <iterator>
 #include <new>
+
+#include "jsmath.h"
 
 #include "frontend/SourceNotes.h"  // SrcNote
 #include "gc/Tracer.h"
@@ -80,9 +81,11 @@ typedef GCHashSet<EvalCacheEntry, EvalCacheHashPolicy, SystemAllocPolicy>
  * below, an entry is filled with the resulting object.
  */
 class NewObjectCache {
-  static constexpr unsigned MAX_OBJ_SIZE = sizeof(JSObject_Slots16);
+  /* Statically asserted to be equal to sizeof(JSObject_Slots16) */
+  static const unsigned MAX_OBJ_SIZE = 4 * sizeof(void*) + 16 * sizeof(Value);
 
   static void staticAsserts() {
+    static_assert(NewObjectCache::MAX_OBJ_SIZE == sizeof(JSObject_Slots16));
     static_assert(gc::AllocKind::OBJECT_LAST ==
                   gc::AllocKind::OBJECT16_BACKGROUND);
   }
@@ -92,15 +95,19 @@ class NewObjectCache {
     const JSClass* clasp;
 
     /*
-     * Key with one of two possible values:
+     * Key with one of three possible values:
      *
-     * - Global for the object. The object must have a standard class and will
-     *   have this global's builtin prototype for this class as proto.
+     * - Global for the object. The object must have a standard class for
+     *   which the global's prototype can be determined, and the object's
+     *   parent will be the global.
      *
-     * - Prototype for the object (non-null). Cannot be a global object because
-     *   that would be ambiguous (see previous case).
+     * - Prototype for the object (cannot be global). The object's parent
+     *   will be the prototype's parent.
+     *
+     * - Type for the object. The object's parent will be the type's
+     *   prototype's parent.
      */
-    JSObject* key;
+    gc::Cell* key;
 
     /* Allocation kind for the constructed object. */
     gc::AllocKind kind;
@@ -141,6 +148,11 @@ class NewObjectCache {
   inline bool lookupGlobal(const JSClass* clasp, js::GlobalObject* global,
                            gc::AllocKind kind, EntryIndex* pentry);
 
+  bool lookupGroup(js::ObjectGroup* group, gc::AllocKind kind,
+                   EntryIndex* pentry) {
+    return lookup(group->clasp(), group, kind, pentry);
+  }
+
   /*
    * Return a new object from a cache hit produced by a lookup method, or
    * nullptr if returning the object could possibly trigger GC (does not
@@ -157,17 +169,24 @@ class NewObjectCache {
                          js::GlobalObject* global, gc::AllocKind kind,
                          NativeObject* obj);
 
-  /* Invalidate any entries which might produce an object with shape. */
-  void invalidateEntriesForShape(Shape* shape);
+  void fillGroup(EntryIndex entry, js::ObjectGroup* group, gc::AllocKind kind,
+                 NativeObject* obj) {
+    MOZ_ASSERT(obj->group() == group);
+    return fill(entry, group->clasp(), group, kind, obj);
+  }
+
+  /* Invalidate any entries which might produce an object with shape/proto. */
+  void invalidateEntriesForShape(JSContext* cx, HandleShape shape,
+                                 HandleObject proto);
 
  private:
   EntryIndex makeIndex(const JSClass* clasp, gc::Cell* key,
                        gc::AllocKind kind) {
     uintptr_t hash = (uintptr_t(clasp) ^ uintptr_t(key)) + size_t(kind);
-    return hash % std::size(entries);
+    return hash % mozilla::ArrayLength(entries);
   }
 
-  bool lookup(const JSClass* clasp, JSObject* key, gc::AllocKind kind,
+  bool lookup(const JSClass* clasp, gc::Cell* key, gc::AllocKind kind,
               EntryIndex* pentry) {
     *pentry = makeIndex(clasp, key, kind);
     Entry* entry = &entries[*pentry];
@@ -177,9 +196,9 @@ class NewObjectCache {
     return entry->clasp == clasp && entry->key == key;
   }
 
-  void fill(EntryIndex entry_, const JSClass* clasp, JSObject* key,
+  void fill(EntryIndex entry_, const JSClass* clasp, gc::Cell* key,
             gc::AllocKind kind, NativeObject* obj) {
-    MOZ_ASSERT(unsigned(entry_) < std::size(entries));
+    MOZ_ASSERT(unsigned(entry_) < mozilla::ArrayLength(entries));
     MOZ_ASSERT(entry_ == makeIndex(clasp, key, kind));
     Entry* entry = &entries[entry_];
 
@@ -199,49 +218,9 @@ class NewObjectCache {
     js_memcpy(dst, src, gc::Arena::thingSize(kind));
 
     // Initialize with barriers
+    dst->initGroup(src->group());
     dst->initShape(src->shape());
   }
-};
-
-// Cache for AtomizeString, mapping JSLinearString* to the corresponding
-// JSAtom*. Also used by nursery GC to de-duplicate strings to atoms.
-// Purged on minor and major GC.
-class StringToAtomCache {
-  using Map = HashMap<JSLinearString*, JSAtom*, PointerHasher<JSLinearString*>,
-                      SystemAllocPolicy>;
-  Map map_;
-
- public:
-  // Don't use the cache for short strings. Hashing them is less expensive.
-  static constexpr size_t MinStringLength = 30;
-
-  JSAtom* lookup(JSLinearString* s) {
-    MOZ_ASSERT(!s->isAtom());
-    if (!s->inStringToAtomCache()) {
-      MOZ_ASSERT(!map_.lookup(s));
-      return nullptr;
-    }
-
-    MOZ_ASSERT(s->length() >= MinStringLength);
-
-    auto p = map_.lookup(s);
-    JSAtom* atom = p ? p->value() : nullptr;
-    MOZ_ASSERT_IF(atom, EqualStrings(s, atom));
-    return atom;
-  }
-
-  void maybePut(JSLinearString* s, JSAtom* atom) {
-    MOZ_ASSERT(!s->isAtom());
-    if (s->length() < MinStringLength) {
-      return;
-    }
-    if (!map_.putNew(s, atom)) {
-      return;
-    }
-    s->setInStringToAtomCache();
-  }
-
-  void purge() { map_.clearAndCompact(); }
 };
 
 class RuntimeCaches {
@@ -250,7 +229,6 @@ class RuntimeCaches {
   js::NewObjectCache newObjectCache;
   js::UncompressedSourceCache uncompressedSourceCache;
   js::EvalCache evalCache;
-  js::StringToAtomCache stringToAtomCache;
 
   void purgeForMinorGC(JSRuntime* rt) {
     newObjectCache.clearNurseryObjects(rt);
@@ -260,7 +238,6 @@ class RuntimeCaches {
   void purgeForCompaction() {
     newObjectCache.purge();
     evalCache.clear();
-    stringToAtomCache.purge();
   }
 
   void purge() {

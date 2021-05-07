@@ -13,4 +13,4 @@ features: [regexp-named-groups]
 
 $DONOTEVALUATE();
 
-/(?<a\uD83D\uDF12>.)/;
+/(?<a\uD801\uDCA4>.)/;

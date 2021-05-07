@@ -11,7 +11,6 @@
 #include "mozilla/Compiler.h"
 #include "mozilla/Sprintf.h"
 
-#include <iterator>
 #include <stdarg.h>
 
 #ifdef MOZ_CALLGRIND
@@ -38,6 +37,8 @@
 #include "vm/JSContext-inl.h"
 
 using namespace js;
+
+using mozilla::ArrayLength;
 
 /* Thread-unsafe error management */
 
@@ -501,7 +502,7 @@ bool js_StartPerf() {
                                  mainPidStr, "--output", outfile};
 
     Vector<const char*, 0, SystemAllocPolicy> args;
-    if (!args.append(defaultArgs, std::size(defaultArgs))) {
+    if (!args.append(defaultArgs, ArrayLength(defaultArgs))) {
       return false;
     }
 

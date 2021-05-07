@@ -11,13 +11,11 @@ function evalWithCache(code, ctx) {
 
   // We create a new global ...
   if (!("global" in ctx))
-      ctx.global = newGlobal({newCompartment: ctx.newCompartment});
+      ctx.global = newGlobal({cloneSingletons: !incremental,
+                              newCompartment: ctx.newCompartment});
 
-  // NOTE: Run-once scripts must use incremental mode since they may use
-  // singleton objects that are mutated by the time the bytecode is captured in
-  // non-incremental mode.
   if (!("isRunOnce" in ctx))
-    ctx.isRunOnce = incremental;
+    ctx.isRunOnce = true;
 
   var ctx_save;
   if (incremental)

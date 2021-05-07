@@ -26,7 +26,7 @@ bool IsSelfHostedFunctionWithName(JSFunction* fun, JSAtom* name);
  * This returns a non-null value only when this is a top level function
  * declaration in the self-hosted global.
  */
-PropertyName* GetClonedSelfHostedFunctionName(const JSFunction* fun);
+JSAtom* GetClonedSelfHostedFunctionName(JSFunction* fun);
 
 /*
  * Same as GetClonedSelfHostedFunctionName, but `fun` is guaranteed to be an
@@ -38,9 +38,7 @@ PropertyName* GetClonedSelfHostedFunctionName(const JSFunction* fun);
  *
  * See Also: WrappedFunction.isExtended_
  */
-PropertyName* GetClonedSelfHostedFunctionNameOffMainThread(JSFunction* fun);
-
-constexpr char ExtendedUnclonedSelfHostedFunctionNamePrefix = '$';
+JSAtom* GetClonedSelfHostedFunctionNameOffMainThread(JSFunction* fun);
 
 /*
  * Uncloned self-hosted functions with `$` prefix are allocated as
@@ -72,6 +70,8 @@ bool CallSelfHostedFunction(JSContext* cx, char const* name, HandleValue thisv,
 bool CallSelfHostedFunction(JSContext* cx, HandlePropertyName name,
                             HandleValue thisv, const AnyInvokeArgs& args,
                             MutableHandleValue rval);
+
+bool intrinsic_StringSplitString(JSContext* cx, unsigned argc, JS::Value* vp);
 
 bool intrinsic_NewArrayIterator(JSContext* cx, unsigned argc, JS::Value* vp);
 

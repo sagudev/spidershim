@@ -1,26 +1,24 @@
 use core::pin::Pin;
 use futures_core::future::{Future, FusedFuture};
-use futures_core::ready;
 use futures_core::task::{Context, Poll};
-use pin_project_lite::pin_project;
+use pin_utils::unsafe_pinned;
 
-pin_project! {
-    /// Future for the [`fuse`](super::FutureExt::fuse) method.
-    #[derive(Debug)]
-    #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct Fuse<Fut> {
-        #[pin]
-        inner: Option<Fut>,
-    }
-}
-
-impl<Fut> Fuse<Fut> {
-    pub(super) fn new(f: Fut) -> Self {
-        Self { inner: Some(f) }
-    }
+/// Future for the [`fuse`](super::FutureExt::fuse) method.
+#[derive(Debug)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct Fuse<Fut> {
+    future: Option<Fut>,
 }
 
 impl<Fut: Future> Fuse<Fut> {
+    unsafe_pinned!(future: Option<Fut>);
+
+    pub(super) fn new(f: Fut) -> Fuse<Fut> {
+        Fuse {
+            future: Some(f),
+        }
+    }
+
     /// Creates a new `Fuse`-wrapped future which is already terminated.
     ///
     /// This can be useful in combination with looping and the `select!`
@@ -43,7 +41,7 @@ impl<Fut: Future> Fuse<Fut> {
     /// sender.unbounded_send(()).unwrap();
     /// drop(sender);
     ///
-    /// // Use `Fuse::terminated()` to create an already-terminated future
+    /// // Use `Fuse::termianted()` to create an already-terminated future
     /// // which may be instantiated later.
     /// let foo_printer = Fuse::terminated();
     /// pin_mut!(foo_printer);
@@ -66,14 +64,14 @@ impl<Fut: Future> Fuse<Fut> {
     /// }
     /// # });
     /// ```
-    pub fn terminated() -> Self {
-        Self { inner: None }
+    pub fn terminated() -> Fuse<Fut> {
+        Fuse { future: None }
     }
 }
 
 impl<Fut: Future> FusedFuture for Fuse<Fut> {
     fn is_terminated(&self) -> bool {
-        self.inner.is_none()
+        self.future.is_none()
     }
 }
 
@@ -81,13 +79,12 @@ impl<Fut: Future> Future for Fuse<Fut> {
     type Output = Fut::Output;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Fut::Output> {
-        Poll::Ready(match self.as_mut().project().inner.as_pin_mut() {
-            Some(fut) => {
-                let output = ready!(fut.poll(cx));
-                self.project().inner.set(None);
-                output
-            },
+        let v = match self.as_mut().future().as_pin_mut() {
+            Some(fut) => ready!(fut.poll(cx)),
             None => return Poll::Pending,
-        })
+        };
+
+        self.as_mut().future().set(None);
+        Poll::Ready(v)
     }
 }

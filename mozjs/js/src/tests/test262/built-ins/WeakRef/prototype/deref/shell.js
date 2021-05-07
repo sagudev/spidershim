@@ -5,8 +5,9 @@
 /*---
 description: >
     Collection of functions used to capture references cleanup from garbage collectors
-features: [cleanupSome, FinalizationRegistry, Symbol, async-functions]
+features: [Symbol, async-functions]
 flags: [non-deterministic]
+features: [FinalizationRegistry]
 defines: [asyncGC, asyncGCDeref, resolveAsyncGC]
 ---*/
 

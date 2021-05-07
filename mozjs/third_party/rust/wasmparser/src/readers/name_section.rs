@@ -14,8 +14,7 @@
  */
 
 use super::{
-    BinaryReader, BinaryReaderError, NameType, Naming, Range, Result, SectionIterator,
-    SectionReader,
+    BinaryReader, BinaryReaderError, NameType, Naming, Result, SectionIterator, SectionReader,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -31,10 +30,6 @@ impl<'a> ModuleName<'a> {
     {
         let mut reader = BinaryReader::new_with_offset(self.data, self.offset);
         reader.read_string()
-    }
-
-    pub fn original_position(&self) -> usize {
-        self.offset
     }
 }
 
@@ -90,10 +85,6 @@ impl<'a> FunctionName<'a> {
     {
         NamingReader::new(self.data, self.offset)
     }
-
-    pub fn original_position(&self) -> usize {
-        self.offset
-    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -109,10 +100,6 @@ impl<'a> FunctionLocalName<'a> {
         'a: 'b,
     {
         NamingReader::new(self.data, self.offset)
-    }
-
-    pub fn original_position(&self) -> usize {
-        self.offset
     }
 }
 
@@ -164,10 +151,6 @@ impl<'a> LocalName<'a> {
         'a: 'b,
     {
         FunctionLocalReader::new(self.data, self.offset)
-    }
-
-    pub fn original_position(&self) -> usize {
-        self.offset
     }
 }
 
@@ -237,9 +220,6 @@ impl<'a> SectionReader for NameSectionReader<'a> {
     }
     fn original_position(&self) -> usize {
         NameSectionReader::original_position(self)
-    }
-    fn range(&self) -> Range {
-        self.reader.range()
     }
 }
 

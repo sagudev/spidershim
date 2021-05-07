@@ -13,9 +13,7 @@
 #include "js/HashTable.h"
 #include "js/RootingAPI.h"
 #include "js/SweepingAPI.h"
-#include "js/TypeDecls.h"
-
-class JSTracer;
+#include "js/TracingAPI.h"
 
 namespace JS {
 
@@ -78,12 +76,7 @@ class GCHashMap : public js::HashMap<Key, Value, HashPolicy, AllocPolicy> {
   bool needsSweep() const { return !this->empty(); }
 
   void sweep() {
-    typename Base::Enum e(*this);
-    sweepEntries(e);
-  }
-
-  void sweepEntries(typename Base::Enum& e) {
-    for (; !e.empty(); e.popFront()) {
+    for (typename Base::Enum e(*this); !e.empty(); e.popFront()) {
       if (MapSweepPolicy::needsSweep(&e.front().mutableKey(),
                                      &e.front().value())) {
         e.removeFront();
@@ -277,12 +270,7 @@ class GCHashSet : public js::HashSet<T, HashPolicy, AllocPolicy> {
   bool needsSweep() const { return !this->empty(); }
 
   void sweep() {
-    typename Base::Enum e(*this);
-    sweepEntries(e);
-  }
-
-  void sweepEntries(typename Base::Enum& e) {
-    for (; !e.empty(); e.popFront()) {
+    for (typename Base::Enum e(*this); !e.empty(); e.popFront()) {
       if (GCPolicy<T>::needsSweep(&e.mutableFront())) {
         e.removeFront();
       }
@@ -360,7 +348,7 @@ class MutableWrappedPtrOperations<JS::GCHashSet<Args...>, Wrapper>
 
   void clear() { set().clear(); }
   void clearAndCompact() { set().clearAndCompact(); }
-  [[nodiscard]] bool reserve(uint32_t len) { return set().reserve(len); }
+  MOZ_MUST_USE bool reserve(uint32_t len) { return set().reserve(len); }
   void remove(Ptr p) { set().remove(p); }
   void remove(const Lookup& l) { set().remove(l); }
   AddPtr lookupForAdd(const Lookup& l) { return set().lookupForAdd(l); }
@@ -422,22 +410,9 @@ class WeakCache<GCHashMap<Key, Value, HashPolicy, AllocPolicy, MapSweepPolicy>>
 
   bool needsSweep() override { return map.needsSweep(); }
 
-  size_t sweep(js::gc::StoreBuffer* sbToLock) override {
+  size_t sweep() override {
     size_t steps = map.count();
-
-    // Create an Enum and sweep the table entries.
-    mozilla::Maybe<typename Map::Enum> e;
-    e.emplace(map);
-    map.sweepEntries(e.ref());
-
-    // Potentially take a lock while the Enum's destructor is called as this can
-    // rehash/resize the table and access the store buffer.
-    mozilla::Maybe<js::gc::AutoLockStoreBuffer> lock;
-    if (sbToLock) {
-      lock.emplace(sbToLock);
-    }
-    e.reset();
-
+    map.sweep();
     return steps;
   }
 
@@ -618,24 +593,9 @@ class WeakCache<GCHashSet<T, HashPolicy, AllocPolicy>>
         set(std::forward<Args>(args)...),
         needsBarrier(false) {}
 
-  size_t sweep(js::gc::StoreBuffer* sbToLock) override {
+  size_t sweep() override {
     size_t steps = set.count();
-
-    // Create an Enum and sweep the table entries. It's not necessary to take
-    // the store buffer lock yet.
-    mozilla::Maybe<typename Set::Enum> e;
-    e.emplace(set);
-    set.sweepEntries(e.ref());
-
-    // Destroy the Enum, potentially rehashing or resizing the table. Since this
-    // can access the store buffer, we need to take a lock for this if we're
-    // called off main thread.
-    mozilla::Maybe<js::gc::AutoLockStoreBuffer> lock;
-    if (sbToLock) {
-      lock.emplace(sbToLock);
-    }
-    e.reset();
-
+    set.sweep();
     return steps;
   }
 

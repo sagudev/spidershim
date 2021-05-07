@@ -26,6 +26,6 @@ info: |
 $DONOTEVALUATE();
 
 
-var asyncFn = async function asyncFn() {
+var fn = async function fn() {
   \u0061wait: ;
 };

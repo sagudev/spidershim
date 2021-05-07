@@ -19,6 +19,8 @@
 #ifndef wasm_cranelift_compile_h
 #define wasm_cranelift_compile_h
 
+#include "mozilla/Attributes.h"
+
 #include "wasm/WasmGenerator.h"
 
 namespace js {
@@ -27,21 +29,21 @@ namespace wasm {
 #ifdef ENABLE_WASM_CRANELIFT
 // Return whether CraneliftCompileFunction() can generate code on the current
 // device.  Usually you do *not* want this, you want CraneliftAvailable().
-[[nodiscard]] bool CraneliftPlatformSupport();
+MOZ_MUST_USE bool CraneliftPlatformSupport();
 
 // Generates code with Cranelift.
-[[nodiscard]] bool CraneliftCompileFunctions(
-    const ModuleEnvironment& moduleEnv, const CompilerEnvironment& compilerEnv,
-    LifoAlloc& lifo, const FuncCompileInputVector& inputs, CompiledCode* code,
+MOZ_MUST_USE bool CraneliftCompileFunctions(
+    const ModuleEnvironment& env, LifoAlloc& lifo,
+    const FuncCompileInputVector& inputs, CompiledCode* code,
     UniqueChars* error);
 
 void CraneliftFreeReusableData(void* data);
 #else
-[[nodiscard]] inline bool CraneliftPlatformSupport() { return false; }
+MOZ_MUST_USE inline bool CraneliftPlatformSupport() { return false; }
 
-[[nodiscard]] inline bool CraneliftCompileFunctions(
-    const ModuleEnvironment& moduleEnv, const CompilerEnvironment& compilerEnv,
-    LifoAlloc& lifo, const FuncCompileInputVector& inputs, CompiledCode* code,
+MOZ_MUST_USE inline bool CraneliftCompileFunctions(
+    const ModuleEnvironment& env, LifoAlloc& lifo,
+    const FuncCompileInputVector& inputs, CompiledCode* code,
     UniqueChars* error) {
   MOZ_CRASH("Should not happen");
 }

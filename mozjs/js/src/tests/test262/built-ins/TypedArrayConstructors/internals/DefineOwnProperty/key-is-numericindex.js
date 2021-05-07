@@ -10,16 +10,11 @@ info: |
   3. If Type(P) is String, then
     a. Let numericIndex be ! CanonicalNumericIndexString(P).
     b. If numericIndex is not undefined, then
-      If ! IsValidIntegerIndex(O, numericIndex) is false, return false.
-      If IsAccessorDescriptor(Desc) is true, return false.
-      If Desc has a [[Configurable]] field and if Desc.[[Configurable]] is false, return false.
-      If Desc has an [[Enumerable]] field and if Desc.[[Enumerable]] is false, return false.
-      If Desc has a [[Writable]] field and if Desc.[[Writable]] is false, return false.
-      If Desc has a [[Value]] field, then
-        Let value be Desc.[[Value]].
-        Return ? IntegerIndexedElementSet(O, numericIndex, value).
-
-includes: [testTypedArray.js]
+      ...
+      x. If Desc has a [[Writable]] field and if Desc.[[Writable]] is false,
+      return false.
+  ...
+includes: [testTypedArray.js, propertyHelper.js]
 features: [Reflect, TypedArray]
 ---*/
 
@@ -29,7 +24,7 @@ testWithTypedArrayConstructors(function(TA) {
   assert.sameValue(
     Reflect.defineProperty(sample, "0", {
       value: 8,
-      configurable: true,
+      configurable: false,
       enumerable: true,
       writable: true
     }),
@@ -37,11 +32,13 @@ testWithTypedArrayConstructors(function(TA) {
   );
 
   assert.sameValue(sample[0], 8, "property value was set");
-  let descriptor0 = Object.getOwnPropertyDescriptor(sample, "0");
-  assert.sameValue(descriptor0.value, 8);
-  assert.sameValue(descriptor0.configurable, true);
-  assert.sameValue(descriptor0.enumerable, true);
-  assert.sameValue(descriptor0.writable, true);
+  var desc = Object.getOwnPropertyDescriptor(sample, "0");
+
+  assert.sameValue(desc.value, 8, "desc.value");
+  assert.sameValue(desc.writable, true, "property is writable");
+
+  verifyEnumerable(sample, "0");
+  verifyNotConfigurable(sample, "0");
 });
 
 reportCompare(0, 0);

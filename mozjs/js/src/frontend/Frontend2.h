@@ -12,11 +12,9 @@
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t
 
-#include "js/CompileOptions.h"  // JS::ReadOnlyCompileOptions
-#include "js/RootingAPI.h"      // JS::Handle
-#include "js/SourceText.h"      // JS::SourceText
-#include "js/UniquePtr.h"       // js::UniquePtr
-#include "vm/JSScript.h"        // JSScript
+#include "js/RootingAPI.h"  // JS::Handle
+#include "js/SourceText.h"  // JS::SourceText
+#include "vm/JSScript.h"    // JSScript
 
 struct JSContext;
 
@@ -28,19 +26,15 @@ class ScriptSourceObject;
 
 namespace frontend {
 
-struct CompilationInput;
-struct ExtensibleCompilationStencil;
-struct CompilationGCOutput;
-struct CompilationState;
+class GlobalScriptInfo;
 
 // This is declarated as a class mostly to solve dependency around `friend`
 // declarations in the simple way.
 class Smoosh {
  public:
-  [[nodiscard]] static bool tryCompileGlobalScriptToExtensibleStencil(
-      JSContext* cx, CompilationInput& input,
-      JS::SourceText<mozilla::Utf8Unit>& srcBuf,
-      UniquePtr<ExtensibleCompilationStencil>& stencilOut);
+  static JSScript* compileGlobalScript(
+      CompilationInfo& compilationInfo,
+      JS::SourceText<mozilla::Utf8Unit>& srcBuf, bool* unimplemented);
 };
 
 // Initialize SmooshMonkey globals, such as the logging system.
@@ -48,10 +42,10 @@ void InitSmoosh();
 
 // Use the SmooshMonkey frontend to parse and free the generated AST. Returns
 // true if no error were detected while parsing.
-[[nodiscard]] bool SmooshParseScript(JSContext* cx, const uint8_t* bytes,
-                                     size_t length);
-[[nodiscard]] bool SmooshParseModule(JSContext* cx, const uint8_t* bytes,
-                                     size_t length);
+MOZ_MUST_USE bool SmooshParseScript(JSContext* cx, const uint8_t* bytes,
+                                    size_t length);
+MOZ_MUST_USE bool SmooshParseModule(JSContext* cx, const uint8_t* bytes,
+                                    size_t length);
 
 }  // namespace frontend
 

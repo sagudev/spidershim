@@ -1,8 +1,8 @@
-// |jit-test| test-also=--wasm-compiler=optimizing; error: TestComplete
+// |jit-test| test-also=--wasm-compiler=ion; error: TestComplete
 
 load(libdir + "asserts.js");
 
-if (!wasmDebuggingEnabled())
+if (!wasmDebuggingIsSupported())
     throw "TestComplete";
 
 var g = newGlobal({newCompartment: true});

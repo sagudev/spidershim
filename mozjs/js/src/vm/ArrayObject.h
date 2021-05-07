@@ -34,26 +34,37 @@ class ArrayObject : public NativeObject {
     getElementsHeader()->setNonwritableArrayLength();
   }
 
-  void setLength(uint32_t length) {
+  inline void setLength(JSContext* cx, uint32_t length);
+
+  // Variant of setLength for use on arrays where the length cannot overflow
+  // int32_t.
+  void setLengthInt32(uint32_t length) {
     MOZ_ASSERT(lengthIsWritable());
     MOZ_ASSERT_IF(length != getElementsHeader()->length,
                   !denseElementsAreFrozen());
+    MOZ_ASSERT(length <= INT32_MAX);
     getElementsHeader()->length = length;
   }
 
   // Make an array object with the specified initial state.
   static inline ArrayObject* createArray(JSContext* cx, gc::AllocKind kind,
                                          gc::InitialHeap heap,
-                                         HandleShape shape, uint32_t length,
+                                         HandleShape shape,
+                                         HandleObjectGroup group,
+                                         uint32_t length,
                                          AutoSetNewObjectMetadata& metadata);
+
+  // Make a copy-on-write array object which shares the elements of an
+  // existing object.
+  static inline ArrayObject* createCopyOnWriteArray(
+      JSContext* cx, gc::InitialHeap heap,
+      HandleArrayObject sharedElementsOwner);
 
  private:
   // Helper for the above methods.
-  static inline ArrayObject* createArrayInternal(JSContext* cx,
-                                                 gc::AllocKind kind,
-                                                 gc::InitialHeap heap,
-                                                 HandleShape shape,
-                                                 AutoSetNewObjectMetadata&);
+  static inline ArrayObject* createArrayInternal(
+      JSContext* cx, gc::AllocKind kind, gc::InitialHeap heap,
+      HandleShape shape, HandleObjectGroup group, AutoSetNewObjectMetadata&);
 
   static inline ArrayObject* finishCreateArray(
       ArrayObject* obj, HandleShape shape, AutoSetNewObjectMetadata& metadata);

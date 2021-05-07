@@ -6,21 +6,15 @@
 
 #include "jit/BaselineDebugModeOSR.h"
 
-#include "jit/BaselineFrame.h"
 #include "jit/BaselineIC.h"
-#include "jit/BaselineJIT.h"
-#include "jit/Invalidation.h"
-#include "jit/Ion.h"
 #include "jit/JitcodeMap.h"
-#include "jit/JitFrames.h"
-#include "jit/JitRuntime.h"
-#include "jit/JSJitFrameIter.h"
+#include "jit/Linker.h"
 #include "jit/PerfSpewer.h"
 
-#include "jit/JitScript-inl.h"
-#include "jit/JSJitFrameIter-inl.h"
+#include "jit/JitFrames-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "vm/Stack-inl.h"
+#include "vm/TypeInference-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -180,8 +174,12 @@ static const char* RetAddrEntryKindToString(RetAddrEntry::Kind kind) {
   switch (kind) {
     case RetAddrEntry::Kind::IC:
       return "IC";
+    case RetAddrEntry::Kind::PrologueIC:
+      return "prologue IC";
     case RetAddrEntry::Kind::CallVM:
       return "callVM";
+    case RetAddrEntry::Kind::WarmupCounter:
+      return "warmup counter";
     case RetAddrEntry::Kind::StackCheck:
       return "stack check";
     case RetAddrEntry::Kind::InterruptCheck:
@@ -227,17 +225,18 @@ static void PatchBaselineFramesForDebugMode(
   //  A. From a non-prologue IC (fallback stub or "can call" stub).
   //  B. From a VM call.
   //  C. From inside the interrupt handler via the prologue stack check.
+  //  D. From the warmup counter in the prologue.
   //
   // On to Off:
   //  - All the ways above.
-  //  D. From the debug trap handler.
-  //  E. From the debug prologue.
-  //  F. From the debug epilogue.
-  //  G. From a JSOp::AfterYield instruction.
+  //  E. From the debug trap handler.
+  //  F. From the debug prologue.
+  //  G. From the debug epilogue.
+  //  H. From a JSOp::AfterYield instruction.
   //
   // In general, we patch the return address from VM calls and ICs to the
   // corresponding entry in the recompiled BaselineScript. For entries that are
-  // not present in the recompiled script (cases D to G above) we switch the
+  // not present in the recompiled script (cases F to I above) we switch the
   // frame to interpreter mode and resume in the Baseline Interpreter.
   //
   // Specifics on what needs to be done are documented below.
@@ -288,8 +287,9 @@ static void PatchBaselineFramesForDebugMode(
           case RetAddrEntry::Kind::IC:
           case RetAddrEntry::Kind::CallVM:
           case RetAddrEntry::Kind::InterruptCheck:
+          case RetAddrEntry::Kind::WarmupCounter:
           case RetAddrEntry::Kind::StackCheck: {
-            // Cases A, B, C above.
+            // Cases A, B, C, D above.
             //
             // For the baseline frame here, we resume right after the CallVM or
             // IC returns.
@@ -304,6 +304,7 @@ static void PatchBaselineFramesForDebugMode(
               case RetAddrEntry::Kind::InterruptCheck:
                 retAddrEntry = &bl->retAddrEntryFromPCOffset(pcOffset, kind);
                 break;
+              case RetAddrEntry::Kind::WarmupCounter:
               case RetAddrEntry::Kind::StackCheck:
                 retAddrEntry = &bl->prologueRetAddrEntry(kind);
                 break;
@@ -319,7 +320,7 @@ static void PatchBaselineFramesForDebugMode(
           case RetAddrEntry::Kind::DebugEpilogue:
           case RetAddrEntry::Kind::DebugTrap:
           case RetAddrEntry::Kind::DebugAfterYield: {
-            // Cases D, E, F, G above.
+            // Cases E, F, G, H above.
             //
             // Resume in the Baseline Interpreter because these callVMs are not
             // present in the new BaselineScript if we recompiled without debug
@@ -353,6 +354,7 @@ static void PatchBaselineFramesForDebugMode(
                                    pc);
             break;
           }
+          case RetAddrEntry::Kind::PrologueIC:
           case RetAddrEntry::Kind::NonOpCallVM:
           case RetAddrEntry::Kind::Invalid:
             // These cannot trigger BaselineDebugModeOSR.
@@ -464,7 +466,7 @@ static bool InvalidateScriptsInZone(JSContext* cx, Zone* zone,
 
   // No need to cancel off-thread Ion compiles again, we already did it
   // above.
-  Invalidate(cx, invalid,
+  Invalidate(zone->types, cx->runtime()->defaultFreeOp(), invalid,
              /* resetUses = */ true, /* cancelOffThread = */ false);
   return true;
 }

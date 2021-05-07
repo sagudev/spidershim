@@ -9,18 +9,19 @@
 #include "builtin/streams/MiscellaneousOperations.h"
 
 #include "mozilla/Assertions.h"     // MOZ_ASSERT
+#include "mozilla/Attributes.h"     // MOZ_MUST_USE
 #include "mozilla/FloatingPoint.h"  // mozilla::IsNaN
 
-#include "jsapi.h"  // JS_ReportErrorNumberASCII
+#include "jsapi.h"        // JS_ReportErrorNumberASCII
+#include "jsfriendapi.h"  // js::GetErrorMessage
 
-#include "js/Conversions.h"           // JS::ToNumber
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/RootingAPI.h"            // JS::{,Mutable}Handle, JS::Rooted
-#include "vm/Interpreter.h"           // js::{Call,GetAndClearException}
-#include "vm/JSContext.h"             // JSContext
-#include "vm/ObjectOperations.h"      // js::GetProperty
-#include "vm/PromiseObject.h"         // js::PromiseObject
-#include "vm/StringType.h"            // js::PropertyName
+#include "js/Conversions.h"       // JS::ToNumber
+#include "js/RootingAPI.h"        // JS::{,Mutable}Handle, JS::Rooted
+#include "vm/Interpreter.h"       // js::{Call,GetAndClearException}
+#include "vm/JSContext.h"         // JSContext
+#include "vm/ObjectOperations.h"  // js::GetProperty
+#include "vm/PromiseObject.h"     // js::PromiseObject
+#include "vm/StringType.h"        // js::PropertyName
 
 #include "vm/JSContext-inl.h"  // JSContext::check
 #include "vm/JSObject-inl.h"   // js::IsCallable
@@ -30,7 +31,7 @@ using JS::MutableHandle;
 using JS::ToNumber;
 using JS::Value;
 
-[[nodiscard]] js::PromiseObject* js::PromiseRejectedWithPendingError(
+MOZ_MUST_USE js::PromiseObject* js::PromiseRejectedWithPendingError(
     JSContext* cx) {
   Rooted<Value> exn(cx);
   if (!cx->isExceptionPending() || !GetAndClearException(cx, &exn)) {
@@ -56,7 +57,7 @@ using JS::Value;
  * caller's responsibility to make sure that later, when the algorithm is
  * "performed", the appropriate steps are carried out.
  */
-[[nodiscard]] bool js::CreateAlgorithmFromUnderlyingMethod(
+MOZ_MUST_USE bool js::CreateAlgorithmFromUnderlyingMethod(
     JSContext* cx, Handle<Value> underlyingObject,
     const char* methodNameForErrorMessage, Handle<PropertyName*> methodName,
     MutableHandle<Value> method) {
@@ -111,9 +112,9 @@ using JS::Value;
  * Streams spec, 6.3.2. InvokeOrNoop ( O, P, args )
  * As it happens, all callers pass exactly one argument.
  */
-[[nodiscard]] bool js::InvokeOrNoop(JSContext* cx, Handle<Value> O,
-                                    Handle<PropertyName*> P, Handle<Value> arg,
-                                    MutableHandle<Value> rval) {
+MOZ_MUST_USE bool js::InvokeOrNoop(JSContext* cx, Handle<Value> O,
+                                   Handle<PropertyName*> P, Handle<Value> arg,
+                                   MutableHandle<Value> rval) {
   cx->check(O, P, arg);
 
   // Step 1: Assert: O is not undefined.
@@ -139,7 +140,7 @@ using JS::Value;
 /**
  * Streams spec, 6.3.7. ValidateAndNormalizeHighWaterMark ( highWaterMark )
  */
-[[nodiscard]] bool js::ValidateAndNormalizeHighWaterMark(
+MOZ_MUST_USE bool js::ValidateAndNormalizeHighWaterMark(
     JSContext* cx, Handle<Value> highWaterMarkVal, double* highWaterMark) {
   // Step 1: Set highWaterMark to ? ToNumber(highWaterMark).
   if (!ToNumber(cx, highWaterMarkVal, highWaterMark)) {
@@ -168,8 +169,8 @@ using JS::Value;
  * WritableStreamDefaultControllerGetChunkSize where this value is used, we
  * check for undefined and behave as if we had "made" an "algorithm" for it.
  */
-[[nodiscard]] bool js::MakeSizeAlgorithmFromSizeFunction(JSContext* cx,
-                                                         Handle<Value> size) {
+MOZ_MUST_USE bool js::MakeSizeAlgorithmFromSizeFunction(JSContext* cx,
+                                                        Handle<Value> size) {
   cx->check(size);
 
   // Step 1: If size is undefined, return an algorithm that returns 1.

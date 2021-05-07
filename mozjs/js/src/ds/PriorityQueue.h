@@ -31,7 +31,7 @@ class PriorityQueue {
   explicit PriorityQueue(AllocPolicy ap = AllocPolicy())
       : heap(std::move(ap)) {}
 
-  [[nodiscard]] bool reserve(size_t capacity) { return heap.reserve(capacity); }
+  MOZ_MUST_USE bool reserve(size_t capacity) { return heap.reserve(capacity); }
 
   size_t length() const { return heap.length(); }
 
@@ -47,7 +47,7 @@ class PriorityQueue {
     return highest;
   }
 
-  [[nodiscard]] bool insert(const T& v) {
+  MOZ_MUST_USE bool insert(const T& v) {
     if (!heap.append(v)) {
       return false;
     }

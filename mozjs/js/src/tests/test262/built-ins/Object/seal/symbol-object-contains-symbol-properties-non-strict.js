@@ -1,7 +1,7 @@
 // Copyright (C) 2013 the V8 project authors. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
-esid: sec-object.seal
+es6id: 19.4
 description: >
     Object.seal(obj) where obj contains symbol properties.
 flags: [noStrict]

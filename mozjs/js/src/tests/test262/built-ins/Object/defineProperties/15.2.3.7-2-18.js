@@ -24,9 +24,7 @@ try {
 
   Object.defineProperties(obj, this);
 } catch (e) {
-  if (!(e instanceof TypeError)) {
-    $ERROR("Expected TypeError, got " + e);
-  }
+  if (!(e instanceof TypeError)) throw e;
   result = true;
 } finally {
   delete this.prop;

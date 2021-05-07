@@ -143,19 +143,12 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
       // take into account whether those compilers support particular features
       // that may have been enabled.
       bool enableWasmBaseline = ((optByte & 0xF0) == (1 << 7));
-      bool enableWasmOptimizing = false;
-#ifdef JS_CODEGEN_ARM64
-      // Cranelift->Ion transition
-      bool forceWasmIon = false;
-#endif
-#ifdef ENABLE_WASM_CRANELIFT
-      // Cranelift->Ion transition
-      forceWasmIon = IonPlatformSupport() && ((optByte & 0xF0) == (1 << 6));
-      enableWasmOptimizing =
-          CraneliftPlatformSupport() && ((optByte & 0xF0) == (1 << 5));
-#else
-      enableWasmOptimizing =
+      bool enableWasmIon =
           IonPlatformSupport() && ((optByte & 0xF0) == (1 << 6));
+      bool enableWasmCranelift = false;
+#ifdef ENABLE_WASM_CRANELIFT
+      enableWasmCranelift =
+          CraneliftPlatformSupport() && ((optByte & 0xF0) == (1 << 5));
 #endif
       bool enableWasmAwaitTier2 = (IonPlatformSupport()
 #ifdef ENABLE_WASM_CRANELIFT
@@ -164,36 +157,35 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
                                        ) &&
                                   ((optByte & 0xF) == (1 << 3));
 
-      if (!enableWasmBaseline && !enableWasmOptimizing) {
-        // If nothing is selected explicitly, enable an optimizing compiler to
-        // test more platform specific JIT code. However, on some platforms,
-        // e.g. ARM64 on Windows, we do not have Ion available, so we need to
-        // switch to baseline instead.
-        if (IonPlatformSupport() || CraneliftPlatformSupport()) {
-          enableWasmOptimizing = true;
+      if (!enableWasmBaseline && !enableWasmIon && !enableWasmCranelift) {
+        // If nothing is selected explicitly, select Ion to test
+        // more platform specific JIT code. However, on some platforms,
+        // e.g. ARM64, we do not have Ion available, so we need to switch
+        // to baseline instead.
+        if (IonPlatformSupport()) {
+          enableWasmIon = true;
         } else {
           enableWasmBaseline = true;
         }
       }
 
       if (enableWasmAwaitTier2) {
-        // Tier 2 needs Baseline + Optimizing
+        // Tier 2 needs Baseline + {Ion,Cranelift}
         enableWasmBaseline = true;
 
-        if (!enableWasmOptimizing) {
-          enableWasmOptimizing = true;
+        if (!enableWasmIon && !enableWasmCranelift) {
+          enableWasmIon = true;
         }
       }
 
       JS::ContextOptionsRef(gCx)
           .setWasmBaseline(enableWasmBaseline)
+          .setWasmIon(enableWasmIon)
+          .setTestWasmAwaitTier2(enableWasmAwaitTier2)
 #ifdef ENABLE_WASM_CRANELIFT
-          .setWasmCranelift(enableWasmOptimizing && !forceWasmIon)
-          .setWasmIon(forceWasmIon)
-#else
-          .setWasmIon(enableWasmOptimizing)
+          .setWasmCranelift(enableWasmCranelift)
 #endif
-          .setTestWasmAwaitTier2(enableWasmAwaitTier2);
+          ;
     }
 
     // Expected header for a valid WebAssembly module
@@ -217,9 +209,8 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
     currentIndex += moduleLen;
 
     ScriptedCaller scriptedCaller;
-    FeatureOptions options;
     SharedCompileArgs compileArgs =
-        CompileArgs::build(gCx, std::move(scriptedCaller), options);
+        CompileArgs::build(gCx, std::move(scriptedCaller));
     if (!compileArgs) {
       return 0;
     }
@@ -260,9 +251,6 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
     size_t currentTableExportId = 0;
     size_t currentMemoryExportId = 0;
     size_t currentGlobalExportId = 0;
-#ifdef ENABLE_WASM_EXCEPTIONS
-    size_t currentEventExportId = 0;
-#endif
 
     for (const Import& import : importVec) {
       // First try to get the namespace object, create one if this is the
@@ -332,17 +320,6 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
               return 0;
             }
             break;
-
-#ifdef ENABLE_WASM_EXCEPTIONS
-          case DefinitionKind::Event:
-            // TODO: Pass a dummy defaultValue
-            if (!assignImportKind<WasmExceptionObject>(
-                    import, obj, lastExportsObj, lastExportIds,
-                    &currentEventExportId, exportsLength, nullValue)) {
-              return 0;
-            }
-            break;
-#endif
         }
       }
     }
@@ -428,7 +405,7 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
         if (propObj->is<WasmMemoryObject>()) {
           Rooted<WasmMemoryObject*> memory(gCx,
                                            &propObj->as<WasmMemoryObject>());
-          size_t byteLen = memory->volatileMemoryLength().get();
+          size_t byteLen = memory->volatileMemoryLength();
           if (byteLen) {
             // Read the bounds of the buffer to ensure it is valid.
             // AddressSanitizer would detect any out-of-bounds here.
@@ -443,7 +420,7 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
           Rooted<WasmGlobalObject*> global(gCx,
                                            &propObj->as<WasmGlobalObject>());
           if (global->type() != ValType::I64) {
-            global->val().get().toJSValue(gCx, &lastReturnVal);
+            global->value(gCx, &lastReturnVal);
           }
         }
       }

@@ -10,7 +10,42 @@ use core::task::{Context, Poll};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use super::MaybeDone;
+#[derive(Debug)]
+enum ElemState<F>
+where
+    F: Future,
+{
+    Pending(F),
+    Done(Option<F::Output>),
+}
+
+impl<F> ElemState<F>
+where
+    F: Future,
+{
+    fn pending_pin_mut(self: Pin<&mut Self>) -> Option<Pin<&mut F>> {
+        // Safety: Basic enum pin projection, no drop + optionally Unpin based
+        // on the type of this variant
+        match unsafe { self.get_unchecked_mut() } {
+            ElemState::Pending(f) => Some(unsafe { Pin::new_unchecked(f) }),
+            ElemState::Done(_) => None,
+        }
+    }
+
+    fn take_done(self: Pin<&mut Self>) -> Option<F::Output> {
+        // Safety: Going from pin to a variant we never pin-project
+        match unsafe { self.get_unchecked_mut() } {
+            ElemState::Pending(_) => None,
+            ElemState::Done(output) => output.take(),
+        }
+    }
+}
+
+impl<F> Unpin for ElemState<F>
+where
+    F: Future + Unpin,
+{
+}
 
 fn iter_pin_mut<T>(slice: Pin<&mut [T]>) -> impl Iterator<Item = Pin<&mut T>> {
     // Safety: `std` _could_ make this unsound if it were to decide Pin's
@@ -27,7 +62,7 @@ pub struct JoinAll<F>
 where
     F: Future,
 {
-    elems: Pin<Box<[MaybeDone<F>]>>,
+    elems: Pin<Box<[ElemState<F>]>>,
 }
 
 impl<F> fmt::Debug for JoinAll<F>
@@ -56,10 +91,8 @@ where
 ///
 /// This is purposefully a very simple API for basic use-cases. In a lot of
 /// cases you will want to use the more powerful
-/// [`FuturesOrdered`][crate::stream::FuturesOrdered] APIs, or, if order does
-/// not matter, [`FuturesUnordered`][crate::stream::FuturesUnordered].
-///
-/// Some examples for additional functionality provided by these are:
+/// [`FuturesUnordered`][crate::stream::FuturesUnordered] APIs, some
+/// examples of additional functionality that provides:
 ///
 ///  * Adding new futures to the set even after it has been started.
 ///
@@ -84,7 +117,7 @@ where
     I: IntoIterator,
     I::Item: Future,
 {
-    let elems: Box<[_]> = i.into_iter().map(MaybeDone::Future).collect();
+    let elems: Box<[_]> = i.into_iter().map(ElemState::Pending).collect();
     JoinAll { elems: elems.into() }
 }
 
@@ -97,16 +130,20 @@ where
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut all_done = true;
 
-        for elem in iter_pin_mut(self.elems.as_mut()) {
-            if elem.poll(cx).is_pending() {
-                all_done = false;
+        for mut elem in iter_pin_mut(self.elems.as_mut()) {
+            if let Some(pending) = elem.as_mut().pending_pin_mut() {
+                if let Poll::Ready(output) = pending.poll(cx) {
+                    elem.set(ElemState::Done(Some(output)));
+                } else {
+                    all_done = false;
+                }
             }
         }
 
         if all_done {
             let mut elems = mem::replace(&mut self.elems, Box::pin([]));
             let result = iter_pin_mut(elems.as_mut())
-                .map(|e| e.take_output().unwrap())
+                .map(|e| e.take_done().unwrap())
                 .collect();
             Poll::Ready(result)
         } else {

@@ -4,7 +4,7 @@
 /*---
 esid: sec-Intl.DisplayNames
 description: >
-  Intl.DisplayNames.length is 2.
+  Intl.DisplayNames.length is 0.
 info: |
   ECMAScript Standard Built-in Objects:
 
@@ -24,7 +24,7 @@ features: [Intl.DisplayNames]
 ---*/
 
 verifyProperty(Intl.DisplayNames, "length", {
-  value: 2,
+  value: 0,
   enumerable: false,
   writable: false,
   configurable: true,

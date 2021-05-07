@@ -265,11 +265,6 @@ struct MaybeStorage<T, false> {
   explicit MaybeStorage(const T& aVal) : mStorage{aVal}, mIsSome{true} {}
   explicit MaybeStorage(T&& aVal) : mStorage{std::move(aVal)}, mIsSome{true} {}
 
-  template <typename... Args>
-  explicit MaybeStorage(std::in_place_t, Args&&... aArgs) : mIsSome{true} {
-    ::new (KnownNotNull, &mStorage.val) T(std::forward<Args>(aArgs)...);
-  }
-
   // Copy and move operations are no-ops, since copying is moving is implemented
   // by Maybe_CopyMove_Enabler.
 
@@ -293,9 +288,6 @@ struct MaybeStorage<T, true> {
     constexpr Union() : dummy() {}
     constexpr explicit Union(const T& aVal) : val{aVal} {}
     constexpr explicit Union(T&& aVal) : val{std::move(aVal)} {}
-    template <typename... Args>
-    constexpr explicit Union(std::in_place_t, Args&&... aArgs)
-        : val{std::forward<Args>(aArgs)...} {}
 
     NonConstT val;
     char dummy;
@@ -307,10 +299,6 @@ struct MaybeStorage<T, true> {
       : mStorage{aVal}, mIsSome{true} {}
   constexpr explicit MaybeStorage(T&& aVal)
       : mStorage{std::move(aVal)}, mIsSome{true} {}
-
-  template <typename... Args>
-  constexpr explicit MaybeStorage(std::in_place_t, Args&&... aArgs)
-      : mStorage{std::in_place, std::forward<Args>(aArgs)...}, mIsSome{true} {}
 };
 
 }  // namespace detail
@@ -362,6 +350,9 @@ constexpr Maybe<U> Some(T&& aValue);
  * Boost. The most important differences between Maybe and std::optional are:
  *
  *   - std::optional<T> may be compared with T. We deliberately forbid that.
+ *   - std::optional allows in-place construction without a separate call to
+ *     |emplace()| by using a dummy |in_place_t| value to tag the appropriate
+ *     constructor.
  *   - std::optional has |valueOr()|, equivalent to Maybe's |valueOr()|, but
  *     lacks corresponding methods for |refOr()| and |ptrOr()|.
  *   - std::optional lacks |map()| and |apply()|, making it less suitable for
@@ -397,10 +388,6 @@ class MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS Maybe
   MOZ_ALLOW_TEMPORARY constexpr Maybe() = default;
 
   MOZ_ALLOW_TEMPORARY MOZ_IMPLICIT constexpr Maybe(Nothing) : Maybe{} {}
-
-  template <typename... Args>
-  constexpr explicit Maybe(std::in_place_t, Args&&... aArgs)
-      : detail::MaybeStorage<T>{std::in_place, std::forward<Args>(aArgs)...} {}
 
   /**
    * Maybe<T> can be copy-constructed from a Maybe<U> if T is constructible from
@@ -471,9 +458,7 @@ class MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS Maybe
 
   /* Returns the contents of this Maybe<T> by value. Unsafe unless |isSome()|.
    */
-  constexpr T value() const&;
-  constexpr T value() &&;
-  constexpr T value() const&&;
+  constexpr T value() const;
 
   /**
    * Move the contents of this Maybe<T> out of internal storage and return it
@@ -482,7 +467,7 @@ class MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS Maybe
    */
   T extract() {
     MOZ_DIAGNOSTIC_ASSERT(isSome());
-    T v = std::move(mStorage.val);
+    auto v = std::move(mStorage.val);
     reset();
     return v;
   }
@@ -496,13 +481,6 @@ class MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS Maybe
   /*
    * Returns the contents of this Maybe<T> by value. If |isNothing()|, returns
    * the default value provided.
-   *
-   * Note: If the value passed to aDefault is not the result of a trivial
-   * expression, but expensive to evaluate, e.g. |valueOr(ExpensiveFunction())|,
-   * use |valueOrFrom| instead, e.g.
-   * |valueOrFrom([arg] { return ExpensiveFunction(arg); })|. This ensures
-   * that the expensive expression is only evaluated when its result will
-   * actually be used.
    */
   template <typename V>
   constexpr T valueOr(V&& aDefault) const {
@@ -571,10 +549,8 @@ class MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS Maybe
   constexpr const T* operator->() const;
 
   /* Returns the contents of this Maybe<T> by ref. Unsafe unless |isSome()|. */
-  constexpr T& ref() &;
-  constexpr const T& ref() const&;
-  constexpr T&& ref() &&;
-  constexpr const T&& ref() const&&;
+  constexpr T& ref();
+  constexpr const T& ref() const;
 
   /*
    * Returns the contents of this Maybe<T> by ref. If |isNothing()|, returns
@@ -614,10 +590,8 @@ class MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS Maybe
     return aFunc();
   }
 
-  constexpr T& operator*() &;
-  constexpr const T& operator*() const&;
-  constexpr T&& operator*() &&;
-  constexpr const T&& operator*() const&&;
+  constexpr T& operator*();
+  constexpr const T& operator*() const;
 
   /* If |isSome()|, runs the provided function or functor on the contents of
    * this Maybe. */
@@ -757,32 +731,14 @@ class Maybe<T&> {
     return val;
   }
 
-  bool refEquals(const Maybe<T&>& aOther) const {
-    return mValue == aOther.mValue;
-  }
-
-  bool refEquals(const T& aOther) const { return mValue == &aOther; }
-
  private:
   T* mValue = nullptr;
 };
 
 template <typename T>
-constexpr T Maybe<T>::value() const& {
+constexpr T Maybe<T>::value() const {
   MOZ_DIAGNOSTIC_ASSERT(isSome());
   return ref();
-}
-
-template <typename T>
-constexpr T Maybe<T>::value() && {
-  MOZ_DIAGNOSTIC_ASSERT(isSome());
-  return std::move(ref());
-}
-
-template <typename T>
-constexpr T Maybe<T>::value() const&& {
-  MOZ_DIAGNOSTIC_ASSERT(isSome());
-  return std::move(ref());
 }
 
 template <typename T>
@@ -810,51 +766,27 @@ constexpr const T* Maybe<T>::operator->() const {
 }
 
 template <typename T>
-constexpr T& Maybe<T>::ref() & {
+constexpr T& Maybe<T>::ref() {
   MOZ_DIAGNOSTIC_ASSERT(isSome());
   return mStorage.val;
 }
 
 template <typename T>
-constexpr const T& Maybe<T>::ref() const& {
+constexpr const T& Maybe<T>::ref() const {
   MOZ_DIAGNOSTIC_ASSERT(isSome());
   return mStorage.val;
 }
 
 template <typename T>
-constexpr T&& Maybe<T>::ref() && {
-  MOZ_DIAGNOSTIC_ASSERT(isSome());
-  return std::move(mStorage.val);
-}
-
-template <typename T>
-constexpr const T&& Maybe<T>::ref() const&& {
-  MOZ_DIAGNOSTIC_ASSERT(isSome());
-  return std::move(mStorage.val);
-}
-
-template <typename T>
-constexpr T& Maybe<T>::operator*() & {
+constexpr T& Maybe<T>::operator*() {
   MOZ_DIAGNOSTIC_ASSERT(isSome());
   return ref();
 }
 
 template <typename T>
-constexpr const T& Maybe<T>::operator*() const& {
+constexpr const T& Maybe<T>::operator*() const {
   MOZ_DIAGNOSTIC_ASSERT(isSome());
   return ref();
-}
-
-template <typename T>
-constexpr T&& Maybe<T>::operator*() && {
-  MOZ_DIAGNOSTIC_ASSERT(isSome());
-  return std::move(ref());
-}
-
-template <typename T>
-constexpr const T&& Maybe<T>::operator*() const&& {
-  MOZ_DIAGNOSTIC_ASSERT(isSome());
-  return std::move(ref());
 }
 
 template <typename T>
@@ -885,11 +817,6 @@ constexpr Maybe<T&> SomeRef(T& aValue) {
   Maybe<T&> value;
   value.emplace(aValue);
   return value;
-}
-
-template <typename T>
-constexpr Maybe<T&> ToMaybeRef(T* const aPtr) {
-  return aPtr ? SomeRef(*aPtr) : Nothing{};
 }
 
 template <typename T>

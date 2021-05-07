@@ -31,8 +31,8 @@ var ys = [
 ];
 
 function Double(x) {
-  // numberToDouble always returns a Double valued number.
-  return numberToDouble(x);
+  // Math.hypot always returns a Double valued number.
+  return x < 0 ? -Math.hypot(x) : Math.hypot(x);
 }
 
 var zs = [

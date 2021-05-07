@@ -7,6 +7,7 @@
 #ifndef frontend_EmitterScope_h
 #define frontend_EmitterScope_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 
 #include <stdint.h>
@@ -16,11 +17,8 @@
 #include "frontend/NameAnalysisTypes.h"
 #include "frontend/NameCollections.h"
 #include "frontend/ParseContext.h"
-#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
 #include "frontend/SharedContext.h"
 #include "js/TypeDecls.h"
-#include "vm/BytecodeUtil.h"   // JSOp
-#include "vm/SharedStencil.h"  // GCThingIndex
 
 namespace js {
 
@@ -58,77 +56,74 @@ class EmitterScope : public Nestable<EmitterScope> {
 
   // The index in the BytecodeEmitter's interned scope vector, otherwise
   // ScopeNote::NoScopeIndex.
-  GCThingIndex scopeIndex_;
+  uint32_t scopeIndex_;
 
   // If kind is Lexical, Catch, or With, the index in the BytecodeEmitter's
   // block scope note list. Otherwise ScopeNote::NoScopeNote.
   uint32_t noteIndex_;
 
-  [[nodiscard]] bool ensureCache(BytecodeEmitter* bce);
+  MOZ_MUST_USE bool ensureCache(BytecodeEmitter* bce);
 
-  [[nodiscard]] bool checkSlotLimits(BytecodeEmitter* bce,
-                                     const ParserBindingIter& bi);
+  MOZ_MUST_USE bool checkSlotLimits(BytecodeEmitter* bce,
+                                    const BindingIter& bi);
 
-  [[nodiscard]] bool checkEnvironmentChainLength(BytecodeEmitter* bce);
+  MOZ_MUST_USE bool checkEnvironmentChainLength(BytecodeEmitter* bce);
 
-  void updateFrameFixedSlots(BytecodeEmitter* bce, const ParserBindingIter& bi);
+  void updateFrameFixedSlots(BytecodeEmitter* bce, const BindingIter& bi);
 
-  [[nodiscard]] bool putNameInCache(BytecodeEmitter* bce,
-                                    TaggedParserAtomIndex name,
-                                    NameLocation loc);
+  MOZ_MUST_USE bool putNameInCache(BytecodeEmitter* bce, JSAtom* name,
+                                   NameLocation loc);
 
   mozilla::Maybe<NameLocation> lookupInCache(BytecodeEmitter* bce,
-                                             TaggedParserAtomIndex name);
+                                             JSAtom* name);
 
   EmitterScope* enclosing(BytecodeEmitter** bce) const;
 
-  mozilla::Maybe<ScopeIndex> enclosingScopeIndex(BytecodeEmitter* bce) const;
+  AbstractScopePtr enclosingScope(BytecodeEmitter* bce) const;
 
-  static bool nameCanBeFree(BytecodeEmitter* bce, TaggedParserAtomIndex name);
+  static bool nameCanBeFree(BytecodeEmitter* bce, JSAtom* name);
 
-  NameLocation searchAndCache(BytecodeEmitter* bce, TaggedParserAtomIndex name);
+  static NameLocation searchInEnclosingScope(JSAtom* name, Scope* scope,
+                                             uint8_t hops);
+  NameLocation searchAndCache(BytecodeEmitter* bce, JSAtom* name);
 
-  [[nodiscard]] bool internEmptyGlobalScopeAsBody(BytecodeEmitter* bce);
+  MOZ_MUST_USE bool internEmptyGlobalScopeAsBody(BytecodeEmitter* bce);
 
-  [[nodiscard]] bool internScopeStencil(BytecodeEmitter* bce, ScopeIndex index);
+  template <typename ScopeCreator>
+  MOZ_MUST_USE bool internScopeCreationData(BytecodeEmitter* bce,
+                                            ScopeCreator createScope);
 
-  [[nodiscard]] bool internBodyScopeStencil(BytecodeEmitter* bce,
-                                            ScopeIndex index);
-  [[nodiscard]] bool appendScopeNote(BytecodeEmitter* bce);
+  template <typename ScopeCreator>
+  MOZ_MUST_USE bool internBodyScopeCreationData(BytecodeEmitter* bce,
+                                                ScopeCreator createScope);
+  MOZ_MUST_USE bool appendScopeNote(BytecodeEmitter* bce);
 
-  [[nodiscard]] bool clearFrameSlotRange(BytecodeEmitter* bce, JSOp opcode,
-                                         uint32_t slotStart,
-                                         uint32_t slotEnd) const;
-
-  [[nodiscard]] bool deadZoneFrameSlotRange(BytecodeEmitter* bce,
-                                            uint32_t slotStart,
-                                            uint32_t slotEnd) const {
-    return clearFrameSlotRange(bce, JSOp::Uninitialized, slotStart, slotEnd);
-  }
+  MOZ_MUST_USE bool deadZoneFrameSlotRange(BytecodeEmitter* bce,
+                                           uint32_t slotStart,
+                                           uint32_t slotEnd) const;
 
  public:
   explicit EmitterScope(BytecodeEmitter* bce);
 
   void dump(BytecodeEmitter* bce);
 
-  [[nodiscard]] bool enterLexical(BytecodeEmitter* bce, ScopeKind kind,
-                                  LexicalScope::ParserData* bindings);
-  [[nodiscard]] bool enterNamedLambda(BytecodeEmitter* bce,
-                                      FunctionBox* funbox);
-  [[nodiscard]] bool enterFunction(BytecodeEmitter* bce, FunctionBox* funbox);
-  [[nodiscard]] bool enterFunctionExtraBodyVar(BytecodeEmitter* bce,
-                                               FunctionBox* funbox);
-  [[nodiscard]] bool enterGlobal(BytecodeEmitter* bce,
-                                 GlobalSharedContext* globalsc);
-  [[nodiscard]] bool enterEval(BytecodeEmitter* bce, EvalSharedContext* evalsc);
-  [[nodiscard]] bool enterModule(BytecodeEmitter* module,
-                                 ModuleSharedContext* modulesc);
-  [[nodiscard]] bool enterWith(BytecodeEmitter* bce);
-  [[nodiscard]] bool deadZoneFrameSlots(BytecodeEmitter* bce) const;
+  MOZ_MUST_USE bool enterLexical(BytecodeEmitter* bce, ScopeKind kind,
+                                 Handle<LexicalScope::Data*> bindings);
+  MOZ_MUST_USE bool enterNamedLambda(BytecodeEmitter* bce, FunctionBox* funbox);
+  MOZ_MUST_USE bool enterFunction(BytecodeEmitter* bce, FunctionBox* funbox);
+  MOZ_MUST_USE bool enterFunctionExtraBodyVar(BytecodeEmitter* bce,
+                                              FunctionBox* funbox);
+  MOZ_MUST_USE bool enterGlobal(BytecodeEmitter* bce,
+                                GlobalSharedContext* globalsc);
+  MOZ_MUST_USE bool enterEval(BytecodeEmitter* bce, EvalSharedContext* evalsc);
+  MOZ_MUST_USE bool enterModule(BytecodeEmitter* module,
+                                ModuleSharedContext* modulesc);
+  MOZ_MUST_USE bool enterWith(BytecodeEmitter* bce);
+  MOZ_MUST_USE bool deadZoneFrameSlots(BytecodeEmitter* bce) const;
 
-  [[nodiscard]] bool leave(BytecodeEmitter* bce, bool nonLocal = false);
+  MOZ_MUST_USE bool leave(BytecodeEmitter* bce, bool nonLocal = false);
 
-  GCThingIndex index() const {
+  uint32_t index() const {
     MOZ_ASSERT(scopeIndex_ != ScopeNote::NoScopeIndex,
                "Did you forget to intern a Scope?");
     return scopeIndex_;
@@ -137,7 +132,6 @@ class EmitterScope : public Nestable<EmitterScope> {
   uint32_t noteIndex() const { return noteIndex_; }
 
   AbstractScopePtr scope(const BytecodeEmitter* bce) const;
-  mozilla::Maybe<ScopeIndex> scopeIndex(const BytecodeEmitter* bce) const;
 
   bool hasEnvironment() const { return hasEnvironment_; }
 
@@ -156,9 +150,9 @@ class EmitterScope : public Nestable<EmitterScope> {
     return Nestable<EmitterScope>::enclosing();
   }
 
-  NameLocation lookup(BytecodeEmitter* bce, TaggedParserAtomIndex name);
+  NameLocation lookup(BytecodeEmitter* bce, JSAtom* name);
 
-  mozilla::Maybe<NameLocation> locationBoundInScope(TaggedParserAtomIndex name,
+  mozilla::Maybe<NameLocation> locationBoundInScope(JSAtom* name,
                                                     EmitterScope* target);
 };
 

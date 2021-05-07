@@ -7,15 +7,15 @@
 #ifndef jit_JitSpewer_h
 #define jit_JitSpewer_h
 
-#include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/IntegerPrintfMacros.h"
 
 #include <stdarg.h>
 
 #include "jit/JSONSpewer.h"
-#include "js/TypeDecls.h"
+
+#include "js/RootingAPI.h"
+
 #include "vm/Printer.h"
 
 namespace js {
@@ -43,8 +43,6 @@ namespace jit {
   _(FLAC)                                  \
   /* Effective address analysis info */    \
   _(EAA)                                   \
-  /* Wasm Bounds Check Elimination */      \
-  _(WasmBCE)                               \
   /* Information during regalloc */        \
   _(RegAlloc)                              \
   /* Information during inlining */        \
@@ -107,9 +105,7 @@ namespace jit {
   /* Generated WarpSnapshots */            \
   _(WarpSnapshots)                         \
   /* CacheIR transpiler logging */         \
-  _(WarpTranspiler)                        \
-  /* Trial inlining for Warp */            \
-  _(WarpTrialInlining)
+  _(WarpTranspiler)
 
 enum JitSpewChannel {
 #define JITSPEW_CHANNEL(name) JitSpew_##name,

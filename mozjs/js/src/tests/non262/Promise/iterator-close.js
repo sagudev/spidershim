@@ -64,7 +64,7 @@ class MyPromiseStaticResolveGetterThrows extends Promise {
 test(MyPromiseStaticResolveGetterThrows, ["all", "race"], {
     nextVal: { value: Promise.resolve(1), done: false },
     rejectReason: "static resolve getter throws",
-    closed: false,
+    closed: true,
 });
 
 class MyPromiseStaticResolveThrows extends Promise {

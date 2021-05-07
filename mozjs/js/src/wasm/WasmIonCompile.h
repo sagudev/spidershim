@@ -19,6 +19,8 @@
 #ifndef wasm_ion_compile_h
 #define wasm_ion_compile_h
 
+#include "mozilla/Attributes.h"
+
 #include "wasm/WasmGenerator.h"
 
 namespace js {
@@ -26,14 +28,13 @@ namespace wasm {
 
 // Return whether IonCompileFunction() can generate code on the current device.
 // Usually you do *not* want this, you want IonAvailable().
-[[nodiscard]] bool IonPlatformSupport();
+MOZ_MUST_USE bool IonPlatformSupport();
 
 // Generates very fast code at the expense of compilation time.
-[[nodiscard]] bool IonCompileFunctions(const ModuleEnvironment& moduleEnv,
-                                       const CompilerEnvironment& compilerEnv,
-                                       LifoAlloc& lifo,
-                                       const FuncCompileInputVector& inputs,
-                                       CompiledCode* code, UniqueChars* error);
+MOZ_MUST_USE bool IonCompileFunctions(const ModuleEnvironment& env,
+                                      LifoAlloc& lifo,
+                                      const FuncCompileInputVector& inputs,
+                                      CompiledCode* code, UniqueChars* error);
 
 }  // namespace wasm
 }  // namespace js

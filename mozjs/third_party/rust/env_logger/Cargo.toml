@@ -11,9 +11,8 @@
 # will likely look very different (and much more reasonable)
 
 [package]
-edition = "2018"
 name = "env_logger"
-version = "0.8.2"
+version = "0.6.2"
 authors = ["The Rust Project Developers"]
 description = "A logging implementation for `log` which is configured via an environment\nvariable.\n"
 documentation = "https://docs.rs/env_logger"
@@ -21,7 +20,7 @@ readme = "README.md"
 keywords = ["logging", "log", "logger"]
 categories = ["development-tools::debugging"]
 license = "MIT/Apache-2.0"
-repository = "https://github.com/env-logger-rs/env_logger/"
+repository = "https://github.com/sebasmagri/env_logger/"
 
 [[test]]
 name = "regexp_filter"
@@ -32,10 +31,6 @@ name = "log-in-log"
 harness = false
 
 [[test]]
-name = "log_tls_dtors"
-harness = false
-
-[[test]]
 name = "init-twice-retains-filter"
 harness = false
 [dependencies.atty]
@@ -43,18 +38,16 @@ version = "0.2.5"
 optional = true
 
 [dependencies.humantime]
-version = "2.0.0"
+version = "1.1"
 optional = true
 
 [dependencies.log]
-version = "0.4.8"
+version = "0.4"
 features = ["std"]
 
 [dependencies.regex]
 version = "1.0.3"
-features = ["std", "perf"]
 optional = true
-default-features = false
 
 [dependencies.termcolor]
 version = "1.0.2"

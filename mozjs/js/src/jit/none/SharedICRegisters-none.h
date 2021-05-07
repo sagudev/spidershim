@@ -7,9 +7,7 @@
 #ifndef jit_none_SharedICRegisters_none_h
 #define jit_none_SharedICRegisters_none_h
 
-#include "jit/none/MacroAssembler-none.h"
-#include "jit/Registers.h"
-#include "jit/RegisterSets.h"
+#include "jit/MacroAssembler.h"
 
 namespace js {
 namespace jit {
@@ -29,8 +27,6 @@ static constexpr Register ExtractTemp1{Registers::invalid_reg};
 
 static constexpr FloatRegister FloatReg0 = {FloatRegisters::invalid_reg};
 static constexpr FloatRegister FloatReg1 = {FloatRegisters::invalid_reg};
-static constexpr FloatRegister FloatReg2 = {FloatRegisters::invalid_reg};
-static constexpr FloatRegister FloatReg3 = {FloatRegisters::invalid_reg};
 
 }  // namespace jit
 }  // namespace js

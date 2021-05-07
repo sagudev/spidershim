@@ -66,9 +66,18 @@ from __future__ import unicode_literals
 from __future__ import absolute_import
 import re
 
-from fluent.syntax import ast as FTL
-from fluent.syntax.visitor import Transformer
+import fluent.syntax.ast as FTL
 from .errors import NotSupportedError
+
+
+def evaluate(ctx, node):
+    def eval_node(subnode):
+        if isinstance(subnode, Transform):
+            return subnode(ctx)
+        else:
+            return subnode
+
+    return node.traverse(eval_node)
 
 
 def chain_elements(elements):
@@ -229,7 +238,7 @@ class COPY_PATTERN(FluentSource):
     pass
 
 
-class TransformPattern(FluentSource, Transformer):
+class TransformPattern(FluentSource, FTL.Transformer):
     """Base class for modifying a Fluent pattern as part of a migration.
 
     Implement visit_* methods of the Transformer pattern to do the
@@ -386,7 +395,7 @@ class REPLACE_IN_TEXT(Transform):
         # Order the replacements by the position of the original placeable in
         # the translation.
         replacements = (
-            (key, ctx.evaluate(self.replacements[key]))
+            (key, evaluate(ctx, self.replacements[key]))
             for index, key
             in sorted(keys_indexed.items(), key=lambda x: x[0])
         )
@@ -418,17 +427,9 @@ class REPLACE(LegacySource):
     """
 
     def __init__(
-        self, path, key, replacements, **kwargs
+        self, path, key, replacements,
+        normalize_printf=False, **kwargs
     ):
-        # We default normalize_printf to False except for .properties files.
-        # We still allow the caller to override the default value.
-        normalize_printf = False
-        if 'normalize_printf' in kwargs:
-            normalize_printf = kwargs['normalize_printf']
-            del kwargs['normalize_printf']
-        elif path.endswith('.properties'):
-            normalize_printf = True
-
         super(REPLACE, self).__init__(path, key, **kwargs)
         self.replacements = replacements
         self.normalize_printf = normalize_printf
@@ -461,7 +462,7 @@ class PLURALS(LegacySource):
 
     def __call__(self, ctx):
         element = super(PLURALS, self).__call__(ctx)
-        selector = ctx.evaluate(self.selector)
+        selector = evaluate(ctx, self.selector)
         keys = ctx.plural_categories
         forms = [
             FTL.TextElement(part)
@@ -494,7 +495,7 @@ class PLURALS(LegacySource):
         # variant. We don't need to insert a SelectExpression for them.
         if len(pairs) == 1:
             _, only_form = pairs[0]
-            only_variant = ctx.evaluate(self.foreach(only_form))
+            only_variant = evaluate(ctx, self.foreach(only_form))
             return Transform.pattern_of(only_variant)
 
         # Make sure the default key is defined. If it's missing, use the last
@@ -508,7 +509,7 @@ class PLURALS(LegacySource):
             # Run the legacy plural form through `foreach` which returns an
             # `FTL.Node` describing the transformation required for each
             # variant. Then evaluate it to a migrated FTL node.
-            value = ctx.evaluate(self.foreach(form))
+            value = evaluate(ctx, self.foreach(form))
             return FTL.Variant(
                 key=FTL.Identifier(key),
                 value=value,

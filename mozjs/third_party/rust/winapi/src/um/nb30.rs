@@ -29,7 +29,7 @@ STRUCT!{struct NCB {
     ncb_reserve: [UCHAR; 18],
     ncb_event: HANDLE,
 }}
-#[cfg(target_pointer_width = "32")]
+#[cfg(target_arch = "x86")]
 STRUCT!{struct NCB {
     ncb_command: UCHAR,
     ncb_retcode: UCHAR,

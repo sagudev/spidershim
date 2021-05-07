@@ -40,7 +40,7 @@ function MapForEach(callbackfn, thisArg = undefined) {
         ThrowTypeError(JSMSG_NOT_FUNCTION, DecompileArg(0, callbackfn));
 
     // Steps 5-8.
-    var entries = callFunction(std_Map_entries, M);
+    var entries = callFunction(std_Map_iterator, M);
 
     // Inlined: MapIteratorNext
     var mapIterationResultPair = iteratorTemp.mapIterationResultPair;
@@ -62,6 +62,13 @@ function MapForEach(callbackfn, thisArg = undefined) {
         callContentFunction(callbackfn, thisArg, value, key, M);
     }
 }
+
+// Uncloned functions with `$` prefix are allocated as extended function
+// to store the original name in `_SetCanonicalName`.
+function $MapEntries() {
+    return callFunction(std_Map_iterator, this);
+}
+_SetCanonicalName($MapEntries, "entries");
 
 var iteratorTemp = { mapIterationResultPair: null };
 
@@ -116,8 +123,6 @@ function MapIteratorNext() {
 }
 
 // ES6 final draft 23.1.2.2.
-// Uncloned functions with `$` prefix are allocated as extended function
-// to store the original name in `_SetCanonicalName`.
 function $MapSpecies() {
     // Step 1.
     return this;

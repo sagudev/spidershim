@@ -109,7 +109,7 @@ class Fifo {
   // Push an element to the back of the queue. This method can take either a
   // |const T&| or a |T&&|.
   template <typename U>
-  [[nodiscard]] bool pushBack(U&& u) {
+  MOZ_MUST_USE bool pushBack(U&& u) {
     if (!rear_.append(std::forward<U>(u))) {
       return false;
     }
@@ -119,7 +119,7 @@ class Fifo {
 
   // Construct a T in-place at the back of the queue.
   template <typename... Args>
-  [[nodiscard]] bool emplaceBack(Args&&... args) {
+  MOZ_MUST_USE bool emplaceBack(Args&&... args) {
     if (!rear_.emplaceBack(std::forward<Args>(args)...)) {
       return false;
     }

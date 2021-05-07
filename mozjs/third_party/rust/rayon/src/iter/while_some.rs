@@ -19,7 +19,7 @@ impl<I> WhileSome<I>
 where
     I: ParallelIterator,
 {
-    /// Creates a new `WhileSome` iterator.
+    /// Create a new `WhileSome` iterator.
     pub(super) fn new(base: I) -> Self {
         WhileSome { base }
     }

@@ -11,10 +11,10 @@ info: |
     a. Let numericIndex be ! CanonicalNumericIndexString(P).
     b. If numericIndex is not undefined, then
       ...
-      iii. If ! IsValidIntegerIndex(O, numericIndex) is false, return false.
+      iv. If numericIndex = -0, return false.
   ...
 includes: [testTypedArray.js]
-features: [align-detached-buffer-semantics-with-web-reality, Reflect, TypedArray]
+features: [Reflect, TypedArray]
 ---*/
 
 
@@ -24,7 +24,7 @@ TypedArray.prototype["-0"] = "test262";
 testWithTypedArrayConstructors(function(TA) {
   var sample = new TA(1);
 
-  assert.sameValue(Reflect.has(sample, "-0"), false, 'Reflect.has(sample, "-0") must return false');
+  assert.sameValue(Reflect.has(sample, "-0"), false, "-0");
 });
 
 reportCompare(0, 0);

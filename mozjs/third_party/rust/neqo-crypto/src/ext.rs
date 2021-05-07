@@ -5,9 +5,7 @@
 // except according to those terms.
 
 use crate::agentio::as_c_void;
-use crate::constants::{
-    Extension, HandshakeMessage, TLS_HS_CLIENT_HELLO, TLS_HS_ENCRYPTED_EXTENSIONS,
-};
+use crate::constants::*;
 use crate::err::Res;
 use crate::ssl::{
     PRBool, PRFileDesc, SECFailure, SECStatus, SECSuccess, SSLAlertDescription,
@@ -16,6 +14,7 @@ use crate::ssl::{
 
 use std::cell::RefCell;
 use std::convert::TryFrom;
+use std::ops::DerefMut;
 use std::os::raw::{c_uint, c_void};
 use std::pin::Pin;
 use std::rc::Rc;
@@ -71,7 +70,7 @@ impl ExtensionTracker {
     {
         let handler_ptr = arg as *mut BoxedExtensionHandler;
         let rc = handler_ptr.as_mut().unwrap();
-        f(&mut *rc.borrow_mut())
+        f(rc.borrow_mut().deref_mut())
     }
 
     #[allow(clippy::cast_possible_truncation)]

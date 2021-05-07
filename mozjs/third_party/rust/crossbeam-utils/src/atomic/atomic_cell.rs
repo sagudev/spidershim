@@ -1,7 +1,3 @@
-// Necessary for implementing atomic methods for `AtomicUnit`
-#![allow(clippy::unit_arg)]
-#![allow(clippy::let_unit_value)]
-
 use core::cell::UnsafeCell;
 use core::fmt;
 use core::mem;
@@ -23,10 +19,10 @@ use super::seq_lock::SeqLock;
 ///
 /// Atomic loads use the [`Acquire`] ordering and atomic stores use the [`Release`] ordering.
 ///
-/// [`Cell`]: std::cell::Cell
-/// [`AtomicCell::<T>::is_lock_free()`]: AtomicCell::is_lock_free
-/// [`Acquire`]: std::sync::atomic::Ordering::Acquire
-/// [`Release`]: std::sync::atomic::Ordering::Release
+/// [`Cell`]: https://doc.rust-lang.org/std/cell/struct.Cell.html
+/// [`AtomicCell::<T>::is_lock_free()`]: struct.AtomicCell.html#method.is_lock_free
+/// [`Acquire`]: https://doc.rust-lang.org/std/sync/atomic/enum.Ordering.html#variant.Acquire
+/// [`Release`]: https://doc.rust-lang.org/std/sync/atomic/enum.Ordering.html#variant.Release
 #[repr(transparent)]
 pub struct AtomicCell<T: ?Sized> {
     /// The inner value.
@@ -55,13 +51,14 @@ impl<T> AtomicCell<T> {
     ///
     /// let a = AtomicCell::new(7);
     /// ```
-    pub const fn new(val: T) -> AtomicCell<T> {
+    #[cfg(not(has_min_const_fn))]
+    pub fn new(val: T) -> AtomicCell<T> {
         AtomicCell {
             value: UnsafeCell::new(val),
         }
     }
 
-    /// Consumes the atomic and returns the contained value.
+    /// Creates a new atomic cell initialized with `val`.
     ///
     /// # Examples
     ///
@@ -69,6 +66,22 @@ impl<T> AtomicCell<T> {
     /// use crossbeam_utils::atomic::AtomicCell;
     ///
     /// let a = AtomicCell::new(7);
+    /// ```
+    #[cfg(has_min_const_fn)]
+    pub const fn new(val: T) -> AtomicCell<T> {
+        AtomicCell {
+            value: UnsafeCell::new(val),
+        }
+    }
+
+    /// Unwraps the atomic cell and returns its inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crossbeam_utils::atomic::AtomicCell;
+    ///
+    /// let mut a = AtomicCell::new(7);
     /// let v = a.into_inner();
     ///
     /// assert_eq!(v, 7);
@@ -105,7 +118,7 @@ impl<T> AtomicCell<T> {
     /// // operations on them will have to use global locks for synchronization.
     /// assert_eq!(AtomicCell::<[u8; 1000]>::is_lock_free(), false);
     /// ```
-    pub const fn is_lock_free() -> bool {
+    pub fn is_lock_free() -> bool {
         atomic_is_lock_free::<T>()
     }
 
@@ -158,13 +171,31 @@ impl<T: ?Sized> AtomicCell<T> {
     /// ```
     /// use crossbeam_utils::atomic::AtomicCell;
     ///
-    /// let a = AtomicCell::new(5);
+    /// let mut a = AtomicCell::new(5);
     ///
     /// let ptr = a.as_ptr();
     /// ```
     #[inline]
     pub fn as_ptr(&self) -> *mut T {
         self.value.get()
+    }
+
+    /// Returns a mutable reference to the inner value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crossbeam_utils::atomic::AtomicCell;
+    ///
+    /// let mut a = AtomicCell::new(7);
+    /// *a.get_mut() += 1;
+    ///
+    /// assert_eq!(a.load(), 8);
+    /// ```
+    #[doc(hidden)]
+    #[deprecated(note = "this method is unsound and will be removed in the next release")]
+    pub fn get_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.value.get() }
     }
 }
 
@@ -188,7 +219,7 @@ impl<T: Default> AtomicCell<T> {
 }
 
 impl<T: Copy> AtomicCell<T> {
-    /// Loads a value from the atomic cell.
+    /// Loads a value.
     ///
     /// # Examples
     ///
@@ -488,28 +519,37 @@ macro_rules! impl_arithmetic {
             }
         }
     };
+    ($t:ty, $size:tt, $atomic:ty, $example:tt) => {
+        #[cfg(target_has_atomic = $size)]
+        impl_arithmetic!($t, $atomic, $example);
+    };
 }
 
-#[cfg(has_atomic_u8)]
-impl_arithmetic!(u8, atomic::AtomicU8, "let a = AtomicCell::new(7u8);");
-#[cfg(has_atomic_u8)]
-impl_arithmetic!(i8, atomic::AtomicI8, "let a = AtomicCell::new(7i8);");
-#[cfg(has_atomic_u16)]
-impl_arithmetic!(u16, atomic::AtomicU16, "let a = AtomicCell::new(7u16);");
-#[cfg(has_atomic_u16)]
-impl_arithmetic!(i16, atomic::AtomicI16, "let a = AtomicCell::new(7i16);");
-#[cfg(has_atomic_u32)]
-impl_arithmetic!(u32, atomic::AtomicU32, "let a = AtomicCell::new(7u32);");
-#[cfg(has_atomic_u32)]
-impl_arithmetic!(i32, atomic::AtomicI32, "let a = AtomicCell::new(7i32);");
-#[cfg(has_atomic_u64)]
-impl_arithmetic!(u64, atomic::AtomicU64, "let a = AtomicCell::new(7u64);");
-#[cfg(has_atomic_u64)]
-impl_arithmetic!(i64, atomic::AtomicI64, "let a = AtomicCell::new(7i64);");
-#[cfg(has_atomic_u128)]
-impl_arithmetic!(u128, atomic::AtomicU128, "let a = AtomicCell::new(7u128);");
-#[cfg(has_atomic_u128)]
-impl_arithmetic!(i128, atomic::AtomicI128, "let  a = AtomicCell::new(7i128);");
+cfg_if! {
+    if #[cfg(feature = "nightly")] {
+        impl_arithmetic!(u8, "8", atomic::AtomicU8, "let a = AtomicCell::new(7u8);");
+        impl_arithmetic!(i8, "8", atomic::AtomicI8, "let a = AtomicCell::new(7i8);");
+        impl_arithmetic!(u16, "16", atomic::AtomicU16, "let a = AtomicCell::new(7u16);");
+        impl_arithmetic!(i16, "16", atomic::AtomicI16, "let a = AtomicCell::new(7i16);");
+        impl_arithmetic!(u32, "32", atomic::AtomicU32, "let a = AtomicCell::new(7u32);");
+        impl_arithmetic!(i32, "32", atomic::AtomicI32, "let a = AtomicCell::new(7i32);");
+        impl_arithmetic!(u64, "64", atomic::AtomicU64, "let a = AtomicCell::new(7u64);");
+        impl_arithmetic!(i64, "64", atomic::AtomicI64, "let a = AtomicCell::new(7i64);");
+        impl_arithmetic!(u128, "let a = AtomicCell::new(7u128);");
+        impl_arithmetic!(i128, "let a = AtomicCell::new(7i128);");
+    } else {
+        impl_arithmetic!(u8, "let a = AtomicCell::new(7u8);");
+        impl_arithmetic!(i8, "let a = AtomicCell::new(7i8);");
+        impl_arithmetic!(u16, "let a = AtomicCell::new(7u16);");
+        impl_arithmetic!(i16, "let a = AtomicCell::new(7i16);");
+        impl_arithmetic!(u32, "let a = AtomicCell::new(7u32);");
+        impl_arithmetic!(i32, "let a = AtomicCell::new(7i32);");
+        impl_arithmetic!(u64, "let a = AtomicCell::new(7u64);");
+        impl_arithmetic!(i64, "let a = AtomicCell::new(7i64);");
+        impl_arithmetic!(u128, "let a = AtomicCell::new(7u128);");
+        impl_arithmetic!(i128, "let a = AtomicCell::new(7i128);");
+    }
+}
 
 impl_arithmetic!(
     usize,
@@ -593,15 +633,8 @@ impl<T: Default> Default for AtomicCell<T> {
     }
 }
 
-impl<T> From<T> for AtomicCell<T> {
-    #[inline]
-    fn from(val: T) -> AtomicCell<T> {
-        AtomicCell::new(val)
-    }
-}
-
 impl<T: Copy + fmt::Debug> fmt::Debug for AtomicCell<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("AtomicCell")
             .field("value", &self.load())
             .finish()
@@ -609,9 +642,9 @@ impl<T: Copy + fmt::Debug> fmt::Debug for AtomicCell<T> {
 }
 
 /// Returns `true` if values of type `A` can be transmuted into values of type `B`.
-const fn can_transmute<A, B>() -> bool {
+fn can_transmute<A, B>() -> bool {
     // Sizes must be equal, but alignment of `A` must be greater or equal than that of `B`.
-    (mem::size_of::<A>() == mem::size_of::<B>()) & (mem::align_of::<A>() >= mem::align_of::<B>())
+    mem::size_of::<A>() == mem::size_of::<B>() && mem::align_of::<A>() >= mem::align_of::<B>()
 }
 
 /// Returns a reference to the global lock associated with the `AtomicCell` at address `addr`.
@@ -649,104 +682,13 @@ fn lock(addr: usize) -> &'static SeqLock {
     // In order to protect from such cases, we simply choose a large prime number for `LEN`.
     const LEN: usize = 97;
 
+    const L: SeqLock = SeqLock::INIT;
+
     static LOCKS: [SeqLock; LEN] = [
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
-        SeqLock::new(),
+        L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L,
+        L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L,
+        L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L,
+        L, L, L, L, L, L, L,
     ];
 
     // If the modulus is a constant number, the compiler will use crazy math to transform this into
@@ -799,16 +741,17 @@ macro_rules! atomic {
             atomic!(@check, $t, AtomicUnit, $a, $atomic_op);
             atomic!(@check, $t, atomic::AtomicUsize, $a, $atomic_op);
 
-            #[cfg(has_atomic_u8)]
-            atomic!(@check, $t, atomic::AtomicU8, $a, $atomic_op);
-            #[cfg(has_atomic_u16)]
-            atomic!(@check, $t, atomic::AtomicU16, $a, $atomic_op);
-            #[cfg(has_atomic_u32)]
-            atomic!(@check, $t, atomic::AtomicU32, $a, $atomic_op);
-            #[cfg(has_atomic_u64)]
-            atomic!(@check, $t, atomic::AtomicU64, $a, $atomic_op);
-            #[cfg(has_atomic_u128)]
-            atomic!(@check, $t, atomic::AtomicU128, $a, $atomic_op);
+            #[cfg(feature = "nightly")]
+            {
+                #[cfg(target_has_atomic = "8")]
+                atomic!(@check, $t, atomic::AtomicU8, $a, $atomic_op);
+                #[cfg(target_has_atomic = "16")]
+                atomic!(@check, $t, atomic::AtomicU16, $a, $atomic_op);
+                #[cfg(target_has_atomic = "32")]
+                atomic!(@check, $t, atomic::AtomicU32, $a, $atomic_op);
+                #[cfg(target_has_atomic = "64")]
+                atomic!(@check, $t, atomic::AtomicU64, $a, $atomic_op);
+            }
 
             break $fallback_op;
         }
@@ -816,20 +759,8 @@ macro_rules! atomic {
 }
 
 /// Returns `true` if operations on `AtomicCell<T>` are lock-free.
-const fn atomic_is_lock_free<T>() -> bool {
-    // HACK(taiki-e): This is equivalent to `atomic! { T, _a, true, false }`, but can be used in const fn even in Rust 1.36.
-    let is_lock_free = can_transmute::<T, AtomicUnit>() | can_transmute::<T, atomic::AtomicUsize>();
-    #[cfg(has_atomic_u8)]
-    let is_lock_free = is_lock_free | can_transmute::<T, atomic::AtomicU8>();
-    #[cfg(has_atomic_u16)]
-    let is_lock_free = is_lock_free | can_transmute::<T, atomic::AtomicU16>();
-    #[cfg(has_atomic_u32)]
-    let is_lock_free = is_lock_free | can_transmute::<T, atomic::AtomicU32>();
-    #[cfg(has_atomic_u64)]
-    let is_lock_free = is_lock_free | can_transmute::<T, atomic::AtomicU64>();
-    #[cfg(has_atomic_u128)]
-    let is_lock_free = is_lock_free | can_transmute::<T, atomic::AtomicU128>();
-    is_lock_free
+fn atomic_is_lock_free<T>() -> bool {
+    atomic! { T, _a, true, false }
 }
 
 /// Atomically reads data from `src`.

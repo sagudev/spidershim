@@ -14,10 +14,10 @@ struct HashMap;
 struct String;
 
 macro_rules! box_database {
-    ($($(#[$attr:meta])* $boxenum:ident $boxtype:expr),*,) => {
+    ($($boxenum:ident $boxtype:expr),*,) => {
         #[derive(Clone, Copy, PartialEq)]
         pub enum BoxType {
-            $($(#[$attr])* $boxenum),*,
+            $($boxenum),*,
             UnknownBox(u32),
         }
 
@@ -25,7 +25,7 @@ macro_rules! box_database {
             fn from(t: u32) -> BoxType {
                 use self::BoxType::*;
                 match t {
-                    $($(#[$attr])* $boxtype => $boxenum),*,
+                    $($boxtype => $boxenum),*,
                     _ => UnknownBox(t),
                 }
             }
@@ -35,19 +35,18 @@ macro_rules! box_database {
             fn into(self) -> u32 {
                 use self::BoxType::*;
                 match self {
-                    $($(#[$attr])* $boxenum => $boxtype),*,
+                    $($boxenum => $boxtype),*,
                     UnknownBox(t) => t,
                 }
             }
         }
 
-    }
-}
-
-impl fmt::Debug for BoxType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let fourcc: FourCC = From::from(self.clone());
-        fourcc.fmt(f)
+        impl fmt::Debug for BoxType {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let fourcc: FourCC = From::from(self.clone());
+                write!(f, "{}", fourcc)
+            }
+        }
     }
 }
 
@@ -80,7 +79,7 @@ impl From<[u8; 4]> for FourCC {
 impl fmt::Debug for FourCC {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match std::str::from_utf8(&self.value) {
-            Ok(s) => f.write_str(s),
+            Ok(s) => write!(f, "{}", s),
             Err(_) => self.value.fmt(f),
         }
     }
@@ -88,17 +87,13 @@ impl fmt::Debug for FourCC {
 
 impl fmt::Display for FourCC {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(std::str::from_utf8(&self.value).unwrap_or("null"))
+        match std::str::from_utf8(&self.value) {
+            Ok(s) => write!(f, "{}", s),
+            Err(_) => write!(f, "null"),
+        }
     }
 }
 
-impl PartialEq<&[u8; 4]> for FourCC {
-    fn eq(&self, other: &&[u8; 4]) -> bool {
-        self.value.eq(*other)
-    }
-}
-
-#[deny(unreachable_patterns)]
 box_database!(
     FileTypeBox                       0x6674_7970, // "ftyp"
     MediaDataBox                      0x6d64_6174, // "mdat"
@@ -116,13 +111,6 @@ box_database!(
     MediaHeaderBox                    0x6d64_6864, // "mdhd"
     HandlerBox                        0x6864_6c72, // "hdlr"
     MediaInformationBox               0x6d69_6e66, // "minf"
-    ImageReferenceBox                 0x6972_6566, // "iref"
-    ImagePropertiesBox                0x6970_7270, // "iprp"
-    ItemPropertyContainerBox          0x6970_636f, // "ipco"
-    ItemPropertyAssociationBox        0x6970_6d61, // "ipma"
-    ColorInformationBox               0x636f_6c72, // "colr"
-    PixelInformationBox               0x7069_7869, // "pixi"
-    AuxiliaryTypeProperty             0x6175_7843, // "auxC"
     SampleTableBox                    0x7374_626c, // "stbl"
     SampleDescriptionBox              0x7374_7364, // "stsd"
     TimeToSampleBox                   0x7374_7473, // "stts"
@@ -134,8 +122,6 @@ box_database!(
     AVCSampleEntry                    0x6176_6331, // "avc1"
     AVC3SampleEntry                   0x6176_6333, // "avc3" - Need to check official name in spec.
     AVCConfigurationBox               0x6176_6343, // "avcC"
-    H263SampleEntry                   0x7332_3633, // "s263"
-    H263SpecificBox                   0x6432_3633, // "d263"
     MP4AudioSampleEntry               0x6d70_3461, // "mp4a"
     MP4VideoSampleEntry               0x6d70_3476, // "mp4v"
     ESDBox                            0x6573_6473, // "esds"
@@ -161,8 +147,8 @@ box_database!(
     SchemeTypeBox                     0x7363_686d, // "schm"
     MP3AudioSampleEntry               0x2e6d_7033, // ".mp3" - from F4V.
     CompositionOffsetBox              0x6374_7473, // "ctts"
-    LPCMAudioSampleEntry              0x6c70_636d, // "lpcm" - quicktime atom
-    ALACSpecificBox                   0x616c_6163, // "alac" - Also used by ALACSampleEntry
+    LPCMAudioSampleEntry              0x6C70_636D, // "lpcm" - quicktime atom
+    ALACSpecificBox                   0x616C_6163, // "alac" - Also used by ALACSampleEntry
     UuidBox                           0x7575_6964, // "uuid"
     MetadataBox                       0x6d65_7461, // "meta"
     MetadataHeaderBox                 0x6d68_6472, // "mhdr"

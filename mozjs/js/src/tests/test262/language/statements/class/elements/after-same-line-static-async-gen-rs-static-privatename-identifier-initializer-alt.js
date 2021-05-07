@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-fields) skip-if(!xulRuntime.shell) async -- requires shell-options
+// |reftest| skip async -- class-static-fields-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/rs-static-privatename-identifier-initializer-alt.case
 // - src/class-elements/productions/cls-decl-after-same-line-static-async-gen.template
@@ -111,4 +111,4 @@ C.m().next().then(function(v) {
   }
 
   return Promise.resolve(assertions());
-}).then($DONE, $DONE);
+}, $DONE).then($DONE, $DONE);

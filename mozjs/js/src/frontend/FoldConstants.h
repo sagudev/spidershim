@@ -15,7 +15,6 @@ namespace frontend {
 class FullParseHandler;
 template <class ParseHandler>
 class PerHandlerParser;
-class ParserAtomsTable;
 
 // Perform constant folding on the given AST. For example, the program
 // `print(2 + 2)` would become `print(4)`.
@@ -29,18 +28,15 @@ class ParserAtomsTable;
 //    if (!pn) {
 //        return false;
 //    }
-//    if (!FoldConstants(cx, parserAtoms, &pn, parser)) {
+//    if (!FoldConstants(cx, &pn, parser)) {
 //        return false;
 //    }
-[[nodiscard]] extern bool FoldConstants(JSContext* cx,
-                                        ParserAtomsTable& parserAtoms,
-                                        ParseNode** pnp,
-                                        FullParseHandler* handler);
+extern MOZ_MUST_USE bool FoldConstants(JSContext* cx, ParseNode** pnp,
+                                       FullParseHandler* parser);
 
-[[nodiscard]] inline bool FoldConstants(JSContext* cx,
-                                        ParserAtomsTable& parserAtoms,
-                                        typename SyntaxParseHandler::Node* pnp,
-                                        SyntaxParseHandler* handler) {
+inline MOZ_MUST_USE bool FoldConstants(JSContext* cx,
+                                       typename SyntaxParseHandler::Node* pnp,
+                                       SyntaxParseHandler* parser) {
   return true;
 }
 

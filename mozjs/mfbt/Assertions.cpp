@@ -5,7 +5,6 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Atomics.h"
-#include "mozilla/Sprintf.h"
 
 #include <stdarg.h>
 
@@ -35,7 +34,8 @@ MFBT_API MOZ_COLD MOZ_NEVER_INLINE MOZ_FORMAT_PRINTF(1, 2) const
   }
   va_list aArgs;
   va_start(aArgs, aFormat);
-  int ret = VsprintfLiteral(sPrintfCrashReason, aFormat, aArgs);
+  int ret =
+      vsnprintf(sPrintfCrashReason, sPrintfCrashReasonSize, aFormat, aArgs);
   va_end(aArgs);
   MOZ_RELEASE_ASSERT(
       ret >= 0 && size_t(ret) < sPrintfCrashReasonSize,

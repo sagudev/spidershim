@@ -9,6 +9,8 @@
 #ifndef builtin_streams_WritableStreamDefaultControllerOperations_h
 #define builtin_streams_WritableStreamDefaultControllerOperations_h
 
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
 #include "jstypes.h"        // JS_PUBLIC_API
 #include "js/RootingAPI.h"  // JS::Handle
 #include "js/Value.h"       // JS::Value
@@ -25,15 +27,15 @@ extern JSObject* WritableStreamControllerAbortSteps(
     JS::Handle<WritableStreamDefaultController*> unwrappedController,
     JS::Handle<JS::Value> reason);
 
-[[nodiscard]] extern bool WritableStreamControllerErrorSteps(
+extern MOZ_MUST_USE bool WritableStreamControllerErrorSteps(
     JSContext* cx,
     JS::Handle<WritableStreamDefaultController*> unwrappedController);
 
-[[nodiscard]] extern bool WritableStreamControllerStartHandler(JSContext* cx,
-                                                               unsigned argc,
-                                                               JS::Value* vp);
+extern MOZ_MUST_USE bool WritableStreamControllerStartHandler(JSContext* cx,
+                                                              unsigned argc,
+                                                              JS::Value* vp);
 
-[[nodiscard]] extern bool WritableStreamControllerStartFailedHandler(
+extern MOZ_MUST_USE bool WritableStreamControllerStartFailedHandler(
     JSContext* cx, unsigned argc, JS::Value* vp);
 
 /**
@@ -47,15 +49,14 @@ enum class SinkAlgorithms {
   Transform,
 };
 
-[[nodiscard]] extern bool SetUpWritableStreamDefaultController(
+extern MOZ_MUST_USE bool SetUpWritableStreamDefaultController(
     JSContext* cx, JS::Handle<WritableStream*> stream,
     SinkAlgorithms algorithms, JS::Handle<JS::Value> underlyingSink,
     JS::Handle<JS::Value> writeMethod, JS::Handle<JS::Value> closeMethod,
     JS::Handle<JS::Value> abortMethod, double highWaterMark,
     JS::Handle<JS::Value> size);
 
-[[nodiscard]] extern bool
-SetUpWritableStreamDefaultControllerFromUnderlyingSink(
+extern MOZ_MUST_USE bool SetUpWritableStreamDefaultControllerFromUnderlyingSink(
     JSContext* cx, JS::Handle<WritableStream*> stream,
     JS::Handle<JS::Value> underlyingSink, double highWaterMark,
     JS::Handle<JS::Value> sizeAlgorithm);
@@ -63,11 +64,11 @@ SetUpWritableStreamDefaultControllerFromUnderlyingSink(
 extern void WritableStreamDefaultControllerClearAlgorithms(
     WritableStreamDefaultController* unwrappedController);
 
-[[nodiscard]] extern bool WritableStreamDefaultControllerClose(
+extern MOZ_MUST_USE bool WritableStreamDefaultControllerClose(
     JSContext* cx,
     JS::Handle<WritableStreamDefaultController*> unwrappedController);
 
-[[nodiscard]] extern bool WritableStreamDefaultControllerGetChunkSize(
+extern MOZ_MUST_USE bool WritableStreamDefaultControllerGetChunkSize(
     JSContext* cx,
     JS::Handle<WritableStreamDefaultController*> unwrappedController,
     JS::Handle<JS::Value> chunk, JS::MutableHandle<JS::Value> returnValue);
@@ -75,21 +76,21 @@ extern void WritableStreamDefaultControllerClearAlgorithms(
 extern double WritableStreamDefaultControllerGetDesiredSize(
     const WritableStreamDefaultController* controller);
 
-[[nodiscard]] extern bool WritableStreamDefaultControllerWrite(
+extern MOZ_MUST_USE bool WritableStreamDefaultControllerWrite(
     JSContext* cx,
     JS::Handle<WritableStreamDefaultController*> unwrappedController,
     JS::Handle<JS::Value> chunk, JS::Handle<JS::Value> chunkSize);
 
-[[nodiscard]] extern bool WritableStreamDefaultControllerErrorIfNeeded(
+extern MOZ_MUST_USE bool WritableStreamDefaultControllerErrorIfNeeded(
     JSContext* cx,
     JS::Handle<WritableStreamDefaultController*> unwrappedController,
     JS::Handle<JS::Value> error);
 
-[[nodiscard]] extern bool WritableStreamDefaultControllerProcessClose(
+extern MOZ_MUST_USE bool WritableStreamDefaultControllerProcessClose(
     JSContext* cx,
     JS::Handle<WritableStreamDefaultController*> unwrappedController);
 
-[[nodiscard]] extern bool WritableStreamDefaultControllerProcessWrite(
+extern MOZ_MUST_USE bool WritableStreamDefaultControllerProcessWrite(
     JSContext* cx,
     JS::Handle<WritableStreamDefaultController*> unwrappedController,
     JS::Handle<JS::Value> chunk);
@@ -97,7 +98,7 @@ extern double WritableStreamDefaultControllerGetDesiredSize(
 extern bool WritableStreamDefaultControllerGetBackpressure(
     const WritableStreamDefaultController* unwrappedController);
 
-[[nodiscard]] extern bool WritableStreamDefaultControllerError(
+extern MOZ_MUST_USE bool WritableStreamDefaultControllerError(
     JSContext* cx,
     JS::Handle<WritableStreamDefaultController*> unwrappedController,
     JS::Handle<JS::Value> error);

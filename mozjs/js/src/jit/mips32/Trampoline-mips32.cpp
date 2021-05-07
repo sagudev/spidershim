@@ -7,11 +7,10 @@
 #include "mozilla/DebugOnly.h"
 
 #include "jit/Bailouts.h"
-#include "jit/BaselineFrame.h"
-#include "jit/CalleeToken.h"
 #include "jit/JitFrames.h"
-#include "jit/JitRuntime.h"
+#include "jit/JitRealm.h"
 #include "jit/JitSpewer.h"
+#include "jit/Linker.h"
 #include "jit/mips-shared/SharedICHelpers-mips-shared.h"
 #include "jit/mips32/Bailouts-mips32.h"
 #ifdef JS_ION_PERF
@@ -19,7 +18,6 @@
 #endif
 #include "jit/VMFunctions.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
-#include "vm/JSContext.h"
 #include "vm/Realm.h"
 
 #include "jit/MacroAssembler-inl.h"
@@ -263,14 +261,13 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
                   Address(StackPointer, sizeof(uintptr_t)));  // BaselineFrame
     masm.storePtr(reg_code, Address(StackPointer, 0));        // jitcode
 
-    using Fn = bool (*)(BaselineFrame * frame, InterpreterFrame * interpFrame,
-                        uint32_t numStackValues);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(BaselineFrameReg);  // BaselineFrame
     masm.passABIArg(OsrFrameReg);       // InterpreterFrame
     masm.passABIArg(numStackValues);
-    masm.callWithABI<Fn, jit::InitBaselineFrameForOsr>(
-        MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+    masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::InitBaselineFrameForOsr),
+                     MoveOp::GENERAL,
+                     CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
     regs.add(OsrFrameReg);
     regs.take(JSReturnOperand);
@@ -384,14 +381,12 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
   // Pass pointer to BailoutInfo
   masm.movePtr(StackPointer, a2);
 
-  using Fn = bool (*)(InvalidationBailoutStack * sp, size_t * frameSizeOut,
-                      BaselineBailoutInfo * *info);
   masm.setupAlignedABICall();
   masm.passABIArg(a0);
   masm.passABIArg(a1);
   masm.passABIArg(a2);
-  masm.callWithABI<Fn, InvalidationBailout>(
-      MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
+  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, InvalidationBailout),
+                   MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckOther);
 
   masm.loadPtr(Address(StackPointer, 0), a2);
   masm.loadPtr(Address(StackPointer, sizeof(uintptr_t)), a1);
@@ -408,16 +403,8 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
   masm.jump(bailoutTail);
 }
 
-void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
-                                            ArgumentsRectifierKind kind) {
-  switch (kind) {
-    case ArgumentsRectifierKind::Normal:
-      argumentsRectifierOffset_ = startTrampolineCode(masm);
-      break;
-    case ArgumentsRectifierKind::TrialInlining:
-      trialInliningArgumentsRectifierOffset_ = startTrampolineCode(masm);
-      break;
-  }
+void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm) {
+  argumentsRectifierOffset_ = startTrampolineCode(masm);
   masm.pushReturnAddress();
 
   Register numActArgsReg = t6;
@@ -524,24 +511,8 @@ void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
 
   // Call the target function.
   masm.andPtr(Imm32(CalleeTokenMask), calleeTokenReg);
-  switch (kind) {
-    case ArgumentsRectifierKind::Normal:
-      masm.loadJitCodeRaw(calleeTokenReg, t1);
-      argumentsRectifierReturnOffset_ = masm.callJitNoProfiler(t1);
-      break;
-    case ArgumentsRectifierKind::TrialInlining:
-      Label noBaselineScript, done;
-      masm.loadBaselineJitCodeRaw(calleeTokenReg, t1, &noBaselineScript);
-      masm.callJitNoProfiler(t1);
-      masm.jump(&done);
-
-      // See BaselineCacheIRCompiler::emitCallInlinedFunction.
-      masm.bind(&noBaselineScript);
-      masm.loadJitCodeRaw(calleeTokenReg, t1);
-      masm.callJitNoProfiler(t1);
-      masm.bind(&done);
-      break;
-  }
+  masm.loadJitCodeRaw(calleeTokenReg, t1);
+  argumentsRectifierReturnOffset_ = masm.callJitNoProfiler(t1);
 
   // arg1
   //  ...
@@ -645,12 +616,11 @@ static void GenerateBailoutThunk(MacroAssembler& masm, uint32_t frameClass,
   masm.storePtr(ImmPtr(nullptr), Address(StackPointer, 0));
   masm.movePtr(StackPointer, a1);
 
-  using Fn = bool (*)(BailoutStack * sp, BaselineBailoutInfo * *info);
   masm.setupAlignedABICall();
   masm.passABIArg(a0);
   masm.passABIArg(a1);
-  masm.callWithABI<Fn, Bailout>(MoveOp::GENERAL,
-                                CheckUnsafeCallWithABI::DontCheckOther);
+  masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, Bailout), MoveOp::GENERAL,
+                   CheckUnsafeCallWithABI::DontCheckOther);
 
   // Get BailoutInfo pointer
   masm.loadPtr(Address(StackPointer, 0), a2);
@@ -707,7 +677,7 @@ void JitRuntime::generateBailoutHandler(MacroAssembler& masm,
 }
 
 bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
-                                   const VMFunctionData& f, DynFn nativeFun,
+                                   const VMFunctionData& f, void* nativeFun,
                                    uint32_t* wrapperOffset) {
   *wrapperOffset = startTrampolineCode(masm);
 
@@ -954,7 +924,7 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
   masm.setupUnalignedABICall(a2);
   masm.passABIArg(a0);
   masm.passABIArg(a1);
-  masm.callWithABI(JitPreWriteBarrier(type));
+  masm.callWithABI(JitMarkFunction(type));
 
   save.take(AnyRegister(ra));
   masm.PopRegsInMask(save);
@@ -969,12 +939,12 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
   return offset;
 }
 
-void JitRuntime::generateExceptionTailStub(MacroAssembler& masm,
+void JitRuntime::generateExceptionTailStub(MacroAssembler& masm, void* handler,
                                            Label* profilerExitTail) {
   exceptionTailOffset_ = startTrampolineCode(masm);
 
   masm.bind(masm.failureLabel());
-  masm.handleFailureWithHandlerTail(profilerExitTail);
+  masm.handleFailureWithHandlerTail(handler, profilerExitTail);
 }
 
 void JitRuntime::generateBailoutTailStub(MacroAssembler& masm,

@@ -106,8 +106,7 @@ promise_test(async t => {
   const reader = oldReadableStreamGetReader.call(rs);
   // stream should be cancelled
   await reader.closed;
-}, 'ReadableStream async iterator should use the original values of getReader() and ReadableStreamDefaultReader ' +
-   'methods');
+}, 'ReadableStream getIterator() should use the original values of getReader() and ReadableStreamDefaultReader methods');
 
 test(t => {
   const oldPromiseThen = Promise.prototype.then;

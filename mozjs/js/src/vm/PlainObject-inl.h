@@ -24,21 +24,22 @@
 #include "vm/JSObject-inl.h"  // js::GetInitialHeap, js::NewBuiltinClassInstance
 #include "vm/NativeObject-inl.h"  // js::NativeObject::{create,setLastProperty}
 
-/* static */ inline JS::Result<js::PlainObject*, JS::OOM>
+/* static */ inline JS::Result<js::PlainObject*, JS::OOM&>
 js::PlainObject::createWithTemplate(JSContext* cx,
                                     JS::Handle<PlainObject*> templateObject) {
-  JS::Rooted<Shape*> shape(cx, templateObject->lastProperty());
+  JS::Rooted<ObjectGroup*> group(cx, templateObject->group());
+  MOZ_ASSERT(group->clasp() == &PlainObject::class_);
 
-  MOZ_ASSERT(shape->getObjectClass() == &PlainObject::class_);
-  gc::InitialHeap heap = GetInitialHeap(GenericObject, &PlainObject::class_);
+  gc::InitialHeap heap = GetInitialHeap(GenericObject, group);
+
+  JS::Rooted<Shape*> shape(cx, templateObject->lastProperty());
 
   gc::AllocKind kind = gc::GetGCObjectKind(shape->numFixedSlots());
   MOZ_ASSERT(gc::CanChangeToBackgroundAllocKind(kind, shape->getObjectClass()));
   kind = gc::ForegroundToBackgroundAllocKind(kind);
 
-  return NativeObject::create(cx, kind, heap, shape).map([](NativeObject* obj) {
-    return &obj->as<PlainObject>();
-  });
+  return NativeObject::create(cx, kind, heap, shape, group)
+      .map([](NativeObject* obj) { return &obj->as<PlainObject>(); });
 }
 
 inline js::gc::AllocKind js::PlainObject::allocKindForTenure() const {
@@ -50,9 +51,8 @@ inline js::gc::AllocKind js::PlainObject::allocKindForTenure() const {
 
 namespace js {
 
-// Create an object based on a template object created for either a NewObject
-// bytecode op or for a constructor call.
-static inline PlainObject* CopyTemplateObject(
+/* Make an object with pregenerated shape from a NEWOBJECT bytecode. */
+static inline PlainObject* CopyInitializerObject(
     JSContext* cx, JS::Handle<PlainObject*> baseobj,
     NewObjectKind newKind = GenericObject) {
   MOZ_ASSERT(!baseobj->inDictionaryMode());
@@ -62,9 +62,8 @@ static inline PlainObject* CopyTemplateObject(
   allocKind = gc::ForegroundToBackgroundAllocKind(allocKind);
   MOZ_ASSERT_IF(baseobj->isTenured(),
                 allocKind == baseobj->asTenured().getAllocKind());
-  RootedObject proto(cx, baseobj->staticPrototype());
-  JS::Rooted<PlainObject*> obj(cx, NewObjectWithGivenProtoAndKinds<PlainObject>(
-                                       cx, proto, allocKind, newKind));
+  JS::Rooted<PlainObject*> obj(
+      cx, NewBuiltinClassInstance<PlainObject>(cx, allocKind, newKind));
   if (!obj) {
     return nullptr;
   }

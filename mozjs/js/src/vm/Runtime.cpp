@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
@@ -26,12 +27,13 @@
 
 #include "gc/FreeOp.h"
 #include "gc/PublicIterators.h"
+#include "jit/arm/Simulator-arm.h"
+#include "jit/arm64/vixl/Simulator-vixl.h"
 #include "jit/IonCompileTask.h"
-#include "jit/JitRuntime.h"
-#include "jit/Simulator.h"
-#include "js/AllocationLogging.h"  // JS_COUNT_CTOR, JS_COUNT_DTOR
+#include "jit/JitRealm.h"
+#include "jit/mips32/Simulator-mips32.h"
+#include "jit/mips64/Simulator-mips64.h"
 #include "js/Date.h"
-#include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/MemoryMetrics.h"
 #include "js/SliceBudget.h"
 #include "js/Wrapper.h"
@@ -69,7 +71,7 @@ Atomic<JS::LargeAllocationFailureCallback> js::OnLargeAllocationFailure;
 JS::FilenameValidationCallback js::gFilenameValidationCallback = nullptr;
 
 namespace js {
-bool (*HelperThreadTaskCallback)(js::UniquePtr<RunnableTask>);
+void (*HelperThreadTaskCallback)(js::UniquePtr<RunnableTask>);
 
 bool gCanUseExtraThreads = true;
 }  // namespace js
@@ -113,11 +115,10 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
       scriptEnvironmentPreparer(nullptr),
       ctypesActivityCallback(nullptr),
       windowProxyClass_(nullptr),
-      scriptDataLock(mutexid::SharedImmutableScriptData),
+      scriptDataLock(mutexid::RuntimeScriptData),
 #ifdef DEBUG
       activeThreadHasScriptDataAccess(false),
 #endif
-      numParseTasks(0),
       numActiveHelperThreadZones(0),
       numRealms(0),
       numDebuggeeRealms_(0),
@@ -208,13 +209,13 @@ bool JSRuntime::init(JSContext* cx, uint32_t maxbytes) {
     return false;
   }
 
-  UniquePtr<Zone> atomsZone = MakeUnique<Zone>(this, Zone::AtomsZone);
+  UniquePtr<Zone> atomsZone = MakeUnique<Zone>(this);
   if (!atomsZone || !atomsZone->init()) {
     return false;
   }
 
-  MOZ_ASSERT(atomsZone->isAtomsZone());
   gc.atomsZone = atomsZone.release();
+  gc.atomsZone->setIsAtomsZone();
 
   // The garbage collector depends on everything before this point being
   // initialized.
@@ -317,10 +318,6 @@ void JSRuntime::addTelemetry(int id, uint32_t sample, const char* key) {
   }
 }
 
-JSTelemetrySender JSRuntime::getTelemetrySender() const {
-  return JSTelemetrySender(telemetryCallback);
-}
-
 void JSRuntime::setTelemetryCallback(
     JSRuntime* rt, JSAccumulateTelemetryDataCallback callback) {
   rt->telemetryCallback = callback;
@@ -356,7 +353,8 @@ void JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
   }
 
   JSContext* cx = mainContextFromAnyThread();
-  rtSizes->contexts += cx->sizeOfIncludingThis(mallocSizeOf);
+  rtSizes->contexts += mallocSizeOf(cx);
+  rtSizes->contexts += cx->sizeOfExcludingThis(mallocSizeOf);
   rtSizes->temporary += cx->tempLifoAlloc().sizeOfExcludingThis(mallocSizeOf);
   rtSizes->interpreterStack +=
       cx->interpreterStack().sizeOfExcludingThis(mallocSizeOf);
@@ -388,16 +386,16 @@ void JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
     AutoLockScriptData lock(this);
     rtSizes->scriptData +=
         scriptDataTable(lock).shallowSizeOfExcludingThis(mallocSizeOf);
-    for (SharedImmutableScriptDataTable::Range r = scriptDataTable(lock).all();
+    for (RuntimeScriptDataTable::Range r = scriptDataTable(lock).all();
          !r.empty(); r.popFront()) {
       rtSizes->scriptData += r.front()->sizeOfIncludingThis(mallocSizeOf);
     }
   }
 
   if (jitRuntime_) {
-    // Sizes of the IonCompileTasks we are holding for lazy linking
-    for (auto* task : jitRuntime_->ionLazyLinkList(this)) {
-      rtSizes->jitLazyLink += task->sizeOfExcludingThis(mallocSizeOf);
+    // Sizes of the IonBuilders we are holding for lazy linking
+    for (auto builder : jitRuntime_->ionLazyLinkList(this)) {
+      rtSizes->jitLazyLink += builder->sizeOfExcludingThis(mallocSizeOf);
     }
   }
 
@@ -564,6 +562,10 @@ JSFreeOp::JSFreeOp(JSRuntime* maybeRuntime, bool isDefault)
 }
 
 JSFreeOp::~JSFreeOp() {
+  for (size_t i = 0; i < freeLaterList.length(); i++) {
+    freeUntracked(freeLaterList[i]);
+  }
+
   if (!jitPoisonRanges.empty()) {
     jit::ExecutableAllocator::poisonCode(runtime(), jitPoisonRanges);
   }

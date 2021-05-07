@@ -21,7 +21,7 @@ cargo_fmt() {
 }
 
 cargo_clippy() {
-    cargo clippy --all -- -D clippy::perf
+    cargo clippy --all -- -D clippy::pedantic
 }
 
 CMD="-1"

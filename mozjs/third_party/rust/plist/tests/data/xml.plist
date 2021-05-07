@@ -28,9 +28,5 @@
     <integer>-9223372036854775808</integer>
     <key>HexademicalNumber</key>
     <integer>0xDEADBEEF</integer>
-    <key>IsTrue</key>
-    <true/>
-    <key>IsNotFalse</key>
-    <false/>
 </dict>
 </plist>

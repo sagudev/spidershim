@@ -7,38 +7,9 @@
 #ifndef jit_CompileWrappers_h
 #define jit_CompileWrappers_h
 
-#include <stdint.h>
-
-#include "js/TypeDecls.h"
-
-struct JSAtomState;
-
-namespace mozilla::non_crypto {
-class XorShift128PlusRNG;
-}
-
-namespace JS {
-enum class TraceKind;
-}
+#include "vm/JSContext.h"
 
 namespace js {
-
-class GeckoProfilerRuntime;
-class GlobalObject;
-struct JSDOMCallbacks;
-class PropertyName;
-class StaticStrings;
-struct WellKnownSymbols;
-
-using DOMCallbacks = struct JSDOMCallbacks;
-
-namespace gc {
-
-enum class AllocKind : uint8_t;
-class FreeSpan;
-
-}  // namespace gc
-
 namespace jit {
 
 class JitRuntime;
@@ -71,7 +42,6 @@ class CompileRuntime {
   const PropertyName* emptyString();
   const StaticStrings& staticStrings();
   const WellKnownSymbols& wellKnownSymbols();
-  const JSClass* maybeWindowProxyClass();
 
   const void* mainContextPtr();
   uint32_t* addressOfTenuredAllocCount();
@@ -90,11 +60,10 @@ class CompileRuntime {
 };
 
 class CompileZone {
-  friend class MacroAssembler;
-  JS::Zone* zone();
+  Zone* zone();
 
  public:
-  static CompileZone* get(JS::Zone* zone);
+  static CompileZone* get(Zone* zone);
 
   CompileRuntime* runtime();
   bool isAtomsZone();
@@ -112,6 +81,7 @@ class CompileZone {
 
   bool canNurseryAllocateStrings();
   bool canNurseryAllocateBigInts();
+  void setMinorGCShouldCancelIonCompilations();
 
   uintptr_t nurseryCellHeader(JS::TraceKind kind);
 };
@@ -138,12 +108,17 @@ class CompileRealm {
   const uint32_t* addressOfGlobalWriteBarriered();
 
   bool hasAllocationMetadataBuilder();
+
+  // Mirror RealmOptions.
+  void setSingletonsAsValues();
 };
 
 class JitCompileOptions {
  public:
   JitCompileOptions();
   explicit JitCompileOptions(JSContext* cx);
+
+  bool cloneSingletons() const { return cloneSingletons_; }
 
   bool profilerSlowAssertionsEnabled() const {
     return profilerSlowAssertionsEnabled_;
@@ -158,6 +133,7 @@ class JitCompileOptions {
 #endif
 
  private:
+  bool cloneSingletons_;
   bool profilerSlowAssertionsEnabled_;
   bool offThreadCompilationAvailable_;
 #ifdef DEBUG

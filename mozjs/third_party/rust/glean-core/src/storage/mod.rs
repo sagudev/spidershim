@@ -10,7 +10,6 @@ use std::collections::HashMap;
 
 use serde_json::{json, Value as JsonValue};
 
-use crate::coverage::record_coverage;
 use crate::database::Database;
 use crate::metrics::Metric;
 use crate::Lifetime;
@@ -41,18 +40,18 @@ fn snapshot_labeled_metrics(
 }
 
 impl StorageManager {
-    /// Snapshots the given store and optionally clear it.
+    /// Snapshot the given store and optionally clear it.
     ///
-    /// # Arguments
+    /// ## Arguments
     ///
     /// * `storage` - the database to read from.
     /// * `store_name` - the store to snapshot.
     /// * `clear_store` - whether to clear the data after snapshotting.
     ///
-    /// # Returns
+    /// ## Return value
     ///
-    /// The stored data in a string encoded as JSON.
-    /// If no data for the store exists, `None` is returned.
+    /// Returns the stored data in a string encoded as JSON.
+    /// Returns `None` if no data for the store exists.
     pub fn snapshot(
         &self,
         storage: &Database,
@@ -63,18 +62,18 @@ impl StorageManager {
             .map(|data| ::serde_json::to_string_pretty(&data).unwrap())
     }
 
-    /// Snapshots the given store and optionally clear it.
+    /// Snapshot the given store and optionally clear it.
     ///
-    /// # Arguments
+    /// ## Arguments
     ///
     /// * `storage` - the database to read from.
     /// * `store_name` - the store to snapshot.
     /// * `clear_store` - whether to clear the data after snapshotting.
     ///
-    /// # Returns
+    /// ## Return value
     ///
-    /// A JSON representation of the stored data.
-    /// If no data for the store exists, `None` is returned.
+    /// Returns a JSON representation of the stored data.
+    /// Returns `None` if no data for the store exists.
     pub fn snapshot_as_json(
         &self,
         storage: &Database,
@@ -101,7 +100,7 @@ impl StorageManager {
 
         if clear_store {
             if let Err(e) = storage.clear_ping_lifetime_storage(store_name) {
-                log::warn!("Failed to clear lifetime storage: {:?}", e);
+                log::error!("Failed to clear lifetime storage: {:?}", e);
             }
         }
 
@@ -112,23 +111,24 @@ impl StorageManager {
         }
     }
 
-    /// Gets the current value of a single metric identified by name.
+    /// Get the current value of a single metric identified by name.
     ///
-    /// # Arguments
+    /// This look for a value in stores for all lifetimes.
+    ///
+    /// ## Arguments:
     ///
     /// * `storage` - The database to get data from.
     /// * `store_name` - The store name to look into.
     /// * `metric_id` - The full metric identifier.
     ///
-    /// # Returns
+    /// ## Return value:
     ///
-    /// The decoded metric or `None` if no data is found.
+    /// Returns the decoded metric or `None` if no data is found.
     pub fn snapshot_metric(
         &self,
         storage: &Database,
         store_name: &str,
         metric_id: &str,
-        metric_lifetime: Lifetime,
     ) -> Option<Metric> {
         let mut snapshot: Option<Metric> = None;
 
@@ -139,46 +139,23 @@ impl StorageManager {
             }
         };
 
-        storage.iter_store_from(metric_lifetime, &store_name, None, &mut snapshotter);
+        storage.iter_store_from(Lifetime::Ping, &store_name, None, &mut snapshotter);
+        storage.iter_store_from(Lifetime::Application, &store_name, None, &mut snapshotter);
+        storage.iter_store_from(Lifetime::User, &store_name, None, &mut snapshotter);
 
         snapshot
     }
 
-    /// Gets the current value of a single metric identified by name.
+    ///  Snapshot the experiments.
     ///
-    /// Use this API, rather than `snapshot_metric` within the testing API, so
-    /// that the usage will be reported in coverage, if enabled.
-    ///
-    /// # Arguments
-    ///
-    /// * `storage` - The database to get data from.
-    /// * `store_name` - The store name to look into.
-    /// * `metric_id` - The full metric identifier.
-    ///
-    /// # Returns
-    ///
-    /// The decoded metric or `None` if no data is found.
-    pub fn snapshot_metric_for_test(
-        &self,
-        storage: &Database,
-        store_name: &str,
-        metric_id: &str,
-        metric_lifetime: Lifetime,
-    ) -> Option<Metric> {
-        record_coverage(metric_id);
-        self.snapshot_metric(storage, store_name, metric_id, metric_lifetime)
-    }
-
-    ///  Snapshots the experiments.
-    ///
-    /// # Arguments
+    /// ## Arguments:
     ///
     /// * `storage` - The database to get data from.
     /// * `store_name` - The store name to look into.
     ///
-    /// # Returns
+    /// ## Return value
     ///
-    /// A JSON representation of the experiment data, in the following format:
+    /// Returns a JSON representation of the experiment data, in the following format:
     ///
     /// ```json
     /// {
@@ -192,7 +169,7 @@ impl StorageManager {
     /// }
     /// ```
     ///
-    /// If no data for the store exists, `None` is returned.
+    /// Returns `None` if no data for experiments exists.
     pub fn snapshot_experiments_as_json(
         &self,
         storage: &Database,
@@ -230,7 +207,7 @@ mod test {
     fn test_experiments_json_serialization() {
         let t = tempfile::tempdir().unwrap();
         let name = t.path().display().to_string();
-        let glean = Glean::with_options(&name, "org.mozilla.glean", true);
+        let glean = Glean::with_options(&name, "org.mozilla.glean", true).unwrap();
 
         let extra: HashMap<String, String> = [("test-key".into(), "test-value".into())]
             .iter()
@@ -259,7 +236,7 @@ mod test {
     fn test_experiments_json_serialization_empty() {
         let t = tempfile::tempdir().unwrap();
         let name = t.path().display().to_string();
-        let glean = Glean::with_options(&name, "org.mozilla.glean", true);
+        let glean = Glean::with_options(&name, "org.mozilla.glean", true).unwrap();
 
         let metric = ExperimentMetric::new(&glean, "some-experiment".to_string());
 

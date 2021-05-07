@@ -13,13 +13,12 @@
 #include "js/CharacterEncoding.h"
 #include "js/CompilationAndEvaluation.h"  // JS::Compile
 #include "js/Exception.h"
-#include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/SourceText.h"
 #include "jsapi-tests/tests.h"
-#include "util/Text.h"
 #include "vm/ErrorReporting.h"
 
 using mozilla::ArrayEqual;
+using mozilla::ArrayLength;
 using mozilla::IsAsciiHexDigit;
 using mozilla::Utf8Unit;
 
@@ -129,7 +128,7 @@ BEGIN_TEST(testUtf8BadBytes) {
   return true;
 }
 
-static constexpr size_t LengthOfByte = js_strlen("0xFF");
+static constexpr size_t LengthOfByte = ArrayLength("0xFF") - 1;
 
 static bool startsWithByte(const char* str) {
   return str[0] == '0' && str[1] == 'x' && IsAsciiHexDigit(str[2]) &&
@@ -218,9 +217,9 @@ bool testBadUtf8(const char (&chars)[N], unsigned errorNumber,
     const char* noteMessage = (*iter)->message().c_str();
 
     // The prefix ought always be the same.
-    static constexpr char expectedPrefix[] =
+    static const char expectedPrefix[] =
         "the code units comprising this invalid code point were: ";
-    constexpr size_t expectedPrefixLen = js_strlen(expectedPrefix);
+    constexpr size_t expectedPrefixLen = ArrayLength(expectedPrefix) - 1;
 
     CHECK(startsWith(noteMessage, expectedPrefix));
 
@@ -231,8 +230,8 @@ bool testBadUtf8(const char (&chars)[N], unsigned errorNumber,
     CHECK(iter == notes->end());
   }
 
-  static constexpr char16_t expectedContext[] = u"var x = ";
-  constexpr size_t expectedContextLen = js_strlen(expectedContext);
+  static const char16_t expectedContext[] = u"var x = ";
+  constexpr size_t expectedContextLen = ArrayLength(expectedContext) - 1;
 
   const char16_t* lineOfContext = errorReport->linebuf();
   size_t lineOfContextLength = errorReport->linebufLength();

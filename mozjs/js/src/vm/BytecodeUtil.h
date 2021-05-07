@@ -11,30 +11,20 @@
  * JS bytecode definitions.
  */
 
-#include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/EndianUtils.h"
 
 #include <algorithm>
-#include <stddef.h>
-#include <stdint.h>
 
 #include "jstypes.h"
 #include "NamespaceImports.h"
 
+#include "frontend/SourceNotes.h"
 #include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
-#include "js/Utility.h"
-#include "js/Value.h"
 #include "vm/BytecodeFormatFlags.h"  // JOF_*
-#include "vm/GeneratorResumeKind.h"
 #include "vm/Opcodes.h"
-#include "vm/SharedStencil.h"  // js::GCThingIndex
-#include "vm/ThrowMsgKind.h"   // ThrowMsgKind, ThrowCondition
-
-namespace js {
-class Sprinter;
-}  // namespace js
+#include "vm/Printer.h"
 
 /*
  * JS operation bytecodes.
@@ -154,16 +144,22 @@ static MOZ_ALWAYS_INLINE void SET_JUMP_OFFSET(jsbytecode* pc, int32_t off) {
   SET_INT32(pc, off);
 }
 
-static const unsigned GCTHING_INDEX_LEN = 4;
-
-static MOZ_ALWAYS_INLINE js::GCThingIndex GET_GCTHING_INDEX(
-    const jsbytecode* pc) {
-  return js::GCThingIndex(GET_UINT32(pc));
+static MOZ_ALWAYS_INLINE int32_t GET_CODE_OFFSET(jsbytecode* pc) {
+  return GET_INT32(pc);
 }
 
-static MOZ_ALWAYS_INLINE void SET_GCTHING_INDEX(jsbytecode* pc,
-                                                js::GCThingIndex index) {
-  SET_UINT32(pc, index.index);
+static MOZ_ALWAYS_INLINE void SET_CODE_OFFSET(jsbytecode* pc, int32_t off) {
+  SET_INT32(pc, off);
+}
+
+static const unsigned UINT32_INDEX_LEN = 4;
+
+static MOZ_ALWAYS_INLINE uint32_t GET_UINT32_INDEX(const jsbytecode* pc) {
+  return GET_UINT32(pc);
+}
+
+static MOZ_ALWAYS_INLINE void SET_UINT32_INDEX(jsbytecode* pc, uint32_t index) {
+  SET_UINT32(pc, index);
 }
 
 // Index limit is determined by SrcNote::FourByteOffsetFlag, see
@@ -210,8 +206,6 @@ static inline void SET_RESUMEINDEX(jsbytecode* pc, uint32_t resumeIndex) {
   SET_UINT24(pc, resumeIndex);
 }
 
-static const unsigned ICINDEX_LEN = 4;
-
 static inline uint32_t GET_ICINDEX(const jsbytecode* pc) {
   return GET_UINT32(pc);
 }
@@ -234,7 +228,7 @@ static inline void SetLoopHeadDepthHint(jsbytecode* pc, unsigned loopDepth) {
 static inline bool IsBackedgePC(jsbytecode* pc) {
   switch (JSOp(*pc)) {
     case JSOp::Goto:
-    case JSOp::JumpIfTrue:
+    case JSOp::IfNe:
       return GET_JUMP_OFFSET(pc) < 0;
     default:
       return false;
@@ -244,6 +238,28 @@ static inline bool IsBackedgePC(jsbytecode* pc) {
 static inline bool IsBackedgeForLoopHead(jsbytecode* pc, jsbytecode* loopHead) {
   MOZ_ASSERT(JSOp(*loopHead) == JSOp::LoopHead);
   return IsBackedgePC(pc) && pc + GET_JUMP_OFFSET(pc) == loopHead;
+}
+
+static inline void SetClassConstructorOperands(jsbytecode* pc,
+                                               uint32_t atomIndex,
+                                               uint32_t sourceStart,
+                                               uint32_t sourceEnd) {
+  MOZ_ASSERT(JSOp(*pc) == JSOp::ClassConstructor ||
+             JSOp(*pc) == JSOp::DerivedConstructor);
+  SET_UINT32(pc, atomIndex);
+  SET_UINT32(pc + 4, sourceStart);
+  SET_UINT32(pc + 8, sourceEnd);
+}
+
+static inline void GetClassConstructorOperands(jsbytecode* pc,
+                                               uint32_t* atomIndex,
+                                               uint32_t* sourceStart,
+                                               uint32_t* sourceEnd) {
+  MOZ_ASSERT(JSOp(*pc) == JSOp::ClassConstructor ||
+             JSOp(*pc) == JSOp::DerivedConstructor);
+  *atomIndex = GET_UINT32(pc);
+  *sourceStart = GET_UINT32(pc + 4);
+  *sourceEnd = GET_UINT32(pc + 8);
 }
 
 /*
@@ -286,6 +302,8 @@ struct JSCodeSpec {
   int8_t nuses;    /* arity, -1 if variadic */
   int8_t ndefs;    /* number of stack results */
   uint32_t format; /* immediate operand format */
+
+  uint32_t type() const { return JOF_TYPE(format); }
 };
 
 namespace js {
@@ -431,6 +449,39 @@ static inline bool BytecodeIsPopped(jsbytecode* pc) {
   return JSOp(*next) == JSOp::Pop;
 }
 
+static inline bool BytecodeFlowsToBitop(jsbytecode* pc) {
+  // Look for simple bytecode for integer conversions like (x | 0) or (x & -1).
+  jsbytecode* next = pc + GetBytecodeLength(pc);
+  if (JSOp(*next) == JSOp::BitOr || JSOp(*next) == JSOp::BitAnd) {
+    return true;
+  }
+  if (JSOp(*next) == JSOp::Int8 && GET_INT8(next) == -1) {
+    next += GetBytecodeLength(next);
+    if (JSOp(*next) == JSOp::BitAnd) {
+      return true;
+    }
+    return false;
+  }
+  if (JSOp(*next) == JSOp::One) {
+    next += GetBytecodeLength(next);
+    if (JSOp(*next) == JSOp::Neg) {
+      next += GetBytecodeLength(next);
+      if (JSOp(*next) == JSOp::BitAnd) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (JSOp(*next) == JSOp::Zero) {
+    next += GetBytecodeLength(next);
+    if (JSOp(*next) == JSOp::BitOr) {
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
 extern bool IsValidBytecodeOffset(JSContext* cx, JSScript* script,
                                   size_t offset);
 
@@ -480,15 +531,16 @@ inline bool IsCheckSloppyOp(JSOp op) {
 
 inline bool IsAtomOp(JSOp op) { return JOF_OPTYPE(op) == JOF_ATOM; }
 
-inline bool IsGetPropOp(JSOp op) { return op == JSOp::GetProp; }
+inline bool IsGetPropOp(JSOp op) {
+  return op == JSOp::Length || op == JSOp::GetProp || op == JSOp::CallProp;
+}
 
 inline bool IsGetPropPC(const jsbytecode* pc) { return IsGetPropOp(JSOp(*pc)); }
 
 inline bool IsHiddenInitOp(JSOp op) {
   return op == JSOp::InitHiddenProp || op == JSOp::InitHiddenElem ||
          op == JSOp::InitHiddenPropGetter || op == JSOp::InitHiddenElemGetter ||
-         op == JSOp::InitHiddenPropSetter || op == JSOp::InitHiddenElemSetter ||
-         op == JSOp::InitLockedElem;
+         op == JSOp::InitHiddenPropSetter || op == JSOp::InitHiddenElemSetter;
 }
 
 inline bool IsStrictSetPC(jsbytecode* pc) {
@@ -505,7 +557,9 @@ inline bool IsSetPropOp(JSOp op) {
 
 inline bool IsSetPropPC(const jsbytecode* pc) { return IsSetPropOp(JSOp(*pc)); }
 
-inline bool IsGetElemOp(JSOp op) { return op == JSOp::GetElem; }
+inline bool IsGetElemOp(JSOp op) {
+  return op == JSOp::GetElem || op == JSOp::CallElem;
+}
 
 inline bool IsGetElemPC(const jsbytecode* pc) { return IsGetElemOp(JSOp(*pc)); }
 
@@ -560,39 +614,8 @@ static inline int32_t GetBytecodeInteger(jsbytecode* pc) {
 
 inline bool BytecodeOpHasIC(JSOp op) { return CodeSpec(op).format & JOF_IC; }
 
-inline void GetCheckPrivateFieldOperands(jsbytecode* pc,
-                                         ThrowCondition* throwCondition,
-                                         ThrowMsgKind* throwKind) {
-  static_assert(sizeof(ThrowCondition) == sizeof(uint8_t));
-  static_assert(sizeof(ThrowMsgKind) == sizeof(uint8_t));
-
-  MOZ_ASSERT(JSOp(*pc) == JSOp::CheckPrivateField);
-  uint8_t throwConditionByte = GET_UINT8(pc);
-  uint8_t throwKindByte = GET_UINT8(pc + 1);
-
-  *throwCondition = static_cast<ThrowCondition>(throwConditionByte);
-  *throwKind = static_cast<ThrowMsgKind>(throwKindByte);
-
-  MOZ_ASSERT(*throwCondition == ThrowCondition::ThrowHas ||
-             *throwCondition == ThrowCondition::ThrowHasNot ||
-             *throwCondition == ThrowCondition::NoThrow);
-
-  MOZ_ASSERT(*throwKind == ThrowMsgKind::PrivateDoubleInit ||
-             *throwKind == ThrowMsgKind::MissingPrivateOnGet ||
-             *throwKind == ThrowMsgKind::MissingPrivateOnSet);
-}
-
-// Return true iff the combination of the ThrowCondition and hasOwn result
-// will throw an exception.
-static inline bool CheckPrivateFieldWillThrow(ThrowCondition condition,
-                                              bool hasOwn) {
-  if ((condition == ThrowCondition::ThrowHasNot && !hasOwn) ||
-      (condition == ThrowCondition::ThrowHas && hasOwn)) {
-    // Met a throw condition.
-    return true;
-  }
-
-  return false;
+inline bool BytecodeOpHasTypeSet(JSOp op) {
+  return CodeSpec(op).format & JOF_TYPESET;
 }
 
 /*
@@ -633,15 +656,12 @@ static inline jsbytecode* GetNextPc(jsbytecode* pc) {
   return pc + GetBytecodeLength(pc);
 }
 
-inline GeneratorResumeKind IntToResumeKind(int32_t value) {
-  MOZ_ASSERT(uint32_t(value) <= uint32_t(GeneratorResumeKind::Return));
-  return static_cast<GeneratorResumeKind>(value);
-}
+typedef Vector<jsbytecode*, 4, SystemAllocPolicy> PcVector;
 
-inline GeneratorResumeKind ResumeKindFromPC(jsbytecode* pc) {
-  MOZ_ASSERT(JSOp(*pc) == JSOp::ResumeKind);
-  return IntToResumeKind(GET_UINT8(pc));
-}
+bool GetSuccessorBytecodes(JSScript* script, jsbytecode* pc,
+                           PcVector& successors);
+bool GetPredecessorBytecodes(JSScript* script, jsbytecode* pc,
+                             PcVector& predecessors);
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
 
@@ -650,7 +670,7 @@ enum class DisassembleSkeptically { No, Yes };
 /*
  * Disassemblers, for debugging only.
  */
-[[nodiscard]] extern bool Disassemble(
+extern MOZ_MUST_USE bool Disassemble(
     JSContext* cx, JS::Handle<JSScript*> script, bool lines, Sprinter* sp,
     DisassembleSkeptically skeptically = DisassembleSkeptically::No);
 
@@ -659,7 +679,7 @@ unsigned Disassemble1(JSContext* cx, JS::Handle<JSScript*> script,
 
 #endif
 
-[[nodiscard]] extern bool DumpRealmPCCounts(JSContext* cx);
+extern MOZ_MUST_USE bool DumpRealmPCCounts(JSContext* cx);
 
 }  // namespace js
 

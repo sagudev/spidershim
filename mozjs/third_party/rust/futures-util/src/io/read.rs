@@ -16,7 +16,7 @@ impl<R: ?Sized + Unpin> Unpin for Read<'_, R> {}
 
 impl<'a, R: AsyncRead + ?Sized + Unpin> Read<'a, R> {
     pub(super) fn new(reader: &'a mut R, buf: &'a mut [u8]) -> Self {
-        Self { reader, buf }
+        Read { reader, buf }
     }
 }
 

@@ -7,14 +7,19 @@ esid: sec-parseint-string-radix
 description: Checking for Number object
 ---*/
 
-assert.sameValue(parseInt(new Number(-1)), parseInt("-1"), 'parseInt(new Number(-1)) must return the same value returned by parseInt("-1")');
+//CHECK#1
+if (parseInt(new Number(-1)) !== parseInt("-1")) {
+  $ERROR('#1: parseInt(new Number(-1)) === parseInt("-1"). Actual: ' + (parseInt(new Number(-1))));
+}
 
-assert.sameValue(
-  String(parseInt(new Number(Infinity))),
-  "NaN",
-  'String(parseInt(new Number(Infinity))) must return "NaN"'
-);
+//CHECK#2
+if (String(parseInt(new Number(Infinity))) !== "NaN") {
+  $ERROR('#2: String(parseInt(new Number(Infinity))) === "NaN". Actual: ' + (String(parseInt(new Number(Infinity)))));
+}
 
-assert.sameValue(String(parseInt(new Number(NaN))), "NaN", 'String(parseInt(new Number(NaN))) must return "NaN"');
+//CHECK#3
+if (String(parseInt(new Number(NaN))) !== "NaN") {
+  $ERROR('#3: String(parseInt(new Number(NaN))) === "NaN". Actual: ' + (String(parseInt(new Number(NaN)))));
+}
 
 reportCompare(0, 0);

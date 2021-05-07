@@ -5,7 +5,7 @@
 /*---
 description: >
     It is a Syntax Error if HasDirectSuper of MethodDefinition is true.
-esid: sec-object-initializer-static-semantics-early-errors
+es6id: 12.2.5.1
 negative:
   phase: parse
   type: SyntaxError
@@ -15,6 +15,6 @@ $DONOTEVALUATE();
 
 ({
   method() {
-    super();
+    super;
   }
 });

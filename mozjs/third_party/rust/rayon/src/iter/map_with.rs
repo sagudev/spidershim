@@ -30,7 +30,7 @@ impl<I, T, F> MapWith<I, T, F>
 where
     I: ParallelIterator,
 {
-    /// Creates a new `MapWith` iterator.
+    /// Create a new `MapWith` iterator.
     pub(super) fn new(base: I, item: T, map_op: F) -> Self {
         MapWith { base, item, map_op }
     }
@@ -119,7 +119,7 @@ where
 
 /// ////////////////////////////////////////////////////////////////////////
 
-struct MapWithProducer<'f, P, U, F> {
+struct MapWithProducer<'f, P, U, F: 'f> {
     base: P,
     item: U,
     map_op: &'f F,
@@ -179,7 +179,7 @@ where
     }
 }
 
-struct MapWithIter<'f, I, U, F> {
+struct MapWithIter<'f, I, U, F: 'f> {
     base: I,
     item: U,
     map_op: &'f F,
@@ -226,7 +226,7 @@ where
 /// ////////////////////////////////////////////////////////////////////////
 /// Consumer implementation
 
-struct MapWithConsumer<'f, C, U, F> {
+struct MapWithConsumer<'f, C, U, F: 'f> {
     base: C,
     item: U,
     map_op: &'f F,
@@ -287,7 +287,7 @@ where
     }
 }
 
-struct MapWithFolder<'f, C, U, F> {
+struct MapWithFolder<'f, C, U, F: 'f> {
     base: C,
     item: U,
     map_op: &'f F,
@@ -359,7 +359,7 @@ impl<I, INIT, F> MapInit<I, INIT, F>
 where
     I: ParallelIterator,
 {
-    /// Creates a new `MapInit` iterator.
+    /// Create a new `MapInit` iterator.
     pub(super) fn new(base: I, init: INIT, map_op: F) -> Self {
         MapInit { base, init, map_op }
     }
@@ -448,7 +448,7 @@ where
 
 /// ////////////////////////////////////////////////////////////////////////
 
-struct MapInitProducer<'f, P, INIT, F> {
+struct MapInitProducer<'f, P, INIT: 'f, F: 'f> {
     base: P,
     init: &'f INIT,
     map_op: &'f F,
@@ -511,7 +511,7 @@ where
 /// ////////////////////////////////////////////////////////////////////////
 /// Consumer implementation
 
-struct MapInitConsumer<'f, C, INIT, F> {
+struct MapInitConsumer<'f, C, INIT: 'f, F: 'f> {
     base: C,
     init: &'f INIT,
     map_op: &'f F,

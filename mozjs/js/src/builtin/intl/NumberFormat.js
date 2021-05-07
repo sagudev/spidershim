@@ -4,8 +4,6 @@
 
 /* Portions Copyright Norbert Lindenberg 2011-2012. */
 
-#include "NumberingSystemsGenerated.h"
-
 /**
  * NumberFormat internal properties.
  *
@@ -127,7 +125,7 @@ function UnwrapNumberFormat(nf) {
     if (IsObject(nf) &&
         GuardToNumberFormat(nf) === null &&
         !IsWrappedNumberFormat(nf) &&
-        callFunction(std_Object_isPrototypeOf, GetBuiltinPrototype("NumberFormat"), nf))
+        nf instanceof GetBuiltinConstructor("NumberFormat"))
     {
         nf = nf[intlFallbackSymbol()];
     }
@@ -181,33 +179,18 @@ function SetNumberFormatDigitOptions(lazyData, options, mnfdDefault, mxfdDefault
         // Step 12.a (Omitted).
 
         // Step 12.b.
-        mnfd = DefaultNumberOption(mnfd, 0, 20, undefined);
+        mnfd = DefaultNumberOption(mnfd, 0, 20, mnfdDefault);
 
         // Step 12.c.
-        mxfd = DefaultNumberOption(mxfd, 0, 20, undefined);
+        const mxfdActualDefault = std_Math_max(mnfd, mxfdDefault);
 
-        // Steps 12.d-e.
-        // Inlined DefaultNumberOption, only the fallback case applies here.
-        if (mnfd === undefined) {
-            assert(mxfd !== undefined, "mxfd isn't undefined when mnfd is undefined");
-            mnfd = std_Math_min(mnfdDefault, mxfd);
-        }
+        // Step 12.d.
+        mxfd = DefaultNumberOption(mxfd, mnfd, 20, mxfdActualDefault);
 
-        // Step 12.f.
-        // Inlined DefaultNumberOption, only the fallback case applies here.
-        else if (mxfd === undefined) {
-            mxfd = std_Math_max(mxfdDefault, mnfd);
-        }
-
-        // Step 12.g.
-        else if (mnfd > mxfd) {
-            ThrowRangeError(JSMSG_INVALID_DIGITS_VALUE, mxfd);
-        }
-
-        // Step 12.h.
+        // Step 12.e.
         lazyData.minimumFractionDigits = mnfd;
 
-        // Step 12.i.
+        // Step 12.f.
         lazyData.maximumFractionDigits = mxfd;
     }
 
@@ -528,8 +511,10 @@ function InitializeNumberFormat(numberFormat, thisValue, locales, options) {
     initializeIntlObject(numberFormat, "NumberFormat", lazyNumberFormatData);
 
     // 11.2.1, steps 4-5.
-    if (numberFormat !== thisValue &&
-        callFunction(std_Object_isPrototypeOf, GetBuiltinPrototype("NumberFormat"), thisValue))
+    // TODO: spec issue - The current spec doesn't have the IsObject check,
+    // which means |Intl.NumberFormat.call(null)| is supposed to throw here.
+    if (numberFormat !== thisValue && IsObject(thisValue) &&
+        thisValue instanceof GetBuiltinConstructor("NumberFormat"))
     {
         _DefineDataProperty(thisValue, intlFallbackSymbol(), numberFormat,
                             ATTR_NONENUMERABLE | ATTR_NONCONFIGURABLE | ATTR_NONWRITABLE);
@@ -582,13 +567,23 @@ function getNumberingSystems(locale) {
     // can be used with any locale. Supporting a decimal numbering system
     // (where only the digits are replaced) is easy, so we offer them all here.
     // Algorithmic numbering systems are typically tied to one locale, so for
-    // lack of information we don't offer them.
+    // lack of information we don't offer them. To increase chances that
+    // other software will process output correctly, we further restrict to
+    // those decimal numbering systems explicitly listed in table 3 of
+    // the ECMAScript Internationalization API Specification, 11.1.6, which
+    // in turn are those with full specifications in version 21 of Unicode
+    // Technical Standard #35 using digits that were defined in Unicode 5.0,
+    // the Unicode version supported in Windows Vista.
     // The one thing we can find out from ICU is the default numbering system
     // for a locale.
     var defaultNumberingSystem = intl_numberingSystem(locale);
     return [
         defaultNumberingSystem,
-        NUMBERING_SYSTEMS_WITH_SIMPLE_DIGIT_MAPPINGS
+        "arab", "arabext", "bali", "beng", "deva",
+        "fullwide", "gujr", "guru", "hanidec", "khmr",
+        "knda", "laoo", "latn", "limb", "mlym",
+        "mong", "mymr", "orya", "tamldec", "telu",
+        "thai", "tibt",
     ];
 }
 
@@ -668,11 +663,11 @@ function Intl_NumberFormat_formatToParts(value) {
                             "Intl_NumberFormat_formatToParts");
     }
 
-    // Step 4.
-    var x = ToNumeric(value);
-
     var internals = getNumberFormatInternals(nf);
     var unitStyle = internals.style === "unit";
+
+    // Step 4.
+    var x = ToNumeric(value);
 
     // Step 5.
     return intl_FormatNumber(nf, x, /* formatToParts = */ true, unitStyle);

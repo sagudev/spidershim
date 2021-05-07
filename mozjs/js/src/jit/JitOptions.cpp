@@ -75,6 +75,9 @@ DefaultJitOptions::DefaultJitOptions() {
   // RangeAnalysis results.
   SET_DEFAULT(checkRangeAnalysis, false);
 
+  // Toggles whether IonBuilder fallbacks to a call if we fail to inline.
+  SET_DEFAULT(disableInlineBacktracking, false);
+
   // Toggles whether Alignment Mask Analysis is globally disabled.
   SET_DEFAULT(disableAma, false);
 
@@ -114,11 +117,9 @@ DefaultJitOptions::DefaultJitOptions() {
   // Toggles whether sink code motion is globally disabled.
   SET_DEFAULT(disableSink, true);
 
-  // Toggles whether we verify that we don't recompile with the same CacheIR.
-  SET_DEFAULT(disableBailoutLoopCheck, false);
-
-  // Whether we use scalar replacement instead of the old arguments analysis.
-  SET_DEFAULT(scalarReplaceArguments, false);
+  // Toggles whether the use of multiple Ion optimization levels is globally
+  // disabled.
+  SET_DEFAULT(disableOptimizationLevels, false);
 
   // Whether the Baseline Interpreter is enabled.
   SET_DEFAULT(baselineInterpreter, true);
@@ -129,11 +130,13 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether the IonMonkey JIT is enabled.
   SET_DEFAULT(ion, true);
 
-  // Warp compile Async functions
-  SET_DEFAULT(warpAsync, true);
+#ifdef NIGHTLY_BUILD
+  // Whether TI is enabled.
+  SET_DEFAULT(typeInference, true);
+#endif
 
-  // Warp compile Generator functions
-  SET_DEFAULT(warpGenerator, true);
+  // Whether Ion uses WarpBuilder as MIR builder.
+  SET_DEFAULT(warpBuilder, false);
 
   // Whether the IonMonkey and Baseline JITs are enabled for Trusted Principals.
   // (Ignored if ion or baselineJit is set to true.)
@@ -142,11 +145,8 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether the RegExp JIT is enabled.
   SET_DEFAULT(nativeRegExp, true);
 
-  // Whether Warp should use ICs instead of transpiling Baseline CacheIR.
+  // Whether IonBuilder should prefer IC generation above specialized MIR.
   SET_DEFAULT(forceInlineCaches, false);
-
-  // Whether all ICs should be initialized as megamorphic ICs.
-  SET_DEFAULT(forceMegamorphicICs, false);
 
   // Toggles whether large scripts are rejected.
   SET_DEFAULT(limitScriptSize, true);
@@ -167,28 +167,20 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(baselineJitWarmUpThreshold, 100);
 
   // How many invocations or loop iterations are needed before functions
-  // are considered for trial inlining.
-  SET_DEFAULT(trialInliningWarmUpThreshold, 500);
-
-  // The initial warm-up count for ICScripts created by trial inlining.
-  //
-  // Note: the difference between trialInliningInitialWarmUpCount and
-  // trialInliningWarmUpThreshold must be:
-  //
-  // * Small enough to allow inlining multiple levels deep before the outer
-  //   script reaches its normalIonWarmUpThreshold.
-  //
-  // * Greater than inliningEntryThreshold or no scripts can be inlined.
-  SET_DEFAULT(trialInliningInitialWarmUpCount, 250);
-
-  // How many invocations or loop iterations are needed before functions
   // are compiled with the Ion compiler at OptimizationLevel::Normal.
   // Duplicated in all.js - ensure both match.
-  SET_DEFAULT(normalIonWarmUpThreshold, 1500);
+  SET_DEFAULT(normalIonWarmUpThreshold, 1000);
 
+  // How many invocations or loop iterations are needed before functions
+  // are compiled with the Ion compiler at OptimizationLevel::Full.
+  // Duplicated in all.js - ensure both match.
+  SET_DEFAULT(fullIonWarmUpThreshold, 100'000);
+
+#ifdef ENABLE_NEW_REGEXP
   // How many invocations are needed before regexps are compiled to
   // native code.
   SET_DEFAULT(regexpWarmUpThreshold, 10);
+#endif
 
   // Number of exception bailouts (resuming into catch/finally block) before
   // we invalidate and forbid Ion compilation.
@@ -211,10 +203,7 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(osrPcMismatchesBeforeRecompile, 6000);
 
   // The bytecode length limit for small function.
-  SET_DEFAULT(smallFunctionMaxBytecodeLength, 130);
-
-  // The minimum entry count for an IC stub before it can be trial-inlined.
-  SET_DEFAULT(inliningEntryThreshold, 100);
+  SET_DEFAULT(smallFunctionMaxBytecodeLength_, 130);
 
   // An artificial testing limit for the maximum supported offset of
   // pc-relative jump and call instructions.
@@ -251,13 +240,15 @@ DefaultJitOptions::DefaultJitOptions() {
 
 #if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
   SET_DEFAULT(spectreIndexMasking, false);
-  SET_DEFAULT(spectreObjectMitigations, false);
+  SET_DEFAULT(spectreObjectMitigationsBarriers, false);
+  SET_DEFAULT(spectreObjectMitigationsMisc, false);
   SET_DEFAULT(spectreStringMitigations, false);
   SET_DEFAULT(spectreValueMasking, false);
   SET_DEFAULT(spectreJitToCxxCalls, false);
 #else
   SET_DEFAULT(spectreIndexMasking, true);
-  SET_DEFAULT(spectreObjectMitigations, true);
+  SET_DEFAULT(spectreObjectMitigationsBarriers, true);
+  SET_DEFAULT(spectreObjectMitigationsMisc, true);
   SET_DEFAULT(spectreStringMitigations, true);
   SET_DEFAULT(spectreValueMasking, true);
   SET_DEFAULT(spectreJitToCxxCalls, true);
@@ -295,6 +286,7 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(enableTraceLogger, false);
 #endif
 
+#ifdef ENABLE_NEW_REGEXP
   // Dumps a representation of parsed regexps to stderr
   SET_DEFAULT(traceRegExpParser, false);
   // Dumps the calls made to the regexp assembler to stderr
@@ -303,6 +295,7 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(traceRegExpInterpreter, false);
   // Dumps the changes made by the regexp peephole optimizer to stderr
   SET_DEFAULT(traceRegExpPeephole, false);
+#endif
 
   SET_DEFAULT(enableWasmJitExit, true);
   SET_DEFAULT(enableWasmJitEntry, true);
@@ -314,7 +307,7 @@ DefaultJitOptions::DefaultJitOptions() {
 }
 
 bool DefaultJitOptions::isSmallFunction(JSScript* script) const {
-  return script->length() <= smallFunctionMaxBytecodeLength;
+  return script->length() <= smallFunctionMaxBytecodeLength_;
 }
 
 void DefaultJitOptions::enableGvn(bool enable) { disableGvn = !enable; }
@@ -322,32 +315,41 @@ void DefaultJitOptions::enableGvn(bool enable) { disableGvn = !enable; }
 void DefaultJitOptions::setEagerBaselineCompilation() {
   baselineInterpreterWarmUpThreshold = 0;
   baselineJitWarmUpThreshold = 0;
+#ifdef ENABLE_NEW_REGEXP
   regexpWarmUpThreshold = 0;
+#endif
 }
 
 void DefaultJitOptions::setEagerIonCompilation() {
   setEagerBaselineCompilation();
   normalIonWarmUpThreshold = 0;
-}
-
-void DefaultJitOptions::setFastWarmUp() {
-  baselineInterpreterWarmUpThreshold = 4;
-  baselineJitWarmUpThreshold = 10;
-  trialInliningWarmUpThreshold = 14;
-  trialInliningInitialWarmUpCount = 12;
-  normalIonWarmUpThreshold = 30;
-
-  inliningEntryThreshold = 2;
-  smallFunctionMaxBytecodeLength = 2000;
+  fullIonWarmUpThreshold = 0;
 }
 
 void DefaultJitOptions::setNormalIonWarmUpThreshold(uint32_t warmUpThreshold) {
   normalIonWarmUpThreshold = warmUpThreshold;
+
+  if (fullIonWarmUpThreshold < normalIonWarmUpThreshold) {
+    fullIonWarmUpThreshold = normalIonWarmUpThreshold;
+  }
+}
+
+void DefaultJitOptions::setFullIonWarmUpThreshold(uint32_t warmUpThreshold) {
+  fullIonWarmUpThreshold = warmUpThreshold;
+
+  if (normalIonWarmUpThreshold > fullIonWarmUpThreshold) {
+    setNormalIonWarmUpThreshold(fullIonWarmUpThreshold);
+  }
 }
 
 void DefaultJitOptions::resetNormalIonWarmUpThreshold() {
   jit::DefaultJitOptions defaultValues;
   setNormalIonWarmUpThreshold(defaultValues.normalIonWarmUpThreshold);
+}
+
+void DefaultJitOptions::resetFullIonWarmUpThreshold() {
+  jit::DefaultJitOptions defaultValues;
+  setFullIonWarmUpThreshold(defaultValues.fullIonWarmUpThreshold);
 }
 
 }  // namespace jit

@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-fields) skip-if(!xulRuntime.shell) error:SyntaxError -- requires shell-options
+// |reftest| skip error:SyntaxError -- class-fields-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/grammar-private-environment-on-class-heritage-function-expression.case
 // - src/class-elements/syntax/invalid/cls-decl-elements-invalid-syntax.template

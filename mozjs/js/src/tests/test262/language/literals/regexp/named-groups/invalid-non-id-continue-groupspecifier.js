@@ -13,4 +13,4 @@ features: [regexp-named-groups]
 
 $DONOTEVALUATE();
 
-/(?<$❞>a)/;
+/(?<$𐒤>a)/;

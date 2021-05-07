@@ -4,9 +4,10 @@
 #[allow(dead_code)]
 use crate::ir::types::*;
 use crate::ir::Type;
-use crate::isa::aarch64::inst::{OperandSize, ScalarSize};
+use crate::isa::aarch64::inst::InstSize;
+use crate::machinst::*;
 
-use regalloc::{PrettyPrint, RealRegUniverse};
+use regalloc::RealRegUniverse;
 
 use core::convert::TryFrom;
 use std::string::String;
@@ -105,85 +106,6 @@ impl SImm7Scaled {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct FPULeftShiftImm {
-    pub amount: u8,
-    pub lane_size_in_bits: u8,
-}
-
-impl FPULeftShiftImm {
-    pub fn maybe_from_u8(amount: u8, lane_size_in_bits: u8) -> Option<Self> {
-        debug_assert!(lane_size_in_bits == 32 || lane_size_in_bits == 64);
-        if amount < lane_size_in_bits {
-            Some(Self {
-                amount,
-                lane_size_in_bits,
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn enc(&self) -> u32 {
-        debug_assert!(self.lane_size_in_bits.is_power_of_two());
-        debug_assert!(self.lane_size_in_bits > self.amount);
-        // The encoding of the immediate follows the table below,
-        // where xs encode the shift amount.
-        //
-        // | lane_size_in_bits | encoding |
-        // +------------------------------+
-        // | 8                 | 0001xxx  |
-        // | 16                | 001xxxx  |
-        // | 32                | 01xxxxx  |
-        // | 64                | 1xxxxxx  |
-        //
-        // The highest one bit is represented by `lane_size_in_bits`. Since
-        // `lane_size_in_bits` is a power of 2 and `amount` is less
-        // than `lane_size_in_bits`, they can be ORed
-        // together to produced the encoded value.
-        u32::from(self.lane_size_in_bits | self.amount)
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct FPURightShiftImm {
-    pub amount: u8,
-    pub lane_size_in_bits: u8,
-}
-
-impl FPURightShiftImm {
-    pub fn maybe_from_u8(amount: u8, lane_size_in_bits: u8) -> Option<Self> {
-        debug_assert!(lane_size_in_bits == 32 || lane_size_in_bits == 64);
-        if amount > 0 && amount <= lane_size_in_bits {
-            Some(Self {
-                amount,
-                lane_size_in_bits,
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn enc(&self) -> u32 {
-        debug_assert_ne!(0, self.amount);
-        // The encoding of the immediate follows the table below,
-        // where xs encodes the negated shift amount.
-        //
-        // | lane_size_in_bits | encoding |
-        // +------------------------------+
-        // | 8                 | 0001xxx  |
-        // | 16                | 001xxxx  |
-        // | 32                | 01xxxxx  |
-        // | 64                | 1xxxxxx  |
-        //
-        // The shift amount is negated such that a shift ammount
-        // of 1 (in 64-bit) is encoded as 0b111111 and a shift
-        // amount of 64 is encoded as 0b000000,
-        // in the bottom 6 bits.
-        u32::from((self.lane_size_in_bits * 2) - self.amount)
-    }
-}
-
 /// a 9-bit signed offset.
 #[derive(Clone, Copy, Debug)]
 pub struct SImm9 {
@@ -212,11 +134,6 @@ impl SImm9 {
     pub fn bits(&self) -> u32 {
         (self.value as u32) & 0x1ff
     }
-
-    /// Signed value of immediate.
-    pub fn value(&self) -> i32 {
-        self.value as i32
-    }
 }
 
 /// An unsigned, scaled 12-bit offset.
@@ -232,9 +149,6 @@ impl UImm12Scaled {
     /// Create a UImm12Scaled from a raw offset and the known scale type, if
     /// possible.
     pub fn maybe_from_i64(value: i64, scale_ty: Type) -> Option<UImm12Scaled> {
-        // Ensure the type is at least one byte.
-        let scale_ty = if scale_ty == B1 { B8 } else { scale_ty };
-
         let scale = scale_ty.bytes();
         assert!(scale.is_power_of_two());
         let scale = scale as i64;
@@ -257,16 +171,6 @@ impl UImm12Scaled {
     /// Encoded bits.
     pub fn bits(&self) -> u32 {
         (self.value as u32 / self.scale_ty.bytes()) & 0xfff
-    }
-
-    /// Value after scaling.
-    pub fn value(&self) -> u32 {
-        self.value as u32
-    }
-
-    /// The value type which is the scaling base.
-    pub fn scale_ty(&self) -> Type {
-        self.scale_ty
     }
 }
 
@@ -303,14 +207,6 @@ impl Imm12 {
         }
     }
 
-    /// Create a zero immediate of this format.
-    pub fn zero() -> Self {
-        Imm12 {
-            bits: 0,
-            shift12: false,
-        }
-    }
-
     /// Bits for 2-bit "shift" field in e.g. AddI.
     pub fn shift_bits(&self) -> u32 {
         if self.shift12 {
@@ -327,7 +223,8 @@ impl Imm12 {
 }
 
 /// An immediate for logical instructions.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct ImmLogic {
     /// The actual value.
     value: u64,
@@ -338,7 +235,7 @@ pub struct ImmLogic {
     /// `R` field: rotate amount.
     pub s: u8,
     /// Was this constructed for a 32-bit or 64-bit instruction?
-    pub size: OperandSize,
+    pub size: InstSize,
 }
 
 impl ImmLogic {
@@ -349,7 +246,7 @@ impl ImmLogic {
         if ty != I64 && ty != I32 {
             return None;
         }
-        let operand_size = OperandSize::from_ty(ty);
+        let inst_size = InstSize::from_ty(ty);
 
         let original_value = value;
 
@@ -530,7 +427,7 @@ impl ImmLogic {
             n: out_n != 0,
             r: r as u8,
             s: s as u8,
-            size: operand_size,
+            size: inst_size,
         })
     }
 
@@ -548,37 +445,6 @@ impl ImmLogic {
     pub fn invert(&self) -> ImmLogic {
         // For every ImmLogical immediate, the inverse can also be encoded.
         Self::maybe_from_u64(!self.value, self.size.to_ty()).unwrap()
-    }
-
-    /// This provides a safe(ish) way to avoid the costs of `maybe_from_u64` when we want to
-    /// encode a constant that we know at compiler-build time.  It constructs an `ImmLogic` from
-    /// the fields `n`, `r`, `s` and `size`, but in a debug build, checks that `value_to_check`
-    /// corresponds to those four fields.  The intention is that, in a non-debug build, this
-    /// reduces to something small enough that it will be a candidate for inlining.
-    pub fn from_n_r_s(value_to_check: u64, n: bool, r: u8, s: u8, size: OperandSize) -> Self {
-        // Construct it from the components we got given.
-        let imml = Self {
-            value: value_to_check,
-            n,
-            r,
-            s,
-            size,
-        };
-
-        // In debug mode, check that `n`/`r`/`s` are correct, given `value` and `size`.
-        debug_assert!(match ImmLogic::maybe_from_u64(
-            value_to_check,
-            if size == OperandSize::Size64 {
-                I64
-            } else {
-                I32
-            }
-        ) {
-            None => false, // fail: `value` is unrepresentable
-            Some(imml_check) => imml_check == imml,
-        });
-
-        imml
     }
 }
 
@@ -667,41 +533,7 @@ impl MoveWideConst {
     }
 }
 
-/// Advanced SIMD modified immediate as used by MOVI/MVNI.
-#[derive(Clone, Copy, Debug)]
-pub struct ASIMDMovModImm {
-    imm: u8,
-    shift: u8,
-    shift_ones: bool,
-}
-
-impl ASIMDMovModImm {
-    pub fn maybe_from_u64(value: u64, size: ScalarSize) -> Option<ASIMDMovModImm> {
-        match size {
-            ScalarSize::Size8 => Some(ASIMDMovModImm {
-                imm: value as u8,
-                shift: 0,
-                shift_ones: false,
-            }),
-            _ => None,
-        }
-    }
-
-    /// Create a zero immediate of this format.
-    pub fn zero() -> Self {
-        ASIMDMovModImm {
-            imm: 0,
-            shift: 0,
-            shift_ones: false,
-        }
-    }
-
-    pub fn value(&self) -> (u8, u32, bool) {
-        (self.imm, self.shift as u32, self.shift_ones)
-    }
-}
-
-impl PrettyPrint for NZCV {
+impl ShowWithRRU for NZCV {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         let fmt = |c: char, v| if v { c.to_ascii_uppercase() } else { c };
         format!(
@@ -714,13 +546,13 @@ impl PrettyPrint for NZCV {
     }
 }
 
-impl PrettyPrint for UImm5 {
+impl ShowWithRRU for UImm5 {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         format!("#{}", self.value)
     }
 }
 
-impl PrettyPrint for Imm12 {
+impl ShowWithRRU for Imm12 {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         let shift = if self.shift12 { 12 } else { 0 };
         let value = u32::from(self.bits) << shift;
@@ -728,65 +560,42 @@ impl PrettyPrint for Imm12 {
     }
 }
 
-impl PrettyPrint for SImm7Scaled {
+impl ShowWithRRU for SImm7Scaled {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         format!("#{}", self.value)
     }
 }
 
-impl PrettyPrint for FPULeftShiftImm {
-    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
-        format!("#{}", self.amount)
-    }
-}
-
-impl PrettyPrint for FPURightShiftImm {
-    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
-        format!("#{}", self.amount)
-    }
-}
-
-impl PrettyPrint for SImm9 {
+impl ShowWithRRU for SImm9 {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         format!("#{}", self.value)
     }
 }
 
-impl PrettyPrint for UImm12Scaled {
+impl ShowWithRRU for UImm12Scaled {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         format!("#{}", self.value)
     }
 }
 
-impl PrettyPrint for ImmLogic {
+impl ShowWithRRU for ImmLogic {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         format!("#{}", self.value())
     }
 }
 
-impl PrettyPrint for ImmShift {
+impl ShowWithRRU for ImmShift {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         format!("#{}", self.imm)
     }
 }
 
-impl PrettyPrint for MoveWideConst {
+impl ShowWithRRU for MoveWideConst {
     fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
         if self.shift == 0 {
             format!("#{}", self.bits)
         } else {
             format!("#{}, LSL #{}", self.bits, self.shift * 16)
-        }
-    }
-}
-
-impl PrettyPrint for ASIMDMovModImm {
-    fn show_rru(&self, _mb_rru: Option<&RealRegUniverse>) -> String {
-        if self.shift == 0 {
-            format!("#{}", self.imm)
-        } else {
-            let shift_type = if self.shift_ones { "MSL" } else { "LSL" };
-            format!("#{}, {} #{}", self.imm, shift_type, self.shift)
         }
     }
 }
@@ -806,7 +615,7 @@ mod test {
                 n: true,
                 r: 0,
                 s: 0,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(1, I64)
         );
@@ -817,7 +626,7 @@ mod test {
                 n: true,
                 r: 63,
                 s: 0,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(2, I64)
         );
@@ -832,7 +641,7 @@ mod test {
                 n: true,
                 r: 61,
                 s: 4,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(248, I64)
         );
@@ -845,7 +654,7 @@ mod test {
                 n: true,
                 r: 57,
                 s: 3,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(1920, I64)
         );
@@ -856,7 +665,7 @@ mod test {
                 n: true,
                 r: 63,
                 s: 13,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(0x7ffe, I64)
         );
@@ -867,7 +676,7 @@ mod test {
                 n: true,
                 r: 48,
                 s: 1,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(0x30000, I64)
         );
@@ -878,7 +687,7 @@ mod test {
                 n: true,
                 r: 44,
                 s: 0,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(0x100000, I64)
         );
@@ -889,7 +698,7 @@ mod test {
                 n: true,
                 r: 63,
                 s: 62,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(u64::max_value() - 1, I64)
         );
@@ -900,7 +709,7 @@ mod test {
                 n: false,
                 r: 1,
                 s: 60,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(0xaaaaaaaaaaaaaaaa, I64)
         );
@@ -911,7 +720,7 @@ mod test {
                 n: false,
                 r: 1,
                 s: 49,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(0x8181818181818181, I64)
         );
@@ -922,7 +731,7 @@ mod test {
                 n: false,
                 r: 10,
                 s: 43,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(0xffc3ffc3ffc3ffc3, I64)
         );
@@ -933,7 +742,7 @@ mod test {
                 n: false,
                 r: 0,
                 s: 0,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(0x100000001, I64)
         );
@@ -944,7 +753,7 @@ mod test {
                 n: false,
                 r: 0,
                 s: 56,
-                size: OperandSize::Size64,
+                size: InstSize::Size64,
             }),
             ImmLogic::maybe_from_u64(0x1111111111111111, I64)
         );

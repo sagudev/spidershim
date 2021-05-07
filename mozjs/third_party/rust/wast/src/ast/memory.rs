@@ -1,5 +1,5 @@
 use crate::ast::{self, kw};
-use crate::parser::{Lookahead1, Parse, Parser, Peek, Result};
+use crate::parser::{Parse, Parser, Result};
 
 /// A defined WebAssembly memory instance inside of a module.
 #[derive(Debug)]
@@ -21,7 +21,8 @@ pub enum MemoryKind<'a> {
     /// This memory is actually an inlined import definition.
     #[allow(missing_docs)]
     Import {
-        import: ast::InlineImport<'a>,
+        module: &'a str,
+        field: &'a str,
         ty: ast::MemoryType,
     },
 
@@ -29,12 +30,7 @@ pub enum MemoryKind<'a> {
     Normal(ast::MemoryType),
 
     /// The data of this memory, starting from 0, explicitly listed
-    Inline {
-        /// Whether or not this will be creating a 32-bit memory
-        is_32: bool,
-        /// The inline data specified for this memory
-        data: Vec<DataVal<'a>>,
-    },
+    Inline(Vec<&'a [u8]>),
 }
 
 impl<'a> Parse<'a> for Memory<'a> {
@@ -45,33 +41,40 @@ impl<'a> Parse<'a> for Memory<'a> {
 
         // Afterwards figure out which style this is, either:
         //
-        //  *   `(import "a" "b") limits`
         //  *   `(data ...)`
+        //  *   `(import "a" "b") limits`
         //  *   `limits`
         let mut l = parser.lookahead1();
-        let kind = if let Some(import) = parser.parse()? {
-            MemoryKind::Import {
-                import,
-                ty: parser.parse()?,
+        let kind = if l.peek::<ast::LParen>() {
+            enum Which<'a, T> {
+                Inline(Vec<T>),
+                Import(&'a str, &'a str),
             }
-        } else if l.peek::<ast::LParen>() || parser.peek2::<ast::LParen>() {
-            let is_32 = if parser.parse::<Option<kw::i32>>()?.is_some() {
-                true
-            } else if parser.parse::<Option<kw::i64>>()?.is_some() {
-                false
-            } else {
-                true
-            };
-            let data = parser.parens(|parser| {
-                parser.parse::<kw::data>()?;
-                let mut data = Vec::new();
-                while !parser.is_empty() {
-                    data.push(parser.parse()?);
+            let result = parser.parens(|parser| {
+                let mut l = parser.lookahead1();
+                if l.peek::<kw::data>() {
+                    parser.parse::<kw::data>()?;
+                    let mut data = Vec::new();
+                    while !parser.is_empty() {
+                        data.push(parser.parse()?);
+                    }
+                    Ok(Which::Inline(data))
+                } else if l.peek::<kw::import>() {
+                    parser.parse::<kw::import>()?;
+                    Ok(Which::Import(parser.parse()?, parser.parse()?))
+                } else {
+                    Err(l.error())
                 }
-                Ok(data)
             })?;
-            MemoryKind::Inline { data, is_32 }
-        } else if l.peek::<u32>() || l.peek::<kw::i32>() || l.peek::<kw::i64>() {
+            match result {
+                Which::Inline(data) => MemoryKind::Inline(data),
+                Which::Import(module, field) => MemoryKind::Import {
+                    module,
+                    field,
+                    ty: parser.parse()?,
+                },
+            }
+        } else if l.peek::<u32>() {
             MemoryKind::Normal(parser.parse()?)
         } else {
             return Err(l.error());
@@ -99,7 +102,7 @@ pub struct Data<'a> {
 
     /// Bytes for this `Data` segment, viewed as the concatenation of all the
     /// contained slices.
-    pub data: Vec<DataVal<'a>>,
+    pub data: Vec<&'a [u8]>,
 }
 
 /// Different kinds of data segments, either passive or active.
@@ -113,7 +116,7 @@ pub enum DataKind<'a> {
     /// memory on module instantiation.
     Active {
         /// The memory that this `Data` will be associated with.
-        memory: ast::ItemRef<'a, kw::memory>,
+        memory: ast::Index<'a>,
 
         /// Initial offset to load this data segment at
         offset: ast::Expression<'a>,
@@ -138,14 +141,13 @@ impl<'a> Parse<'a> for Data<'a> {
         // ... and otherwise we must be attached to a particular memory as well
         // as having an initialization offset.
         } else {
-            let memory = if let Some(index) = parser.parse::<Option<ast::IndexOrRef<_>>>()? {
-                index.0
+            let memory = if parser.peek2::<kw::memory>() {
+                Some(parser.parens(|p| {
+                    p.parse::<kw::memory>()?;
+                    p.parse()
+                })?)
             } else {
-                ast::ItemRef::Item {
-                    kind: kw::memory(parser.prev_span()),
-                    idx: ast::Index::Num(0, span),
-                    exports: Vec::new(),
-                }
+                parser.parse()?
             };
             let offset = parser.parens(|parser| {
                 if parser.peek::<kw::offset>() {
@@ -153,7 +155,10 @@ impl<'a> Parse<'a> for Data<'a> {
                 }
                 parser.parse()
             })?;
-            DataKind::Active { memory, offset }
+            DataKind::Active {
+                memory: memory.unwrap_or(ast::Index::Num(0)),
+                offset,
+            }
         };
 
         let mut data = Vec::new();
@@ -166,85 +171,5 @@ impl<'a> Parse<'a> for Data<'a> {
             kind,
             data,
         })
-    }
-}
-
-/// Differnet ways the value of a data segment can be defined.
-#[derive(Debug)]
-#[allow(missing_docs)]
-pub enum DataVal<'a> {
-    String(&'a [u8]),
-    Integral(Vec<u8>),
-}
-
-impl DataVal<'_> {
-    /// Returns the length, in bytes, of the memory used to represent this data
-    /// value.
-    pub fn len(&self) -> usize {
-        match self {
-            DataVal::String(s) => s.len(),
-            DataVal::Integral(s) => s.len(),
-        }
-    }
-
-    /// Pushes the value of this data value onto the provided list of bytes.
-    pub fn push_onto(&self, dst: &mut Vec<u8>) {
-        match self {
-            DataVal::String(s) => dst.extend_from_slice(s),
-            DataVal::Integral(s) => dst.extend_from_slice(s),
-        }
-    }
-}
-
-impl<'a> Parse<'a> for DataVal<'a> {
-    fn parse(parser: Parser<'a>) -> Result<Self> {
-        if !parser.peek::<ast::LParen>() {
-            return Ok(DataVal::String(parser.parse()?));
-        }
-
-        return parser.parens(|p| {
-            let mut result = Vec::new();
-            let mut lookahead = p.lookahead1();
-            let l = &mut lookahead;
-            let r = &mut result;
-            if consume::<kw::i8, i8, _>(p, l, r, |u, v| v.push(u as u8))?
-                || consume::<kw::i16, i16, _>(p, l, r, |u, v| v.extend(&u.to_le_bytes()))?
-                || consume::<kw::i32, i32, _>(p, l, r, |u, v| v.extend(&u.to_le_bytes()))?
-                || consume::<kw::i64, i64, _>(p, l, r, |u, v| v.extend(&u.to_le_bytes()))?
-                || consume::<kw::f32, ast::Float32, _>(p, l, r, |u, v| {
-                    v.extend(&u.bits.to_le_bytes())
-                })?
-                || consume::<kw::f64, ast::Float64, _>(p, l, r, |u, v| {
-                    v.extend(&u.bits.to_le_bytes())
-                })?
-                || consume::<kw::v128, ast::V128Const, _>(p, l, r, |u, v| {
-                    v.extend(&u.to_le_bytes())
-                })?
-            {
-                Ok(DataVal::Integral(result))
-            } else {
-                Err(lookahead.error())
-            }
-        });
-
-        fn consume<'a, T: Peek + Parse<'a>, U: Parse<'a>, F>(
-            parser: Parser<'a>,
-            lookahead: &mut Lookahead1<'a>,
-            dst: &mut Vec<u8>,
-            push: F,
-        ) -> Result<bool>
-        where
-            F: Fn(U, &mut Vec<u8>),
-        {
-            if !lookahead.peek::<T>() {
-                return Ok(false);
-            }
-            parser.parse::<T>()?;
-            while !parser.is_empty() {
-                let val = parser.parse::<U>()?;
-                push(val, dst);
-            }
-            Ok(true)
-        }
     }
 }

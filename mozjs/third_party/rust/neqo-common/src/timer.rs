@@ -89,10 +89,7 @@ impl<T> Timer<T> {
     }
 
     /// Slide forward in time by `n * self.granularity`.
-    #[allow(clippy::unknown_clippy_lints)] // Until we require rust 1.45.
-    #[allow(clippy::cast_possible_truncation, clippy::reversed_empty_ranges)]
-    // cast_possible_truncation is ok because we have an assertion guard.
-    // reversed_empty_ranges is to avoid different types on the if/else.
+    #[allow(clippy::cast_possible_truncation)] // guarded by assertion
     fn tick(&mut self, n: usize) {
         let new = self.bucket(n);
         let iter = if new < self.cursor {
@@ -150,7 +147,7 @@ impl<T> Timer<T> {
         let bucket = self.time_bucket(time);
         let start_index = match self.items[bucket].binary_search_by_key(&time, TimerItem::time) {
             Ok(idx) => idx,
-            Err(_) => return None,
+            _ => return None,
         };
         // start_index is just one of potentially many items with the same time.
         // Search backwards for a match, ...
@@ -238,7 +235,7 @@ impl<T> Timer<T> {
 
 #[cfg(test)]
 mod test {
-    use super::{Duration, Instant, Timer};
+    use super::*;
     use lazy_static::lazy_static;
 
     lazy_static! {

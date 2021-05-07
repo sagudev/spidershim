@@ -8,7 +8,6 @@
 #define frontend_ElemOpEmitter_h
 
 #include "mozilla/Attributes.h"
-#include "frontend/Token.h"
 
 namespace js {
 namespace frontend {
@@ -139,7 +138,6 @@ class MOZ_STACK_CLASS ElemOpEmitter {
 
   Kind kind_;
   ObjKind objKind_;
-  NameVisibility visibility_ = NameVisibility::Public;
 
 #ifdef DEBUG
   // The state of this emitter.
@@ -152,6 +150,8 @@ class MOZ_STACK_CLASS ElemOpEmitter {
   // +-------+                 +-----+               +-----+ |  |
   //                                                         |  |
   // +-------------------------------------------------------+  |
+  // |                                                          |
+  // |                                                          |
   // |                                                          |
   // | [Get]                                                    |
   // | [Call]                                                   |
@@ -212,71 +212,56 @@ class MOZ_STACK_CLASS ElemOpEmitter {
 #endif
 
  public:
-  ElemOpEmitter(BytecodeEmitter* bce, Kind kind, ObjKind objKind,
-                NameVisibility visibility);
+  ElemOpEmitter(BytecodeEmitter* bce, Kind kind, ObjKind objKind);
 
  private:
-  [[nodiscard]] bool isCall() const { return kind_ == Kind::Call; }
+  MOZ_MUST_USE bool isCall() const { return kind_ == Kind::Call; }
 
-  [[nodiscard]] bool isSimpleAssignment() const {
+  MOZ_MUST_USE bool isSimpleAssignment() const {
     return kind_ == Kind::SimpleAssignment;
   }
 
-  bool isPrivate() { return visibility_ == NameVisibility::Private; }
+  MOZ_MUST_USE bool isPropInit() const { return kind_ == Kind::PropInit; }
 
-  [[nodiscard]] bool isPropInit() const { return kind_ == Kind::PropInit; }
+  MOZ_MUST_USE bool isDelete() const { return kind_ == Kind::Delete; }
 
-  [[nodiscard]] bool isPrivateGet() const {
-    return visibility_ == NameVisibility::Private && kind_ == Kind::Get;
-  }
-
-  [[nodiscard]] bool isDelete() const { return kind_ == Kind::Delete; }
-
-  [[nodiscard]] bool isCompoundAssignment() const {
+  MOZ_MUST_USE bool isCompoundAssignment() const {
     return kind_ == Kind::CompoundAssignment;
   }
 
-  [[nodiscard]] bool isIncDec() const {
-    return isPostIncDec() || isPreIncDec();
-  }
+  MOZ_MUST_USE bool isIncDec() const { return isPostIncDec() || isPreIncDec(); }
 
-  [[nodiscard]] bool isPostIncDec() const {
+  MOZ_MUST_USE bool isPostIncDec() const {
     return kind_ == Kind::PostIncrement || kind_ == Kind::PostDecrement;
   }
 
-  [[nodiscard]] bool isPreIncDec() const {
+  MOZ_MUST_USE bool isPreIncDec() const {
     return kind_ == Kind::PreIncrement || kind_ == Kind::PreDecrement;
   }
 
-  [[nodiscard]] bool isInc() const {
+  MOZ_MUST_USE bool isInc() const {
     return kind_ == Kind::PostIncrement || kind_ == Kind::PreIncrement;
   }
 
-  [[nodiscard]] bool isSuper() const { return objKind_ == ObjKind::Super; }
+  MOZ_MUST_USE bool isSuper() const { return objKind_ == ObjKind::Super; }
 
  public:
-  [[nodiscard]] bool prepareForObj();
-  [[nodiscard]] bool prepareForKey();
+  MOZ_MUST_USE bool prepareForObj();
+  MOZ_MUST_USE bool prepareForKey();
 
-  [[nodiscard]] bool emitGet();
+  MOZ_MUST_USE bool emitGet();
 
-  [[nodiscard]] bool prepareForRhs();
-  [[nodiscard]] bool skipObjAndKeyAndRhs();
+  MOZ_MUST_USE bool prepareForRhs();
+  MOZ_MUST_USE bool skipObjAndKeyAndRhs();
 
-  [[nodiscard]] bool emitDelete();
+  MOZ_MUST_USE bool emitDelete();
 
-  [[nodiscard]] bool emitAssignment();
+  MOZ_MUST_USE bool emitAssignment();
 
-  [[nodiscard]] bool emitIncDec();
-
- private:
-  // When we have private names, we may need to emit a CheckPrivateField
-  // op to potentially throw errors where required.
-  [[nodiscard]] bool emitPrivateGuard();
-  [[nodiscard]] bool emitPrivateGuardForAssignment();
+  MOZ_MUST_USE bool emitIncDec();
 };
 
 } /* namespace frontend */
-}  // namespace js
+} /* namespace js */
 
 #endif /* frontend_ElemOpEmitter_h */

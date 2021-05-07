@@ -1,30 +1,35 @@
 use core::mem;
 use core::pin::Pin;
 use futures_core::future::{FusedFuture, Future};
-use futures_core::ready;
 use futures_core::stream::{FusedStream, TryStream};
 use futures_core::task::{Context, Poll};
-use pin_project_lite::pin_project;
+use pin_utils::{unsafe_pinned, unsafe_unpinned};
 
-pin_project! {
-    /// Future for the [`try_collect`](super::TryStreamExt::try_collect) method.
-    #[derive(Debug)]
-    #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct TryCollect<St, C> {
-        #[pin]
-        stream: St,
-        items: C,
-    }
+/// Future for the [`try_collect`](super::TryStreamExt::try_collect) method.
+#[derive(Debug)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct TryCollect<St, C> {
+    stream: St,
+    items: C,
 }
 
 impl<St: TryStream, C: Default> TryCollect<St, C> {
-    pub(super) fn new(s: St) -> Self {
-        Self {
+    unsafe_pinned!(stream: St);
+    unsafe_unpinned!(items: C);
+
+    pub(super) fn new(s: St) -> TryCollect<St, C> {
+        TryCollect {
             stream: s,
             items: Default::default(),
         }
     }
+
+    fn finish(self: Pin<&mut Self>) -> C {
+        mem::replace(self.items(), Default::default())
+    }
 }
+
+impl<St: Unpin + TryStream, C> Unpin for TryCollect<St, C> {}
 
 impl<St, C> FusedFuture for TryCollect<St, C>
 where
@@ -44,15 +49,14 @@ where
     type Output = Result<C, St::Error>;
 
     fn poll(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Self::Output> {
-        let mut this = self.project();
-        Poll::Ready(Ok(loop {
-            match ready!(this.stream.as_mut().try_poll_next(cx)?) {
-                Some(x) => this.items.extend(Some(x)),
-                None => break mem::replace(this.items, Default::default()),
+        loop {
+            match ready!(self.as_mut().stream().try_poll_next(cx)?) {
+                Some(x) => self.as_mut().items().extend(Some(x)),
+                None => return Poll::Ready(Ok(self.as_mut().finish())),
             }
-        }))
+        }
     }
 }

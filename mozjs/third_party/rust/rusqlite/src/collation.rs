@@ -132,7 +132,7 @@ impl InnerConnection {
         let r = unsafe {
             ffi::sqlite3_collation_needed(
                 self.db(),
-                x_coll_needed as *mut c_void,
+                mem::transmute(x_coll_needed),
                 Some(collation_needed_callback),
             )
         };

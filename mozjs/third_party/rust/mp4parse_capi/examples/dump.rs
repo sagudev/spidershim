@@ -20,20 +20,6 @@ extern "C" fn buf_read(buf: *mut u8, size: usize, userdata: *mut std::os::raw::c
     }
 }
 
-fn dump_avif(filename: &str) {
-    let mut file = File::open(filename).expect("Unknown file");
-    let io = Mp4parseIo {
-        read: Some(buf_read),
-        userdata: &mut file as *mut _ as *mut std::os::raw::c_void,
-    };
-
-    unsafe {
-        let mut parser = std::ptr::null_mut();
-        let rv = mp4parse_avif_new(&io, &mut parser);
-        println!("mp4parse_avif_new -> {:?}", rv);
-    }
-}
-
 fn dump_file(filename: &str) {
     let mut file = File::open(filename).expect("Unknown file");
     let io = Mp4parseIo {
@@ -47,12 +33,8 @@ fn dump_file(filename: &str) {
 
         match rv {
             Mp4parseStatus::Ok => (),
-            Mp4parseStatus::Invalid => {
-                println!("-- failed to parse as mp4 video, trying AVIF");
-                dump_avif(filename);
-            }
             _ => {
-                println!("-- fail to parse: {:?}, '-v' for more info", rv);
+                println!("-- fail to parse, '-v' for more info");
                 return;
             }
         }
@@ -62,8 +44,8 @@ fn dump_file(filename: &str) {
             Mp4parseStatus::Ok => {
                 println!("-- mp4parse_fragment_info {:?}", frag_info);
             }
-            rv => {
-                println!("-- mp4parse_fragment_info failed with {:?}", rv);
+            _ => {
+                println!("-- mp4parse_fragment_info failed");
                 return;
             }
         }
@@ -80,7 +62,9 @@ fn dump_file(filename: &str) {
         for i in 0..counts {
             let mut track_info = Mp4parseTrackInfo {
                 track_type: Mp4parseTrackType::Audio,
-                ..Default::default()
+                track_id: 0,
+                duration: 0,
+                media_time: 0,
             };
             match mp4parse_get_track_info(parser, i, &mut track_info) {
                 Mp4parseStatus::Ok => {

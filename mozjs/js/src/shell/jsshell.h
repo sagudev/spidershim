@@ -10,6 +10,7 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/Variant.h"
 
 #include "jsapi.h"
 
@@ -33,7 +34,11 @@ namespace js {
 namespace shell {
 
 // Define use of application-specific slots on the shell's global object.
-enum GlobalAppSlot { GlobalAppSlotModuleRegistry, GlobalAppSlotCount };
+enum GlobalAppSlot {
+  GlobalAppSlotModuleRegistry,
+  GlobalAppSlotModuleResolveHook,  // HostResolveImportedModule
+  GlobalAppSlotCount
+};
 static_assert(GlobalAppSlotCount <= JSCLASS_GLOBAL_APPLICATION_SLOTS,
               "Too many applications slots defined for shell global");
 
@@ -102,8 +107,6 @@ extern int sArgc;
 extern char** sArgv;
 
 // Shell state set once at startup.
-extern const char* selfHostedXDRPath;
-extern bool encodeSelfHostedCode;
 extern bool enableCodeCoverage;
 extern bool enableDisassemblyDumps;
 extern bool offthreadCompilation;
@@ -111,15 +114,9 @@ extern bool enableAsmJS;
 extern bool enableWasm;
 extern bool enableSharedMemory;
 extern bool enableWasmBaseline;
-extern bool enableWasmOptimizing;
-#ifdef JS_CODEGEN_ARM64
-// Cranelift->Ion transition
-extern bool forceWasmIon;
-#endif
+extern bool enableWasmIon;
+extern bool enableWasmCranelift;
 extern bool enableWasmReftypes;
-#ifdef ENABLE_WASM_FUNCTION_REFERENCES
-extern bool enableWasmFunctionReferences;
-#endif
 #ifdef ENABLE_WASM_GC
 extern bool enableWasmGc;
 #endif
@@ -129,17 +126,10 @@ extern bool enableWasmMultiValue;
 #ifdef ENABLE_WASM_SIMD
 extern bool enableWasmSimd;
 #endif
-#ifdef ENABLE_WASM_SIMD_WORMHOLE
-extern bool enableWasmSimdWormhole;
-#endif
-#ifdef ENABLE_WASM_EXCEPTIONS
-extern bool enableWasmExceptions;
-#endif
 extern bool enableWasmVerbose;
 extern bool enableTestWasmAwaitTier2;
 extern bool enableSourcePragmas;
 extern bool enableAsyncStacks;
-extern bool enableAsyncStackCaptureDebuggeeOnly;
 extern bool enableStreams;
 extern bool enableReadableByteStreams;
 extern bool enableBYOBStreamReaders;
@@ -148,11 +138,7 @@ extern bool enableReadableStreamPipeTo;
 extern bool enableWeakRefs;
 extern bool enableToSource;
 extern bool enablePropertyErrorMessageFix;
-extern bool useOffThreadParseGlobal;
 extern bool enableIteratorHelpers;
-extern bool enablePrivateClassFields;
-extern bool enablePrivateClassMethods;
-extern bool enableTopLevelAwait;
 #ifdef JS_GC_ZEAL
 extern uint32_t gZealBits;
 extern uint32_t gZealFrequency;
@@ -170,8 +156,6 @@ extern bool defaultToSameCompartment;
 extern bool dumpEntrainedVariables;
 extern bool OOM_printAllocationCount;
 #endif
-
-extern UniqueChars processWideModuleLoadPath;
 
 // Alias the global dstName to namespaceObj.srcName. For example, if dstName is
 // "snarf", namespaceObj represents "os.file", and srcName is "readFile", then
@@ -191,9 +175,9 @@ class NonshrinkingGCObjectVector
     : public GCVector<JSObject*, 0, SystemAllocPolicy> {
  public:
   void sweep() {
-    for (JSObject*& obj : *this) {
-      if (JS::GCPolicy<JSObject*>::needsSweep(&obj)) {
-        obj = nullptr;
+    for (uint32_t i = 0; i < this->length(); i++) {
+      if (JS::GCPolicy<JSObject*>::needsSweep(&(*this)[i])) {
+        (*this)[i] = nullptr;
       }
     }
   }
@@ -265,14 +249,14 @@ struct ShellContext {
   Vector<OffThreadJob*, 0, SystemAllocPolicy> offThreadJobs;
 
   // Queued finalization registry cleanup jobs.
-  using FunctionVector = GCVector<JSFunction*, 0, SystemAllocPolicy>;
-  JS::PersistentRooted<FunctionVector> finalizationRegistryCleanupCallbacks;
+  using ObjectVector = GCVector<JSObject*, 0, SystemAllocPolicy>;
+  JS::PersistentRooted<ObjectVector> finalizationRegistriesToCleanUp;
 };
 
 extern ShellContext* GetShellContext(JSContext* cx);
 
-[[nodiscard]] extern bool PrintStackTrace(JSContext* cx,
-                                          JS::Handle<JSObject*> stackObj);
+extern MOZ_MUST_USE bool PrintStackTrace(JSContext* cx,
+                                         JS::Handle<JSObject*> stackObj);
 
 extern JSObject* CreateScriptPrivate(JSContext* cx,
                                      HandleString path = nullptr);

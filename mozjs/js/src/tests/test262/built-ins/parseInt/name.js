@@ -19,7 +19,7 @@ info: |
 includes: [propertyHelper.js]
 ---*/
 
-assert.sameValue(parseInt.name, "parseInt", 'The value of parseInt.name is "parseInt"');
+assert.sameValue(parseInt.name, "parseInt");
 
 verifyNotEnumerable(parseInt, "name");
 verifyNotWritable(parseInt, "name");

@@ -4,9 +4,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::constants::{
-    Cipher, Version, TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256,
-};
+use crate::constants::*;
 use crate::err::{secstatus_to_res, Error, Res};
 use crate::p11::{
     PK11SymKey, PK11_Encrypt, PK11_GetBlockSize, PK11_GetMechanism, SECItem, SECItemType, SymKey,
@@ -78,25 +76,17 @@ impl HpKey {
         }
     }
 
-    /// Get the sample size, which is also the output size.
-    #[allow(clippy::cast_sign_loss)]
-    #[must_use]
-    pub fn sample_size(&self) -> usize {
-        let k: *mut PK11SymKey = *self.0;
-        let mech = unsafe { PK11_GetMechanism(k) };
-        // Cast is safe because block size is always greater than or equal to 0
-        (unsafe { PK11_GetBlockSize(mech, null_mut()) }) as usize
-    }
-
     /// Generate a header protection mask for QUIC.
     ///
     /// # Errors
     /// An error is returned if the NSS functions fail; a sample of the
     /// wrong size is the obvious cause.
+    #[allow(clippy::cast_sign_loss)]
     pub fn mask(&self, sample: &[u8]) -> Res<Vec<u8>> {
         let k: *mut PK11SymKey = *self.0;
         let mech = unsafe { PK11_GetMechanism(k) };
-        let block_size = self.sample_size();
+        // Cast is safe because block size is always greater than or equal to 0
+        let block_size = unsafe { PK11_GetBlockSize(mech, null_mut()) } as usize;
 
         let mut output = vec![0_u8; block_size];
         let output_slice = &mut output[..];

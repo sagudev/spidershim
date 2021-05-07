@@ -23,7 +23,7 @@
 #include "js/Value.h"               // JS::Value
 
 struct JS_PUBLIC_API JSContext;
-class JSJitInfo;
+struct JSJitInfo;
 
 /**
  * Wrapper to relace JSNative for JSPropertySpecs and JSFunctionSpecs. This will
@@ -62,8 +62,7 @@ struct JSPropertySpec {
   };
 
   struct ValueWrapper {
-    enum class Type : uint8_t { String, Int32, Double };
-    Type type;
+    uintptr_t type;
     union {
       const char* string;
       int32_t int32;
@@ -73,13 +72,14 @@ struct JSPropertySpec {
    private:
     ValueWrapper() = delete;
 
-    explicit constexpr ValueWrapper(int32_t n) : type(Type::Int32), int32(n) {}
+    explicit constexpr ValueWrapper(int32_t n)
+        : type(JSVAL_TYPE_INT32), int32(n) {}
 
     explicit constexpr ValueWrapper(const char* s)
-        : type(Type::String), string(s) {}
+        : type(JSVAL_TYPE_STRING), string(s) {}
 
     explicit constexpr ValueWrapper(double d)
-        : type(Type::Double), double_(d) {}
+        : type(JSVAL_TYPE_DOUBLE), double_(d) {}
 
    public:
     ValueWrapper(const ValueWrapper& other) = default;
@@ -186,11 +186,7 @@ struct JSPropertySpec {
   Name name;
 
  private:
-  // JSPROP_* property attributes as defined in PropertyDescriptor.h.
-  uint8_t attributes_;
-
-  // Whether AccessorsOrValue below is an accessor or a value.
-  bool isAccessor_;
+  uint8_t flags_;
 
  public:
   AccessorsOrValue u;
@@ -198,44 +194,42 @@ struct JSPropertySpec {
  private:
   JSPropertySpec() = delete;
 
-  constexpr JSPropertySpec(const char* name, uint8_t attributes,
-                           bool isAccessor, AccessorsOrValue u)
-      : name(name), attributes_(attributes), isAccessor_(isAccessor), u(u) {}
-  constexpr JSPropertySpec(JS::SymbolCode name, uint8_t attributes,
-                           bool isAccessor, AccessorsOrValue u)
-      : name(name), attributes_(attributes), isAccessor_(isAccessor), u(u) {}
+  constexpr JSPropertySpec(const char* name, uint8_t flags, AccessorsOrValue u)
+      : name(name), flags_(flags), u(u) {}
+  constexpr JSPropertySpec(JS::SymbolCode name, uint8_t flags,
+                           AccessorsOrValue u)
+      : name(name), flags_(flags), u(u) {}
 
  public:
   JSPropertySpec(const JSPropertySpec& other) = default;
 
   static constexpr JSPropertySpec nativeAccessors(
-      const char* name, uint8_t attributes, JSNative getter,
+      const char* name, uint8_t flags, JSNative getter,
       const JSJitInfo* getterInfo, JSNative setter = nullptr,
       const JSJitInfo* setterInfo = nullptr) {
     return JSPropertySpec(
-        name, attributes, /* isAccessor = */ true,
+        name, flags,
         AccessorsOrValue::fromAccessors(
             JSPropertySpec::Accessor::nativeAccessor(getter, getterInfo),
             JSPropertySpec::Accessor::nativeAccessor(setter, setterInfo)));
   }
 
   static constexpr JSPropertySpec nativeAccessors(
-      JS::SymbolCode name, uint8_t attributes, JSNative getter,
+      JS::SymbolCode name, uint8_t flags, JSNative getter,
       const JSJitInfo* getterInfo, JSNative setter = nullptr,
       const JSJitInfo* setterInfo = nullptr) {
     return JSPropertySpec(
-        name, attributes, /* isAccessor = */ true,
+        name, flags,
         AccessorsOrValue::fromAccessors(
             JSPropertySpec::Accessor::nativeAccessor(getter, getterInfo),
             JSPropertySpec::Accessor::nativeAccessor(setter, setterInfo)));
   }
 
   static constexpr JSPropertySpec selfHostedAccessors(
-      const char* name, uint8_t attributes, const char* getterName,
+      const char* name, uint8_t flags, const char* getterName,
       const char* setterName = nullptr) {
     return JSPropertySpec(
-        name, attributes | JSPROP_GETTER | (setterName ? JSPROP_SETTER : 0),
-        /* isAccessor = */ true,
+        name, flags | JSPROP_GETTER | (setterName ? JSPROP_SETTER : 0),
         AccessorsOrValue::fromAccessors(
             JSPropertySpec::Accessor::selfHostedAccessor(getterName),
             setterName
@@ -244,11 +238,10 @@ struct JSPropertySpec {
   }
 
   static constexpr JSPropertySpec selfHostedAccessors(
-      JS::SymbolCode name, uint8_t attributes, const char* getterName,
+      JS::SymbolCode name, uint8_t flags, const char* getterName,
       const char* setterName = nullptr) {
     return JSPropertySpec(
-        name, attributes | JSPROP_GETTER | (setterName ? JSPROP_SETTER : 0),
-        /* isAccessor = */ true,
+        name, flags | JSPROP_GETTER | (setterName ? JSPROP_SETTER : 0),
         AccessorsOrValue::fromAccessors(
             JSPropertySpec::Accessor::selfHostedAccessor(getterName),
             setterName
@@ -256,52 +249,52 @@ struct JSPropertySpec {
                 : JSPropertySpec::Accessor::noAccessor()));
   }
 
-  static constexpr JSPropertySpec int32Value(const char* name,
-                                             uint8_t attributes, int32_t n) {
-    return JSPropertySpec(name, attributes, /* isAccessor = */ false,
+  static constexpr JSPropertySpec int32Value(const char* name, uint8_t flags,
+                                             int32_t n) {
+    return JSPropertySpec(name, flags | JSPROP_INTERNAL_USE_BIT,
                           AccessorsOrValue::fromValue(
                               JSPropertySpec::ValueWrapper::int32Value(n)));
   }
 
-  static constexpr JSPropertySpec int32Value(JS::SymbolCode name,
-                                             uint8_t attributes, int32_t n) {
-    return JSPropertySpec(name, attributes, /* isAccessor = */ false,
+  static constexpr JSPropertySpec int32Value(JS::SymbolCode name, uint8_t flags,
+                                             int32_t n) {
+    return JSPropertySpec(name, flags | JSPROP_INTERNAL_USE_BIT,
                           AccessorsOrValue::fromValue(
                               JSPropertySpec::ValueWrapper::int32Value(n)));
   }
 
-  static constexpr JSPropertySpec stringValue(const char* name,
-                                              uint8_t attributes,
+  static constexpr JSPropertySpec stringValue(const char* name, uint8_t flags,
                                               const char* s) {
-    return JSPropertySpec(name, attributes, /* isAccessor = */ false,
+    return JSPropertySpec(name, flags | JSPROP_INTERNAL_USE_BIT,
                           AccessorsOrValue::fromValue(
                               JSPropertySpec::ValueWrapper::stringValue(s)));
   }
 
   static constexpr JSPropertySpec stringValue(JS::SymbolCode name,
-                                              uint8_t attributes,
-                                              const char* s) {
-    return JSPropertySpec(name, attributes, /* isAccessor = */ false,
+                                              uint8_t flags, const char* s) {
+    return JSPropertySpec(name, flags | JSPROP_INTERNAL_USE_BIT,
                           AccessorsOrValue::fromValue(
                               JSPropertySpec::ValueWrapper::stringValue(s)));
   }
 
-  static constexpr JSPropertySpec doubleValue(const char* name,
-                                              uint8_t attributes, double d) {
-    return JSPropertySpec(name, attributes, /* isAccessor = */ false,
+  static constexpr JSPropertySpec doubleValue(const char* name, uint8_t flags,
+                                              double d) {
+    return JSPropertySpec(name, flags | JSPROP_INTERNAL_USE_BIT,
                           AccessorsOrValue::fromValue(
                               JSPropertySpec::ValueWrapper::doubleValue(d)));
   }
 
   static constexpr JSPropertySpec sentinel() {
-    return JSPropertySpec(nullptr, 0, /* isAccessor = */ true,
+    return JSPropertySpec(nullptr, 0,
                           AccessorsOrValue::fromAccessors(
                               JSPropertySpec::Accessor::noAccessor(),
                               JSPropertySpec::Accessor::noAccessor()));
   }
 
-  unsigned attributes() const { return attributes_; }
-  bool isAccessor() const { return isAccessor_; }
+  // JSPROP_* property attributes as defined in PropertyDescriptor.h
+  unsigned attributes() const { return flags_ & ~JSPROP_INTERNAL_USE_BIT; }
+
+  bool isAccessor() const { return !(flags_ & JSPROP_INTERNAL_USE_BIT); }
 
   JS_PUBLIC_API bool getValue(JSContext* cx,
                               JS::MutableHandle<JS::Value> value) const;
@@ -311,13 +304,13 @@ struct JSPropertySpec {
 
 #ifdef DEBUG
     // Verify that our accessors match our JSPROP_GETTER flag.
-    if (attributes_ & JSPROP_GETTER) {
+    if (flags_ & JSPROP_GETTER) {
       checkAccessorsAreSelfHosted();
     } else {
       checkAccessorsAreNative();
     }
 #endif
-    return (attributes_ & JSPROP_GETTER);
+    return (flags_ & JSPROP_GETTER);
   }
 
   static_assert(sizeof(SelfHostedWrapper) == sizeof(JSNativeWrapper),
@@ -346,48 +339,38 @@ struct JSPropertySpec {
   }
 };
 
-// There can be many JSPropertySpec instances so verify the size is what we
-// expect:
-//
-// - Name (1 word)
-// - attributes_ + isAccessor_ (1 word)
-// - AccessorsOrValue (4 words, native + JSJitInfo for both getter and setter)
-static_assert(sizeof(JSPropertySpec) == 6 * sizeof(uintptr_t));
+#define JS_CHECK_ACCESSOR_FLAGS(flags)                                     \
+  (static_cast<std::enable_if_t<((flags) & ~(JSPROP_ENUMERATE |            \
+                                             JSPROP_PERMANENT)) == 0>>(0), \
+   (flags))
 
-template <unsigned Attributes>
-constexpr uint8_t CheckAccessorAttrs() {
-  static_assert((Attributes & ~(JSPROP_ENUMERATE | JSPROP_PERMANENT)) == 0,
-                "Unexpected flag (not JSPROP_ENUMERATE or JSPROP_PERMANENT)");
-  return uint8_t(Attributes);
-}
-
-#define JS_PSG(name, getter, attributes)                                  \
-  JSPropertySpec::nativeAccessors(name, CheckAccessorAttrs<attributes>(), \
+#define JS_PSG(name, getter, flags)                                     \
+  JSPropertySpec::nativeAccessors(name, JS_CHECK_ACCESSOR_FLAGS(flags), \
                                   getter, nullptr)
-#define JS_PSGS(name, getter, setter, attributes)                         \
-  JSPropertySpec::nativeAccessors(name, CheckAccessorAttrs<attributes>(), \
+#define JS_PSGS(name, getter, setter, flags)                            \
+  JSPropertySpec::nativeAccessors(name, JS_CHECK_ACCESSOR_FLAGS(flags), \
                                   getter, nullptr, setter, nullptr)
-#define JS_SYM_GET(symbol, getter, attributes)                              \
-  JSPropertySpec::nativeAccessors(::JS::SymbolCode::symbol,                 \
-                                  CheckAccessorAttrs<attributes>(), getter, \
+#define JS_SYM_GET(symbol, getter, flags)                                 \
+  JSPropertySpec::nativeAccessors(::JS::SymbolCode::symbol,               \
+                                  JS_CHECK_ACCESSOR_FLAGS(flags), getter, \
                                   nullptr)
-#define JS_SELF_HOSTED_GET(name, getterName, attributes)                      \
-  JSPropertySpec::selfHostedAccessors(name, CheckAccessorAttrs<attributes>(), \
+#define JS_SELF_HOSTED_GET(name, getterName, flags)                         \
+  JSPropertySpec::selfHostedAccessors(name, JS_CHECK_ACCESSOR_FLAGS(flags), \
                                       getterName)
-#define JS_SELF_HOSTED_GETSET(name, getterName, setterName, attributes)       \
-  JSPropertySpec::selfHostedAccessors(name, CheckAccessorAttrs<attributes>(), \
+#define JS_SELF_HOSTED_GETSET(name, getterName, setterName, flags)          \
+  JSPropertySpec::selfHostedAccessors(name, JS_CHECK_ACCESSOR_FLAGS(flags), \
                                       getterName, setterName)
-#define JS_SELF_HOSTED_SYM_GET(symbol, getterName, attributes) \
-  JSPropertySpec::selfHostedAccessors(                         \
-      ::JS::SymbolCode::symbol, CheckAccessorAttrs<attributes>(), getterName)
-#define JS_STRING_PS(name, string, attributes) \
-  JSPropertySpec::stringValue(name, attributes, string)
-#define JS_STRING_SYM_PS(symbol, string, attributes) \
-  JSPropertySpec::stringValue(::JS::SymbolCode::symbol, attributes, string)
-#define JS_INT32_PS(name, value, attributes) \
-  JSPropertySpec::int32Value(name, attributes, value)
-#define JS_DOUBLE_PS(name, value, attributes) \
-  JSPropertySpec::doubleValue(name, attributes, value)
+#define JS_SELF_HOSTED_SYM_GET(symbol, getterName, flags) \
+  JSPropertySpec::selfHostedAccessors(                    \
+      ::JS::SymbolCode::symbol, JS_CHECK_ACCESSOR_FLAGS(flags), getterName)
+#define JS_STRING_PS(name, string, flags) \
+  JSPropertySpec::stringValue(name, flags, string)
+#define JS_STRING_SYM_PS(symbol, string, flags) \
+  JSPropertySpec::stringValue(::JS::SymbolCode::symbol, flags, string)
+#define JS_INT32_PS(name, value, flags) \
+  JSPropertySpec::int32Value(name, flags, value)
+#define JS_DOUBLE_PS(name, value, flags) \
+  JSPropertySpec::doubleValue(name, flags, value)
 #define JS_PS_END JSPropertySpec::sentinel()
 
 /**

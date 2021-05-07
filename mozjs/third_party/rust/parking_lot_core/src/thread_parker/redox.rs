@@ -9,8 +9,7 @@ use core::{
     ptr,
     sync::atomic::{AtomicI32, Ordering},
 };
-use instant::Instant;
-use std::thread;
+use std::{thread, time::Instant};
 use syscall::{
     call::futex,
     data::TimeSpec,

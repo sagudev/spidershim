@@ -23,7 +23,7 @@ tests.set(
       },
 
       defaultGarbagePiles: "100K",
-      defaultGarbagePerFrame: "48K",
+      defaultGarbagePerFrame: "30K",
 
       makeGarbage: n => {
         for (var i = 0; i < n; i++) {

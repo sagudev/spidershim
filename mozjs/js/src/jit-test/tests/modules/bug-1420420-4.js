@@ -1,18 +1,15 @@
 load(libdir + "asserts.js");
+load(libdir + "dummyModuleResolveHook.js");
 
-registerModule("a", parseModule(`throw undefined`));
+moduleRepo["a"] = parseModule(`throw undefined`);
 
-let b = registerModule("b", parseModule(`import "a";`));
-let c = registerModule("c", parseModule(`import "a";`));
+let b = moduleRepo["b"] = parseModule(`import "a";`);
+let c = moduleRepo["c"] = parseModule(`import "a";`);
 
 b.declarationInstantiation();
 c.declarationInstantiation();
 
-(async () => {
-  let count = 0;
-  try { await b.evaluation() } catch (e) { count++; }
-  try { await c.evaluation() } catch (e) { count++; }
-  assertEq(count, 2);
-})();
-
-drainJobQueue();
+let count = 0;
+try { b.evaluation() } catch (e) { count++; }
+try { c.evaluation() } catch (e) { count++; }
+assertEq(count, 2);

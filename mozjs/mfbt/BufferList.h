@@ -7,14 +7,17 @@
 #ifndef mozilla_BufferList_h
 #define mozilla_BufferList_h
 
-#include <algorithm>
-#include <cstdint>
-#include <cstring>
+#include <string.h>
 
-#include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
+#include <algorithm>
+#include <type_traits>
+#include <utility>
+
+#include "mozilla/AllocPolicy.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/ScopeExit.h"
+#include "mozilla/Types.h"
 #include "mozilla/Vector.h"
 
 // BufferList represents a sequence of buffers of data. A BufferList can choose
@@ -273,12 +276,12 @@ class BufferList : private AllocPolicy {
       size_t offset = 0;
 
       MOZ_ASSERT(aTarget.IsIn(aBuffers));
-      MOZ_ASSERT(mSegment <= aTarget.mSegment);
 
       char* data = mData;
-      for (uintptr_t segment = mSegment; segment < aTarget.mSegment;) {
+      for (uintptr_t segment = mSegment; segment < aTarget.mSegment;
+           segment++) {
         offset += aBuffers.mSegments[segment].End() - data;
-        data = aBuffers.mSegments[++segment].mData;
+        data = aBuffers.mSegments[segment].mData;
       }
 
       MOZ_RELEASE_ASSERT(IsIn(aBuffers));
@@ -306,7 +309,7 @@ class BufferList : private AllocPolicy {
 
   // Copies aSize bytes from aData into the BufferList. The storage for these
   // bytes may be split across multiple buffers. Size() is increased by aSize.
-  [[nodiscard]] inline bool WriteBytes(const char* aData, size_t aSize);
+  inline MOZ_MUST_USE bool WriteBytes(const char* aData, size_t aSize);
 
   // Allocates a buffer of at most |aMaxBytes| bytes and, if successful, returns
   // that buffer, and places its size in |aSize|. If unsuccessful, returns null
@@ -398,8 +401,8 @@ class BufferList : private AllocPolicy {
 };
 
 template <typename AllocPolicy>
-[[nodiscard]] bool BufferList<AllocPolicy>::WriteBytes(const char* aData,
-                                                       size_t aSize) {
+MOZ_MUST_USE bool BufferList<AllocPolicy>::WriteBytes(const char* aData,
+                                                      size_t aSize) {
   MOZ_RELEASE_ASSERT(mOwning);
   MOZ_RELEASE_ASSERT(mStandardCapacity);
 

@@ -127,6 +127,7 @@
 #include "mozilla/Alignment.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/DoublyLinkedList.h"
 #include "mozilla/HelperMacros.h"
@@ -183,7 +184,7 @@ using namespace mozilla;
 // Debug builds are opted out too, for test coverage.
 #ifndef MOZ_DEBUG
 #  if !defined(__ia64__) && !defined(__sparc__) && !defined(__mips__) && \
-      !defined(__aarch64__) && !defined(__powerpc__) && !defined(XP_MACOSX)
+      !defined(__aarch64__) && !defined(__powerpc__)
 #    define MALLOC_STATIC_PAGESIZE 1
 #  endif
 #endif
@@ -523,10 +524,6 @@ static size_t opt_dirty_max = DIRTY_MAX_DEFAULT;
 
 // Return the smallest pagesize multiple that is >= s.
 #define PAGE_CEILING(s) (((s) + gPageSizeMask) & ~gPageSizeMask)
-
-// Number of all the small-allocated classes
-#define NUM_SMALL_CLASSES \
-  (kNumTinyClasses + kNumQuantumClasses + gNumSubPageClasses)
 
 // ***************************************************************************
 // MALLOC_DECOMMIT and MALLOC_DOUBLE_PURGE are mutually exclusive.
@@ -868,7 +865,7 @@ struct arena_bin_t {
   //    48   4 KiB     64   4 KiB     80   4 KiB     96   4 KiB
   //   112   4 KiB    128   8 KiB    144   4 KiB    160   8 KiB
   //   176   4 KiB    192   4 KiB    208   8 KiB    224   4 KiB
-  //   240   8 KiB    256  16 KiB    272   8 KiB    288   4 KiB
+  //   240   4 KiB    256  16 KiB    272   4 KiB    288   4 KiB
   //   304  12 KiB    320  12 KiB    336   4 KiB    352   8 KiB
   //   368   4 KiB    384   8 KiB    400  20 KiB    416  16 KiB
   //   432  12 KiB    448   4 KiB    464  16 KiB    480   8 KiB
@@ -918,15 +915,6 @@ struct arena_t {
   // A per-arena opt-in to randomize the offset of small allocations
   bool mRandomizeSmallAllocations;
 
-  // Whether this is a private arena. Multiple public arenas are just a
-  // performance optimization and not a safety feature.
-  //
-  // Since, for example, we don't want thread-local arenas to grow too much, we
-  // use the default arena for bigger allocations. We use this member to allow
-  // realloc() to switch out of our arena if needed (which is not allowed for
-  // private arenas for security).
-  bool mIsPrivate;
-
   // A pseudorandom number generator. Initially null, it gets initialized
   // on first use to avoid recursive malloc initialization (e.g. on OSX
   // arc4random allocates memory).
@@ -971,7 +959,7 @@ struct arena_t {
   //   --------+------+
   arena_bin_t mBins[1];  // Dynamically sized.
 
-  explicit arena_t(arena_params_t* aParams, bool aIsPrivate);
+  explicit arena_t(arena_params_t* aParams);
   ~arena_t();
 
  private:
@@ -983,8 +971,8 @@ struct arena_t {
 
   void DallocRun(arena_run_t* aRun, bool aDirty);
 
-  [[nodiscard]] bool SplitRun(arena_run_t* aRun, size_t aSize, bool aLarge,
-                              bool aZero);
+  MOZ_MUST_USE bool SplitRun(arena_run_t* aRun, size_t aSize, bool aLarge,
+                             bool aZero);
 
   void TrimRunHead(arena_chunk_t* aChunk, arena_run_t* aRun, size_t aOldSize,
                    size_t aNewSize);
@@ -1036,7 +1024,11 @@ struct arena_t {
 
   void* operator new(size_t aCount) = delete;
 
-  void* operator new(size_t aCount, const fallible_t&) noexcept;
+  void* operator new(size_t aCount, const fallible_t&)
+#if !defined(_MSC_VER) || defined(_CPPUNWIND)
+      noexcept
+#endif
+      ;
 
   void operator delete(void*);
 };
@@ -1318,7 +1310,7 @@ static inline void pages_decommit(void* aAddr, size_t aSize) {
 }
 
 // Commit pages. Returns whether pages were committed.
-[[nodiscard]] static inline bool pages_commit(void* aAddr, size_t aSize) {
+MOZ_MUST_USE static inline bool pages_commit(void* aAddr, size_t aSize) {
 #ifdef XP_WIN
   // The region starting at addr may have been allocated in multiple calls
   // to VirtualAlloc and recycled, so committing the entire region in one
@@ -1452,7 +1444,9 @@ arena_t* TypedBaseAlloc<arena_t>::sFirstFree = nullptr;
 template <>
 size_t TypedBaseAlloc<arena_t>::size_of() {
   // Allocate enough space for trailing bins.
-  return sizeof(arena_t) + (sizeof(arena_bin_t) * (NUM_SMALL_CLASSES - 1));
+  return sizeof(arena_t) +
+         (sizeof(arena_bin_t) *
+          (kNumTinyClasses + kNumQuantumClasses + gNumSubPageClasses - 1));
 }
 
 template <typename T>
@@ -1580,7 +1574,7 @@ static void* pages_map(void* aAddr, size_t aSize) {
 #endif
 
 #ifdef XP_DARWIN
-#  define VM_COPY_MIN kChunkSize
+#  define VM_COPY_MIN (gPageSize * 32)
 static inline void pages_copy(void* dest, const void* src, size_t n) {
   MOZ_ASSERT((void*)((uintptr_t)dest & ~gPageSizeMask) == dest);
   MOZ_ASSERT(n >= VM_COPY_MIN);
@@ -3044,6 +3038,31 @@ void* arena_t::Palloc(size_t aAlignment, size_t aSize) {
   return ret;
 }
 
+// Return the size of the allocation pointed to by ptr.
+static size_t arena_salloc(const void* ptr) {
+  size_t ret;
+  arena_chunk_t* chunk;
+  size_t pageind, mapbits;
+
+  MOZ_ASSERT(ptr);
+  MOZ_ASSERT(GetChunkOffsetForPtr(ptr) != 0);
+
+  chunk = GetChunkForPtr(ptr);
+  pageind = (((uintptr_t)ptr - (uintptr_t)chunk) >> gPageSize2Pow);
+  mapbits = chunk->map[pageind].bits;
+  MOZ_DIAGNOSTIC_ASSERT((mapbits & CHUNK_MAP_ALLOCATED) != 0);
+  if ((mapbits & CHUNK_MAP_LARGE) == 0) {
+    arena_run_t* run = (arena_run_t*)(mapbits & ~gPageSizeMask);
+    MOZ_DIAGNOSTIC_ASSERT(run->mMagic == ARENA_RUN_MAGIC);
+    ret = run->mBin->mSizeClass;
+  } else {
+    ret = mapbits & ~gPageSizeMask;
+    MOZ_DIAGNOSTIC_ASSERT(ret != 0);
+  }
+
+  return ret;
+}
+
 class AllocInfo {
  public:
   template <bool Validate = false>
@@ -3062,22 +3081,7 @@ class AllocInfo {
 
     if (chunk != aPtr) {
       MOZ_DIAGNOSTIC_ASSERT(chunk->arena->mMagic == ARENA_MAGIC);
-
-      size_t pageind = (((uintptr_t)aPtr - (uintptr_t)chunk) >> gPageSize2Pow);
-      size_t mapbits = chunk->map[pageind].bits;
-      MOZ_DIAGNOSTIC_ASSERT((mapbits & CHUNK_MAP_ALLOCATED) != 0);
-
-      size_t size;
-      if ((mapbits & CHUNK_MAP_LARGE) == 0) {
-        arena_run_t* run = (arena_run_t*)(mapbits & ~gPageSizeMask);
-        MOZ_DIAGNOSTIC_ASSERT(run->mMagic == ARENA_RUN_MAGIC);
-        size = run->mBin->mSizeClass;
-      } else {
-        size = mapbits & ~gPageSizeMask;
-        MOZ_DIAGNOSTIC_ASSERT(size != 0);
-      }
-
-      return AllocInfo(size, chunk);
+      return AllocInfo(arena_salloc(aPtr), chunk);
     }
 
     extent_node_t key;
@@ -3464,8 +3468,8 @@ void* arena_t::RallocSmallOrLarge(void* aPtr, size_t aSize, size_t aOldSize) {
 
   // If we get here, then aSize and aOldSize are different enough that we
   // need to move the object.  In that case, fall back to allocating new
-  // space and copying. Allow non-private arenas to switch arenas.
-  ret = (mIsPrivate ? this : choose_arena(aSize))->Malloc(aSize, false);
+  // space and copying.
+  ret = Malloc(aSize, false);
   if (!ret) {
     return nullptr;
   }
@@ -3493,7 +3497,11 @@ void* arena_t::Ralloc(void* aPtr, size_t aSize, size_t aOldSize) {
                                    : RallocHuge(aPtr, aSize, aOldSize);
 }
 
-void* arena_t::operator new(size_t aCount, const fallible_t&) noexcept {
+void* arena_t::operator new(size_t aCount, const fallible_t&)
+#if !defined(_MSC_VER) || defined(_CPPUNWIND)
+    noexcept
+#endif
+{
   MOZ_ASSERT(aCount == sizeof(arena_t));
   return TypedBaseAlloc<arena_t>::alloc();
 }
@@ -3502,14 +3510,13 @@ void arena_t::operator delete(void* aPtr) {
   TypedBaseAlloc<arena_t>::dealloc((arena_t*)aPtr);
 }
 
-arena_t::arena_t(arena_params_t* aParams, bool aIsPrivate) {
+arena_t::arena_t(arena_params_t* aParams) {
   unsigned i;
 
   MOZ_RELEASE_ASSERT(mLock.Init());
 
   memset(&mLink, 0, sizeof(mLink));
   memset(&mStats, 0, sizeof(arena_stats_t));
-  mId = 0;
 
   // Initialize chunks.
   mChunksDirty.Init();
@@ -3535,8 +3542,6 @@ arena_t::arena_t(arena_params_t* aParams, bool aIsPrivate) {
   }
   mPRNG = nullptr;
 
-  mIsPrivate = aIsPrivate;
-
   mNumDirty = 0;
   // The default maximum amount of dirty pages allowed on arenas is a fraction
   // of opt_dirty_max.
@@ -3558,7 +3563,8 @@ arena_t::arena_t(arena_params_t* aParams, bool aIsPrivate) {
     }
     sizeClass = sizeClass.Next();
   }
-  MOZ_ASSERT(i == NUM_SMALL_CLASSES - 1);
+  MOZ_ASSERT(i ==
+             kNumTinyClasses + kNumQuantumClasses + gNumSubPageClasses - 1);
 
 #if defined(MOZ_DIAGNOSTIC_ASSERT_ENABLED)
   mMagic = ARENA_MAGIC;
@@ -3575,7 +3581,8 @@ arena_t::~arena_t() {
   if (mSpare) {
     chunk_dealloc(mSpare, kChunkSize, ARENA_CHUNK);
   }
-  for (i = 0; i < NUM_SMALL_CLASSES; i++) {
+  for (i = 0; i < kNumTinyClasses + kNumQuantumClasses + gNumSubPageClasses;
+       i++) {
     MOZ_RELEASE_ASSERT(!mBins[i].mNonFullRuns.First(), "Bin is not empty");
   }
 #ifdef MOZ_DEBUG
@@ -3592,7 +3599,8 @@ arena_t::~arena_t() {
 
 arena_t* ArenaCollection::CreateArena(bool aIsPrivate,
                                       arena_params_t* aParams) {
-  arena_t* ret = new (fallible) arena_t(aParams, aIsPrivate);
+  fallible_t fallible;
+  arena_t* ret = new (fallible) arena_t(aParams);
   if (!ret) {
     // Only reached if there is an OOM error.
 
@@ -3780,9 +3788,9 @@ void* arena_t::RallocHuge(void* aPtr, size_t aSize, size_t aOldSize) {
   }
 
   // If we get here, then aSize and aOldSize are different enough that we
-  // need to use a different size class.  In that case, fall back to allocating
-  // new space and copying. Allow non-private arenas to switch arenas.
-  ret = (mIsPrivate ? this : choose_arena(aSize))->MallocHuge(aSize, false);
+  // need to use a different size class.  In that case, fall back to
+  // allocating new space and copying.
+  ret = MallocHuge(aSize, false);
   if (!ret) {
     return nullptr;
   }
@@ -3876,8 +3884,6 @@ static bool malloc_init_hard() {
   gPageSize = (size_t)result;
   DefineGlobals();
 #endif
-
-  MOZ_RELEASE_ASSERT(JEMALLOC_MAX_STATS_BINS >= NUM_SMALL_CLASSES);
 
   // Get runtime configuration.
   if ((opts = getenv("MALLOC_OPTIONS"))) {
@@ -4112,6 +4118,10 @@ inline void* BaseAllocator::realloc(void* aPtr, size_t aSize) {
     auto arena = info.Arena();
     MOZ_RELEASE_ASSERT(!mArena || arena == mArena);
     ret = arena->Ralloc(aPtr, aSize, info.Size());
+
+    if (!ret) {
+      errno = ENOMEM;
+    }
   } else {
     if (!malloc_init()) {
       ret = nullptr;
@@ -4119,11 +4129,12 @@ inline void* BaseAllocator::realloc(void* aPtr, size_t aSize) {
       arena_t* arena = mArena ? mArena : choose_arena(aSize);
       ret = arena->Malloc(aSize, /* zero = */ false);
     }
+
+    if (!ret) {
+      errno = ENOMEM;
+    }
   }
 
-  if (!ret) {
-    errno = ENOMEM;
-  }
   return ret;
 }
 
@@ -4217,8 +4228,7 @@ inline size_t MozJemalloc::malloc_usable_size(usable_ptr_t aPtr) {
 }
 
 template <>
-inline void MozJemalloc::jemalloc_stats_internal(
-    jemalloc_stats_t* aStats, jemalloc_bin_stats_t* aBinStats) {
+inline void MozJemalloc::jemalloc_stats(jemalloc_stats_t* aStats) {
   size_t non_arena_mapped, chunk_header_size;
 
   if (!aStats) {
@@ -4228,18 +4238,12 @@ inline void MozJemalloc::jemalloc_stats_internal(
     memset(aStats, 0, sizeof(*aStats));
     return;
   }
-  if (aBinStats) {
-    // An assertion in malloc_init_hard will guarantee that
-    // JEMALLOC_MAX_STATS_BINS >= NUM_SMALL_CLASSES.
-    memset(aBinStats, 0,
-           sizeof(jemalloc_bin_stats_t) * JEMALLOC_MAX_STATS_BINS);
-  }
 
   // Gather runtime settings.
   aStats->opt_junk = opt_junk;
   aStats->opt_zero = opt_zero;
   aStats->quantum = kQuantum;
-  aStats->quantum_max = kMaxQuantumClass;
+  aStats->small_max = kMaxQuantumClass;
   aStats->large_max = gMaxLargeClass;
   aStats->chunksize = kChunkSize;
   aStats->page_size = gPageSize;
@@ -4277,6 +4281,7 @@ inline void MozJemalloc::jemalloc_stats_internal(
   for (auto arena : gArenas.iter()) {
     size_t arena_mapped, arena_allocated, arena_committed, arena_dirty, j,
         arena_unused, arena_headers;
+    arena_run_t* run;
 
     arena_headers = 0;
     arena_unused = 0;
@@ -4294,33 +4299,22 @@ inline void MozJemalloc::jemalloc_stats_internal(
 
       arena_dirty = arena->mNumDirty << gPageSize2Pow;
 
-      for (j = 0; j < NUM_SMALL_CLASSES; j++) {
+      for (j = 0; j < kNumTinyClasses + kNumQuantumClasses + gNumSubPageClasses;
+           j++) {
         arena_bin_t* bin = &arena->mBins[j];
         size_t bin_unused = 0;
-        size_t num_non_full_runs = 0;
 
         for (auto mapelm : bin->mNonFullRuns.iter()) {
-          arena_run_t* run = (arena_run_t*)(mapelm->bits & ~gPageSizeMask);
+          run = (arena_run_t*)(mapelm->bits & ~gPageSizeMask);
           bin_unused += run->mNumFree * bin->mSizeClass;
-          num_non_full_runs++;
         }
 
         if (bin->mCurrentRun) {
           bin_unused += bin->mCurrentRun->mNumFree * bin->mSizeClass;
-          num_non_full_runs++;
         }
 
         arena_unused += bin_unused;
         arena_headers += bin->mNumRuns * bin->mRunFirstRegionOffset;
-        if (aBinStats) {
-          aBinStats[j].size = bin->mSizeClass;
-          aBinStats[j].num_non_full_runs += num_non_full_runs;
-          aBinStats[j].num_runs += bin->mNumRuns;
-          aBinStats[j].bytes_unused += bin_unused;
-          aBinStats[j].bytes_total +=
-              bin->mNumRuns * (bin->mRunSize - bin->mRunFirstRegionOffset);
-          aBinStats[j].bytes_per_run = bin->mRunSize;
-        }
       }
     }
 
@@ -4857,7 +4851,7 @@ MOZ_EXPORT void* (*__memalign_hook)(size_t, size_t) = memalign_impl;
 #endif
 
 #ifdef XP_WIN
-MOZ_EXPORT void* _recalloc(void* aPtr, size_t aCount, size_t aSize) {
+void* _recalloc(void* aPtr, size_t aCount, size_t aSize) {
   size_t oldsize = aPtr ? AllocInfo::Get(aPtr).Size() : 0;
   CheckedInt<size_t> checkedSize = CheckedInt<size_t>(aCount) * aSize;
 
@@ -4882,7 +4876,7 @@ MOZ_EXPORT void* _recalloc(void* aPtr, size_t aCount, size_t aSize) {
 
 // This impl of _expand doesn't ever actually expand or shrink blocks: it
 // simply replies that you may continue using a shrunk block.
-MOZ_EXPORT void* _expand(void* aPtr, size_t newsize) {
+void* _expand(void* aPtr, size_t newsize) {
   if (AllocInfo::Get(aPtr).Size() >= newsize) {
     return aPtr;
   }
@@ -4890,7 +4884,5 @@ MOZ_EXPORT void* _expand(void* aPtr, size_t newsize) {
   return nullptr;
 }
 
-MOZ_EXPORT size_t _msize(void* aPtr) {
-  return DefaultMalloc::malloc_usable_size(aPtr);
-}
+size_t _msize(void* aPtr) { return DefaultMalloc::malloc_usable_size(aPtr); }
 #endif

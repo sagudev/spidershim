@@ -22,7 +22,6 @@
 //! }
 //! ```
 use std::fs::File;
-use std::marker::PhantomData;
 use std::os::raw::c_int;
 use std::path::Path;
 use std::str;
@@ -96,9 +95,9 @@ impl CSVTab {
     }
 }
 
-unsafe impl<'vtab> VTab<'vtab> for CSVTab {
+unsafe impl VTab for CSVTab {
     type Aux = ();
-    type Cursor = CSVTabCursor<'vtab>;
+    type Cursor = CSVTabCursor;
 
     fn connect(
         _: &mut VTabConnection,
@@ -259,16 +258,16 @@ unsafe impl<'vtab> VTab<'vtab> for CSVTab {
         Ok(())
     }
 
-    fn open(&self) -> Result<CSVTabCursor<'_>> {
+    fn open(&self) -> Result<CSVTabCursor> {
         Ok(CSVTabCursor::new(self.reader()?))
     }
 }
 
-impl CreateVTab<'_> for CSVTab {}
+impl CreateVTab for CSVTab {}
 
 /// A cursor for the CSV virtual table
 #[repr(C)]
-struct CSVTabCursor<'vtab> {
+struct CSVTabCursor {
     /// Base class. Must be first
     base: ffi::sqlite3_vtab_cursor,
     /// The CSV reader object
@@ -278,18 +277,16 @@ struct CSVTabCursor<'vtab> {
     /// Values of the current row
     cols: csv::StringRecord,
     eof: bool,
-    phantom: PhantomData<&'vtab CSVTab>,
 }
 
-impl CSVTabCursor<'_> {
-    fn new<'vtab>(reader: csv::Reader<File>) -> CSVTabCursor<'vtab> {
+impl CSVTabCursor {
+    fn new(reader: csv::Reader<File>) -> CSVTabCursor {
         CSVTabCursor {
             base: ffi::sqlite3_vtab_cursor::default(),
             reader,
             row_number: 0,
             cols: csv::StringRecord::new(),
             eof: false,
-            phantom: PhantomData,
         }
     }
 
@@ -299,7 +296,7 @@ impl CSVTabCursor<'_> {
     }
 }
 
-unsafe impl VTabCursor for CSVTabCursor<'_> {
+unsafe impl VTabCursor for CSVTabCursor {
     // Only a full table scan is supported.  So `filter` simply rewinds to
     // the beginning.
     fn filter(

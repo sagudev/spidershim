@@ -1,31 +1,51 @@
-#[test]
-fn test_into_async_read() {
-    use core::pin::Pin;
-    use futures::io::AsyncRead;
-    use futures::stream::{self, TryStreamExt};
-    use futures::task::Poll;
-    use futures_test::{task::noop_context, stream::StreamTestExt};
+use core::pin::Pin;
+use futures::io::{AsyncRead, AsyncBufRead};
+use futures::stream::{self, TryStreamExt};
+use futures::task::Poll;
+use futures_test::{task::noop_context, stream::StreamTestExt};
 
-    macro_rules! assert_read {
-        ($reader:expr, $buf:expr, $item:expr) => {
-            let mut cx = noop_context();
-            loop {
-                match Pin::new(&mut $reader).poll_read(&mut cx, $buf) {
-                    Poll::Ready(Ok(x)) => {
-                        assert_eq!(x, $item);
-                        break;
-                    }
-                    Poll::Ready(Err(err)) => {
-                        panic!("assertion failed: expected value but got {}", err);
-                    }
-                    Poll::Pending => {
-                        continue;
-                    }
+macro_rules! assert_read {
+    ($reader:expr, $buf:expr, $item:expr) => {
+        let mut cx = noop_context();
+        loop {
+            match Pin::new(&mut $reader).poll_read(&mut cx, $buf) {
+                Poll::Ready(Ok(x)) => {
+                    assert_eq!(x, $item);
+                    break;
+                }
+                Poll::Ready(Err(err)) => {
+                    panic!("assertion failed: expected value but got {}", err);
+                }
+                Poll::Pending => {
+                    continue;
                 }
             }
-        };
-    }
+        }
+    };
+}
 
+macro_rules! assert_fill_buf {
+    ($reader:expr, $buf:expr) => {
+        let mut cx = noop_context();
+        loop {
+            match Pin::new(&mut $reader).poll_fill_buf(&mut cx) {
+                Poll::Ready(Ok(x)) => {
+                    assert_eq!(x, $buf);
+                    break;
+                }
+                Poll::Ready(Err(err)) => {
+                    panic!("assertion failed: expected value but got {}", err);
+                }
+                Poll::Pending => {
+                    continue;
+                }
+            }
+        }
+    };
+}
+
+#[test]
+fn test_into_async_read() {
     let stream = stream::iter((1..=3).flat_map(|_| vec![Ok(vec![]), Ok(vec![1, 2, 3, 4, 5])]));
     let mut reader = stream.interleave_pending().into_async_read();
     let mut buf = vec![0; 3];
@@ -52,33 +72,7 @@ fn test_into_async_read() {
 }
 
 #[test]
-fn test_into_async_bufread() {
-    use core::pin::Pin;
-    use futures::io::AsyncBufRead;
-    use futures::stream::{self, TryStreamExt};
-    use futures::task::Poll;
-    use futures_test::{task::noop_context, stream::StreamTestExt};
-
-    macro_rules! assert_fill_buf {
-        ($reader:expr, $buf:expr) => {
-            let mut cx = noop_context();
-            loop {
-                match Pin::new(&mut $reader).poll_fill_buf(&mut cx) {
-                    Poll::Ready(Ok(x)) => {
-                        assert_eq!(x, $buf);
-                        break;
-                    }
-                    Poll::Ready(Err(err)) => {
-                        panic!("assertion failed: expected value but got {}", err);
-                    }
-                    Poll::Pending => {
-                        continue;
-                    }
-                }
-            }
-        };
-    }
-
+fn test_into_async_bufread() -> std::io::Result<()> {
     let stream = stream::iter((1..=2).flat_map(|_| vec![Ok(vec![]), Ok(vec![1, 2, 3, 4, 5])]));
     let mut reader = stream.interleave_pending().into_async_read();
 
@@ -97,4 +91,6 @@ fn test_into_async_bufread() {
     reader.as_mut().consume(3);
 
     assert_fill_buf!(reader, &[][..]);
+
+    Ok(())
 }

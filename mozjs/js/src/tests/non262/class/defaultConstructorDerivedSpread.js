@@ -3,11 +3,7 @@
  * Test credit André Bargull
  */
 
-// <https://github.com/tc39/ecma262/pull/2216> changed default derived class
-// constructors to no longer execute the spread iteration protocol.
-Array.prototype[Symbol.iterator] = function*() {
-    throw new Error("unexpected call");
-};
+Array.prototype[Symbol.iterator] = function*() { yield 1; yield 2; };
 
 class Base {
     constructor(a, b) {
@@ -17,7 +13,7 @@ class Base {
 };
 class Derived extends Base {};
 
-new Derived(1, 2);
+new Derived();
 
 if (typeof reportCompare === 'function')
     reportCompare(0,0,"OK");

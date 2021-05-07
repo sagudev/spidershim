@@ -104,9 +104,11 @@ impl TryFrom<PRTime> for Time {
         let base = get_base();
         if let Some(delta) = prtime.checked_sub(base.prtime) {
             let d = Duration::from_micros(delta.try_into()?);
-            base.instant
-                .checked_add(d)
-                .map_or(Err(Error::TimeTravelError), |t| Ok(Self { t }))
+            if let Some(t) = base.instant.checked_add(d) {
+                Ok(Self { t })
+            } else {
+                Err(Error::TimeTravelError)
+            }
         } else {
             Err(Error::TimeTravelError)
         }
@@ -120,7 +122,11 @@ impl TryInto<PRTime> for Time {
         // TODO(mt) use checked_duration_since when that is available.
         let delta = self.t.duration_since(base.instant);
         if let Ok(d) = PRTime::try_from(delta.as_micros()) {
-            d.checked_add(base.prtime).ok_or(Error::TimeTravelError)
+            if let Some(v) = d.checked_add(base.prtime) {
+                Ok(v)
+            } else {
+                Err(Error::TimeTravelError)
+            }
         } else {
             Err(Error::TimeTravelError)
         }
@@ -198,10 +204,7 @@ impl Default for TimeHolder {
 
 #[cfg(test)]
 mod test {
-    use super::{get_base, init, Interval, PRTime, Time};
-    use crate::err::Res;
-    use std::convert::{TryFrom, TryInto};
-    use std::time::{Duration, Instant};
+    use super::*;
 
     #[test]
     fn convert_stable() {
@@ -238,9 +241,10 @@ mod test {
     // We allow replace_consts here because
     // std::u64::max_value() isn't available
     // in all of our targets
+    #[allow(clippy::replace_consts)]
     fn overflow_interval() {
         init();
-        let interval = Interval::from(Duration::from_micros(u64::max_value()));
+        let interval = Interval::from(Duration::from_micros(std::u64::MAX));
         let res: Res<PRTime> = interval.try_into();
         assert!(res.is_err());
     }

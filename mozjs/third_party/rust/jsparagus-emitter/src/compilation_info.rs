@@ -2,22 +2,15 @@ use ast::associated_data::AssociatedData;
 use ast::source_atom_set::SourceAtomSet;
 use ast::source_slice_list::SourceSliceList;
 use ast::types::Function;
-use scope::data::FunctionDeclarationPropertyMap;
-use std::collections::HashMap;
-use stencil::regexp::RegExpList;
+use stencil::function::FunctionStencilList;
 use stencil::scope::ScopeDataMap;
-use stencil::script::{ImmutableScriptDataList, ScriptStencilIndex, ScriptStencilList};
 
 pub struct CompilationInfo<'alloc> {
     pub atoms: SourceAtomSet<'alloc>,
     pub slices: SourceSliceList<'alloc>,
-    pub regexps: RegExpList,
     pub scope_data_map: ScopeDataMap,
-    pub function_declarations: HashMap<ScriptStencilIndex, &'alloc Function<'alloc>>,
-    pub function_stencil_indices: AssociatedData<ScriptStencilIndex>,
-    pub function_declaration_properties: FunctionDeclarationPropertyMap,
-    pub scripts: ScriptStencilList,
-    pub script_data_list: ImmutableScriptDataList,
+    pub function_map: AssociatedData<&'alloc Function<'alloc>>,
+    pub functions: FunctionStencilList,
 }
 
 impl<'alloc> CompilationInfo<'alloc> {
@@ -25,21 +18,17 @@ impl<'alloc> CompilationInfo<'alloc> {
         atoms: SourceAtomSet<'alloc>,
         slices: SourceSliceList<'alloc>,
         scope_data_map: ScopeDataMap,
-        function_declarations: HashMap<ScriptStencilIndex, &'alloc Function<'alloc>>,
-        function_stencil_indices: AssociatedData<ScriptStencilIndex>,
-        function_declaration_properties: FunctionDeclarationPropertyMap,
-        scripts: ScriptStencilList,
+        function_map: AssociatedData<&'alloc Function<'alloc>>,
     ) -> Self {
         Self {
             atoms,
             slices,
-            regexps: RegExpList::new(),
             scope_data_map,
-            function_declarations,
-            function_stencil_indices,
-            function_declaration_properties,
-            scripts,
-            script_data_list: ImmutableScriptDataList::new(),
+            function_map,
+            // FIXME: This should be created by scope pass, that is the
+            //        list of all functions, with position information and
+            //        inner functions/closed over bindings populated.
+            functions: FunctionStencilList::new(),
         }
     }
 }

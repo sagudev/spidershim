@@ -6,13 +6,9 @@
 
 #include "vm/Instrumentation.h"
 
-#include <iterator>
-
 #include "jsapi.h"
 
 #include "debugger/DebugAPI.h"
-#include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
-#include "js/Object.h"            // JS::GetReservedSlot
 #include "proxy/DeadObjectProxy.h"
 
 #include "vm/JSObject-inl.h"
@@ -34,7 +30,7 @@ enum InstrumentationHolderSlots {
 };
 
 static RealmInstrumentation* GetInstrumentation(JSObject* obj) {
-  Value v = JS::GetReservedSlot(obj, RealmInstrumentationSlot);
+  Value v = JS_GetReservedSlot(obj, RealmInstrumentationSlot);
   return static_cast<RealmInstrumentation*>(v.isUndefined() ? nullptr
                                                             : v.toPrivate());
 }
@@ -80,7 +76,7 @@ static const char* instrumentationNames[] = {
 
 static bool StringToInstrumentationKind(JSContext* cx, HandleString str,
                                         InstrumentationKind* result) {
-  for (size_t i = 0; i < std::size(instrumentationNames); i++) {
+  for (size_t i = 0; i < mozilla::ArrayLength(instrumentationNames); i++) {
     bool match;
     if (!JS_StringEqualsAscii(cx, str, instrumentationNames[i], &match)) {
       return false;
@@ -96,14 +92,15 @@ static bool StringToInstrumentationKind(JSContext* cx, HandleString str,
 }
 
 /* static */
-frontend::TaggedParserAtomIndex
-RealmInstrumentation::getInstrumentationKindName(
-    JSContext* cx, frontend::ParserAtomsTable& parserAtoms,
-    InstrumentationKind kind) {
-  for (size_t i = 0; i < std::size(instrumentationNames); i++) {
+JSAtom* RealmInstrumentation::getInstrumentationKindName(
+    JSContext* cx, InstrumentationKind kind) {
+  for (size_t i = 0; i < mozilla::ArrayLength(instrumentationNames); i++) {
     if (kind == (InstrumentationKind)(1 << i)) {
-      return parserAtoms.internAscii(cx, instrumentationNames[i],
-                                     strlen(instrumentationNames[i]));
+      JSString* str = JS_AtomizeString(cx, instrumentationNames[i]);
+      if (!str) {
+        return nullptr;
+      }
+      return &str->asAtom();
     }
   }
   MOZ_CRASH("Unexpected instrumentation kind");

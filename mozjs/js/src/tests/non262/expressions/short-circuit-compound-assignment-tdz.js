@@ -1,3 +1,5 @@
+// |reftest| skip-if(release_or_beta)
+
 // Test TDZ for short-circutir compound assignments.
 
 // TDZ for lexical |let| bindings.

@@ -19,42 +19,12 @@
 #include "js/AllocPolicy.h"
 #include "js/MemoryMetrics.h"
 #include "js/UniquePtr.h"
-#include "threading/Mutex.h"
 
 namespace js {
-
-#ifdef DEBUG
-extern bool CurrentThreadIsGCMarking();
-#endif
-
 namespace gc {
-
-// Map from all trace kinds to the base GC type.
-template <JS::TraceKind kind>
-struct MapTraceKindToType {};
-
-#define DEFINE_TRACE_KIND_MAP(name, type, _, _1)   \
-  template <>                                      \
-  struct MapTraceKindToType<JS::TraceKind::name> { \
-    using Type = type;                             \
-  };
-JS_FOR_EACH_TRACEKIND(DEFINE_TRACE_KIND_MAP);
-#undef DEFINE_TRACE_KIND_MAP
-
-// Map from a possibly-derived type to the base GC type.
-template <typename T>
-struct BaseGCType {
-  using type =
-      typename MapTraceKindToType<JS::MapTypeToTraceKind<T>::kind>::Type;
-  static_assert(std::is_base_of_v<type, T>, "Failed to find base type");
-};
 
 class Arena;
 class ArenaCellSet;
-
-#ifdef DEBUG
-extern bool CurrentThreadHasLockedGC();
-#endif
 
 /*
  * BufferableRef represents an abstract reference for use in the generational
@@ -170,17 +140,13 @@ class StoreBuffer {
 
   struct WholeCellBuffer {
     UniquePtr<LifoAlloc> storage_;
-    ArenaCellSet* stringHead_;
-    ArenaCellSet* nonStringHead_;
+    ArenaCellSet* head_;
     StoreBuffer* owner_;
 
     explicit WholeCellBuffer(StoreBuffer* owner)
-        : storage_(nullptr),
-          stringHead_(nullptr),
-          nonStringHead_(nullptr),
-          owner_(owner) {}
+        : storage_(nullptr), head_(nullptr), owner_(owner) {}
 
-    [[nodiscard]] bool init();
+    MOZ_MUST_USE bool init();
 
     void clear();
 
@@ -198,9 +164,8 @@ class StoreBuffer {
     }
 
     bool isEmpty() const {
-      MOZ_ASSERT_IF(!stringHead_ && !nonStringHead_,
-                    !storage_ || storage_->isEmpty());
-      return !stringHead_ && !nonStringHead_;
+      MOZ_ASSERT_IF(!head_, !storage_ || storage_->isEmpty());
+      return !head_;
     }
 
    private:
@@ -217,7 +182,7 @@ class StoreBuffer {
     explicit GenericBuffer(StoreBuffer* owner)
         : storage_(nullptr), owner_(owner) {}
 
-    [[nodiscard]] bool init();
+    MOZ_MUST_USE bool init();
 
     void clear() {
       if (storage_) {
@@ -413,23 +378,10 @@ class StoreBuffer {
     } Hasher;
   };
 
-  // The GC runs tasks that may access the storebuffer in parallel and so must
-  // take a lock. The mutator may only access the storebuffer from the main
-  // thread.
-  inline void CheckAccess() const {
-#ifdef DEBUG
-    if (JS::RuntimeHeapIsBusy()) {
-      MOZ_ASSERT(!CurrentThreadIsGCMarking());
-      lock_.assertOwnedByCurrentThread();
-    } else {
-      MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime_));
-    }
-#endif
-  }
-
   template <typename Buffer, typename Edge>
   void unput(Buffer& buffer, const Edge& edge) {
-    CheckAccess();
+    MOZ_ASSERT(!JS::RuntimeHeapIsBusy());
+    MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime_));
     if (!isEnabled()) {
       return;
     }
@@ -439,7 +391,8 @@ class StoreBuffer {
 
   template <typename Buffer, typename Edge>
   void put(Buffer& buffer, const Edge& edge) {
-    CheckAccess();
+    MOZ_ASSERT(!JS::RuntimeHeapIsBusy());
+    MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime_));
     if (!isEnabled()) {
       return;
     }
@@ -449,8 +402,6 @@ class StoreBuffer {
     }
   }
 
-  Mutex lock_;
-
   MonoTypeBuffer<ValueEdge> bufferVal;
   MonoTypeBuffer<StringPtrEdge> bufStrCell;
   MonoTypeBuffer<BigIntPtrEdge> bufBigIntCell;
@@ -458,29 +409,24 @@ class StoreBuffer {
   MonoTypeBuffer<SlotsEdge> bufferSlot;
   WholeCellBuffer bufferWholeCell;
   GenericBuffer bufferGeneric;
+  bool cancelIonCompilations_;
 
   JSRuntime* runtime_;
   const Nursery& nursery_;
 
   bool aboutToOverflow_;
   bool enabled_;
-  bool mayHavePointersToDeadCells_;
 #ifdef DEBUG
   bool mEntered; /* For ReentrancyGuard. */
 #endif
 
  public:
-#ifdef DEBUG
-  bool markingNondeduplicatable;
-#endif
-
   explicit StoreBuffer(JSRuntime* rt, const Nursery& nursery);
-  [[nodiscard]] bool enable();
+  MOZ_MUST_USE bool enable();
 
   void disable();
   bool isEnabled() const { return enabled_; }
 
-  bool isEmpty() const;
   void clear();
 
   const Nursery& nursery() const { return nursery_; }
@@ -488,13 +434,7 @@ class StoreBuffer {
   /* Get the overflowed status. */
   bool isAboutToOverflow() const { return aboutToOverflow_; }
 
-  /*
-   * Brain transplants may add whole cell buffer entires for dead cells. We must
-   * evict the nursery prior to sweeping arenas if any such entries are present.
-   */
-  bool mayHavePointersToDeadCells() const {
-    return mayHavePointersToDeadCells_;
-  }
+  bool cancelIonCompilations() const { return cancelIonCompilations_; }
 
   /* Insert a single edge into the buffer/remembered set. */
   void putValue(JS::Value* vp) { put(bufferVal, ValueEdge(vp)); }
@@ -526,7 +466,7 @@ class StoreBuffer {
     put(bufferGeneric, t);
   }
 
-  void setMayHavePointersToDeadCells() { mayHavePointersToDeadCells_ = true; }
+  void setShouldCancelIonCompilations() { cancelIonCompilations_ = true; }
 
   /* Methods to trace the source of all edges in the store buffer. */
   void traceValues(TenuringTracer& mover) { bufferVal.trace(mover); }
@@ -546,10 +486,6 @@ class StoreBuffer {
                               JS::GCSizes* sizes);
 
   void checkEmpty() const;
-
-  // For use by the GC only.
-  void lock() { lock_.lock(); }
-  void unlock() { lock_.unlock(); }
 };
 
 // A set of cells in an arena used to implement the whole cell store buffer.
@@ -607,8 +543,6 @@ class ArenaCellSet {
 
   WordT getWord(size_t wordIndex) const { return bits.getWord(wordIndex); }
 
-  void trace(TenuringTracer& mover);
-
   // Sentinel object used for all empty sets.
   //
   // We use a sentinel because it simplifies the JIT code slightly as we can
@@ -626,52 +560,6 @@ class ArenaCellSet {
   static size_t offsetOfArena() { return offsetof(ArenaCellSet, arena); }
   static size_t offsetOfBits() { return offsetof(ArenaCellSet, bits); }
 };
-
-// Post-write barrier implementation for GC cells.
-
-// Implement the post-write barrier for nursery allocateable cell type |T|. Call
-// this from |T::postWriteBarrier|.
-template <typename T>
-MOZ_ALWAYS_INLINE void PostWriteBarrierImpl(void* cellp, T* prev, T* next) {
-  MOZ_ASSERT(cellp);
-
-  // If the target needs an entry, add it.
-  StoreBuffer* buffer;
-  if (next && (buffer = next->storeBuffer())) {
-    // If we know that the prev has already inserted an entry, we can skip
-    // doing the lookup to add the new entry. Note that we cannot safely
-    // assert the presence of the entry because it may have been added
-    // via a different store buffer.
-    if (prev && prev->storeBuffer()) {
-      return;
-    }
-    buffer->putCell(static_cast<T**>(cellp));
-    return;
-  }
-
-  // Remove the prev entry if the new value does not need it. There will only
-  // be a prev entry if the prev value was in the nursery.
-  if (prev && (buffer = prev->storeBuffer())) {
-    buffer->unputCell(static_cast<T**>(cellp));
-  }
-}
-
-template <typename T>
-MOZ_ALWAYS_INLINE void PostWriteBarrier(T** vp, T* prev, T* next) {
-  static_assert(std::is_base_of_v<Cell, T>);
-  static_assert(!std::is_same_v<Cell, T> && !std::is_same_v<TenuredCell, T>);
-
-  if constexpr (!std::is_base_of_v<TenuredCell, T>) {
-    using BaseT = typename BaseGCType<T>::type;
-    PostWriteBarrierImpl<BaseT>(vp, prev, next);
-    return;
-  }
-
-  MOZ_ASSERT(!IsInsideNursery(next));
-}
-
-// Used when we don't have a specific edge to put in the store buffer.
-void PostWriteBarrierCell(Cell* cell, Cell* prev, Cell* next);
 
 } /* namespace gc */
 } /* namespace js */

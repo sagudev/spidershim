@@ -3,10 +3,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 #include "jit/WasmBCE.h"
-
-#include "jit/JitSpewer.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 #include "wasm/WasmTypes.h"
@@ -31,7 +28,6 @@ typedef js::HashMap<uint32_t, MDefinition*, DefaultHasher<uint32_t>,
 //
 // TODO (dbounov): Generalize to constant additions relative to one base
 bool jit::EliminateBoundsChecks(MIRGenerator* mir, MIRGraph& graph) {
-  JitSpew(JitSpew_WasmBCE, "Begin");
   // Map for dominating block where a given definition was checked
   LastSeenMap lastSeen;
 
@@ -54,7 +50,7 @@ bool jit::EliminateBoundsChecks(MIRGenerator* mir, MIRGraph& graph) {
 
           if (addr->isConstant() &&
               addr->toConstant()->type() == MIRType::Int32 &&
-              uint64_t(addr->toConstant()->toInt32()) <
+              uint32_t(addr->toConstant()->toInt32()) <
                   mir->minWasmHeapLength()) {
             bc->setRedundant();
             if (JitOptions.spectreIndexMasking) {

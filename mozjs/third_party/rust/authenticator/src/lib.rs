@@ -5,7 +5,7 @@
 #[macro_use]
 mod util;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub mod hidproto;
 
 #[cfg(any(target_os = "linux"))]
@@ -20,10 +20,6 @@ extern crate devd_rs;
 
 #[cfg(any(target_os = "freebsd"))]
 #[path = "freebsd/mod.rs"]
-pub mod platform;
-
-#[cfg(any(target_os = "netbsd"))]
-#[path = "netbsd/mod.rs"]
 pub mod platform;
 
 #[cfg(any(target_os = "openbsd"))]
@@ -45,13 +41,13 @@ pub mod platform;
     target_os = "linux",
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "netbsd",
     target_os = "macos",
     target_os = "windows"
 )))]
 #[path = "stub/mod.rs"]
 pub mod platform;
 
+extern crate boxfnonce;
 extern crate libc;
 #[macro_use]
 extern crate log;
@@ -61,21 +57,16 @@ extern crate runloop;
 #[macro_use]
 extern crate bitflags;
 
-pub mod authenticatorservice;
 mod consts;
 mod statemachine;
 mod u2fprotocol;
 mod u2ftypes;
 
 mod manager;
-pub use crate::manager::U2FManager;
+pub use manager::U2FManager;
 
 mod capi;
-pub use crate::capi::*;
-
-pub mod errors;
-pub mod statecallback;
-mod virtualdevices;
+pub use capi::*;
 
 // Keep this in sync with the constants in u2fhid-capi.h.
 bitflags! {
@@ -105,21 +96,17 @@ pub struct KeyHandle {
 }
 
 pub type AppId = Vec<u8>;
-pub type RegisterResult = (Vec<u8>, u2ftypes::U2FDeviceInfo);
-pub type SignResult = (AppId, Vec<u8>, Vec<u8>, u2ftypes::U2FDeviceInfo);
+pub type RegisterResult = Vec<u8>;
+pub type SignResult = (AppId, Vec<u8>, Vec<u8>);
 
-pub type Result<T> = std::result::Result<T, errors::AuthenticatorError>;
-
-#[derive(Debug, Clone)]
-pub enum StatusUpdate {
-    DeviceAvailable { dev_info: u2ftypes::U2FDeviceInfo },
-    DeviceUnavailable { dev_info: u2ftypes::U2FDeviceInfo },
-    Success { dev_info: u2ftypes::U2FDeviceInfo },
+#[derive(Debug, Clone, Copy)]
+pub enum Error {
+    Unknown = 1,
+    NotSupported = 2,
+    InvalidState = 3,
+    ConstraintError = 4,
+    NotAllowed = 5,
 }
-
-#[cfg(test)]
-#[macro_use]
-extern crate assert_matches;
 
 #[cfg(fuzzing)]
 pub use consts::*;

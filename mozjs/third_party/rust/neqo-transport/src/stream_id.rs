@@ -8,17 +8,10 @@
 
 use std::ops::AddAssign;
 
-use neqo_common::Role;
+use crate::connection::{Role, LOCAL_STREAM_LIMIT_BIDI, LOCAL_STREAM_LIMIT_UNI};
+use crate::frame::StreamType;
 
-#[derive(PartialEq, Debug, Copy, Clone, PartialOrd, Eq, Ord, Hash)]
-
-/// The type of stream, either Bi-Directional or Uni-Directional.
-pub enum StreamType {
-    BiDi,
-    UniDi,
-}
-
-pub(crate) struct StreamIndexes {
+pub struct StreamIndexes {
     pub local_max_stream_uni: StreamIndex,
     pub local_max_stream_bidi: StreamIndex,
     pub local_next_stream_uni: StreamIndex,
@@ -30,10 +23,10 @@ pub(crate) struct StreamIndexes {
 }
 
 impl StreamIndexes {
-    pub fn new(local_max_stream_bidi: StreamIndex, local_max_stream_uni: StreamIndex) -> Self {
+    pub fn new() -> Self {
         Self {
-            local_max_stream_bidi,
-            local_max_stream_uni,
+            local_max_stream_bidi: StreamIndex::new(LOCAL_STREAM_LIMIT_BIDI),
+            local_max_stream_uni: StreamIndex::new(LOCAL_STREAM_LIMIT_UNI),
             local_next_stream_uni: StreamIndex::new(0),
             local_next_stream_bidi: StreamIndex::new(0),
             remote_max_stream_bidi: StreamIndex::new(0),
@@ -48,16 +41,8 @@ impl StreamIndexes {
 pub struct StreamId(u64);
 
 impl StreamId {
-    pub const fn new(id: u64) -> Self {
-        Self(id)
-    }
-
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
-
     pub fn is_bidi(self) -> bool {
-        self.as_u64() & 0x02 == 0
+        self.0 & 0x02 == 0
     }
 
     pub fn is_uni(self) -> bool {
@@ -73,7 +58,7 @@ impl StreamId {
     }
 
     pub fn is_client_initiated(self) -> bool {
-        self.as_u64() & 0x01 == 0
+        self.0 & 0x01 == 0
     }
 
     pub fn is_server_initiated(self) -> bool {
@@ -107,23 +92,15 @@ impl StreamId {
     pub fn is_recv_only(self, my_role: Role) -> bool {
         self.is_uni() && self.is_remote_initiated(my_role)
     }
+
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
 }
 
 impl From<u64> for StreamId {
     fn from(val: u64) -> Self {
-        Self::new(val)
-    }
-}
-
-impl PartialEq<u64> for StreamId {
-    fn eq(&self, other: &u64) -> bool {
-        self.as_u64() == *other
-    }
-}
-
-impl ::std::fmt::Display for StreamId {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        write!(f, "{}", self.as_u64())
+        Self(val)
     }
 }
 
@@ -131,7 +108,7 @@ impl ::std::fmt::Display for StreamId {
 pub struct StreamIndex(u64);
 
 impl StreamIndex {
-    pub const fn new(val: u64) -> Self {
+    pub fn new(val: u64) -> Self {
         Self(val)
     }
 
@@ -162,49 +139,5 @@ impl From<StreamId> for StreamIndex {
 impl AddAssign<u64> for StreamIndex {
     fn add_assign(&mut self, other: u64) {
         *self = Self::new(self.as_u64() + other)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::{StreamIndex, StreamType};
-    use neqo_common::Role;
-
-    #[test]
-    fn bidi_stream_properties() {
-        let id1 = StreamIndex::new(4).to_stream_id(StreamType::BiDi, Role::Client);
-        assert_eq!(id1.is_bidi(), true);
-        assert_eq!(id1.is_uni(), false);
-        assert_eq!(id1.is_client_initiated(), true);
-        assert_eq!(id1.is_server_initiated(), false);
-        assert_eq!(id1.role(), Role::Client);
-        assert_eq!(id1.is_self_initiated(Role::Client), true);
-        assert_eq!(id1.is_self_initiated(Role::Server), false);
-        assert_eq!(id1.is_remote_initiated(Role::Client), false);
-        assert_eq!(id1.is_remote_initiated(Role::Server), true);
-        assert_eq!(id1.is_send_only(Role::Server), false);
-        assert_eq!(id1.is_send_only(Role::Client), false);
-        assert_eq!(id1.is_recv_only(Role::Server), false);
-        assert_eq!(id1.is_recv_only(Role::Client), false);
-        assert_eq!(id1.as_u64(), 16);
-    }
-
-    #[test]
-    fn uni_stream_properties() {
-        let id2 = StreamIndex::new(8).to_stream_id(StreamType::UniDi, Role::Server);
-        assert_eq!(id2.is_bidi(), false);
-        assert_eq!(id2.is_uni(), true);
-        assert_eq!(id2.is_client_initiated(), false);
-        assert_eq!(id2.is_server_initiated(), true);
-        assert_eq!(id2.role(), Role::Server);
-        assert_eq!(id2.is_self_initiated(Role::Client), false);
-        assert_eq!(id2.is_self_initiated(Role::Server), true);
-        assert_eq!(id2.is_remote_initiated(Role::Client), true);
-        assert_eq!(id2.is_remote_initiated(Role::Server), false);
-        assert_eq!(id2.is_send_only(Role::Server), true);
-        assert_eq!(id2.is_send_only(Role::Client), false);
-        assert_eq!(id2.is_recv_only(Role::Server), false);
-        assert_eq!(id2.is_recv_only(Role::Client), true);
-        assert_eq!(id2.as_u64(), 35);
     }
 }

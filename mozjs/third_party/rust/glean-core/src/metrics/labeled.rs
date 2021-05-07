@@ -2,6 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use once_cell::sync::Lazy;
+use regex::Regex;
+
 use crate::common_metric_data::CommonMetricData;
 use crate::error_recording::{record_error, ErrorType};
 use crate::metrics::{Metric, MetricType};
@@ -11,19 +14,9 @@ const MAX_LABELS: usize = 16;
 const OTHER_LABEL: &str = "__other__";
 const MAX_LABEL_LENGTH: usize = 61;
 
-/// Checks whether the given value matches the label regex.
-///
-/// This regex is used for matching against labels and should allow for dots,
-/// underscores, and/or hyphens. Labels are also limited to starting with either
-/// a letter or an underscore character.
-///
-/// The exact regex (from the pipeline schema [here](https://github.com/mozilla-services/mozilla-pipeline-schemas/blob/master/templates/include/glean/dot_separated_short_id.1.schema.json)) is:
-///
-///    "^[a-z_][a-z0-9_-]{0,29}(\\.[a-z_][a-z0-9_-]{0,29})*$"
-///
-/// The regex crate isn't used here because it adds to the binary size, and the
-/// Glean SDK doesn't use regular expressions anywhere else.
-///
+/// This regex is used for matching against labels and should allow for dots, underscores,
+/// and/or hyphens. Labels are also limited to starting with either a letter or an
+/// underscore character.
 /// Some examples of good and bad labels:
 ///
 /// Good:
@@ -39,38 +32,8 @@ const MAX_LABEL_LENGTH: usize = 61;
 /// * `1.not_fine`
 /// * `this.$isnotfine`
 /// * `-.not_fine`
-fn matches_label_regex(value: &str) -> bool {
-    let mut iter = value.chars();
-
-    loop {
-        // Match the first letter in the word.
-        match iter.next() {
-            Some('_') | Some('a'..='z') => (),
-            _ => return false,
-        };
-
-        // Match subsequent letters in the word.
-        let mut count = 0;
-        loop {
-            match iter.next() {
-                // We are done, so the whole expression is valid.
-                None => return true,
-                // Valid characters.
-                Some('_') | Some('-') | Some('a'..='z') | Some('0'..='9') => (),
-                // We ended a word, so iterate over the outer loop again.
-                Some('.') => break,
-                // An invalid character
-                _ => return false,
-            }
-            count += 1;
-            // We allow 30 characters per word, but the first one is handled
-            // above outside of this loop, so we have a maximum of 29 here.
-            if count == 29 {
-                return false;
-            }
-        }
-    }
-}
+static LABEL_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new("^[a-z_][a-z0-9_-]{0,29}(\\.[a-z_][a-z0-9_-]{0,29})*$").unwrap());
 
 /// A labeled metric.
 ///
@@ -87,9 +50,9 @@ impl<T> LabeledMetric<T>
 where
     T: MetricType + Clone,
 {
-    /// Creates a new labeled metric from the given metric instance and optional list of labels.
+    /// Create a new labeled metric from the given metric instance and optional list of labels.
     ///
-    /// See [`get`](LabeledMetric::get) for information on how static or dynamic labels are handled.
+    /// See [`get`](#method.get) for information on how static or dynamic labels are handled.
     pub fn new(submetric: T, labels: Option<Vec<String>>) -> LabeledMetric<T> {
         LabeledMetric { labels, submetric }
     }
@@ -113,21 +76,21 @@ where
         t
     }
 
-    /// Creates a static label.
+    /// Create a static label.
     ///
-    /// # Safety
+    /// ## Safety
     ///
     /// Should only be called when static labels are available on this metric.
     ///
-    /// # Arguments
+    /// ## Arguments
     ///
     /// * `label` - The requested label
     ///
-    /// # Returns
+    /// ## Return value
     ///
-    /// The requested label if it is in the list of allowed labels.
-    /// Otherwise `OTHER_LABEL` is returned.
-    fn static_label<'a>(&self, label: &'a str) -> &'a str {
+    /// If the requested label is in the list of allowed labels, it is returned.
+    /// Otherwise the `OTHER_LABEL` is returned.
+    fn static_label<'a>(&mut self, label: &'a str) -> &'a str {
         debug_assert!(self.labels.is_some());
         let labels = self.labels.as_ref().unwrap();
         if labels.iter().any(|l| l == label) {
@@ -137,7 +100,7 @@ where
         }
     }
 
-    /// Gets a specific metric for a given label.
+    /// Get a specific metric for a given label.
     ///
     /// If a set of acceptable labels were specified in the `metrics.yaml` file,
     /// and the given label is not in the set, it will be recorded under the special `OTHER_LABEL` label.
@@ -148,7 +111,7 @@ where
     ///
     /// Labels must be `snake_case` and less than 30 characters.
     /// If an invalid label is used, the metric will be recorded in the special `OTHER_LABEL` label.
-    pub fn get(&self, label: &str) -> T {
+    pub fn get(&mut self, label: &str) -> T {
         // We have 2 scenarios to consider:
         // * Static labels. No database access needed. We just look at what is in memory.
         // * Dynamic labels. We look up in the database all previously stored
@@ -167,7 +130,7 @@ where
         }
     }
 
-    /// Gets the template submetric.
+    /// Get the template submetric.
     ///
     /// The template submetric is the actual metric that is cloned and modified
     /// to record for a specific label.
@@ -187,18 +150,19 @@ pub fn strip_label(identifier: &str) -> &str {
     identifier.splitn(2, '/').next().unwrap()
 }
 
-/// Validates a dynamic label, changing it to `OTHER_LABEL` if it's invalid.
+/// Validate a dynamic label, changing it to OTHER_LABEL if it's invalid.
 ///
 /// Checks the requested label against limitations, such as the label length and allowed
 /// characters.
 ///
-/// # Arguments
+/// ## Arguments
 ///
 /// * `label` - The requested label
 ///
-/// # Returns
+/// ## Return value
 ///
-/// The entire identifier for the metric, including the base identifier and the corrected label.
+/// Returns the entire identifier for the metric, including the base identifier and the
+/// corrected label.
 /// The errors are logged.
 pub fn dynamic_label(
     glean: &Glean,
@@ -236,7 +200,7 @@ pub fn dynamic_label(
         );
         record_error(glean, meta, ErrorType::InvalidLabel, msg, None);
         true
-    } else if !matches_label_regex(label) {
+    } else if !LABEL_REGEX.is_match(label) {
         let msg = format!("label must be snake_case, got '{}'", label);
         record_error(glean, meta, ErrorType::InvalidLabel, msg, None);
         true

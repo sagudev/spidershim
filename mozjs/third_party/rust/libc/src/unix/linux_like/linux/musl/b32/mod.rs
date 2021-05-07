@@ -3,7 +3,6 @@ pub type c_ulong = u32;
 pub type nlink_t = u32;
 pub type blksize_t = ::c_long;
 pub type __u64 = ::c_ulonglong;
-pub type regoff_t = ::c_int;
 
 s! {
     pub struct pthread_attr_t {
@@ -40,7 +39,7 @@ pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 24;
 
 pub const TIOCINQ: ::c_int = ::FIONREAD;
 
-extern "C" {
+extern {
     pub fn ioctl(fd: ::c_int, request: ::c_int, ...) -> ::c_int;
 }
 
@@ -57,9 +56,6 @@ cfg_if! {
     } else if #[cfg(any(target_arch = "powerpc"))] {
         mod powerpc;
         pub use self::powerpc::*;
-    } else if #[cfg(any(target_arch = "hexagon"))] {
-        mod hexagon;
-        pub use self::hexagon::*;
     } else {
         // Unknown target_arch
     }

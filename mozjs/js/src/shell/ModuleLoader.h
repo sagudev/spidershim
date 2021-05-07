@@ -7,7 +7,6 @@
 #ifndef shell_ModuleLoader_h
 #define shell_ModuleLoader_h
 
-#include "builtin/ModuleObject.h"
 #include "gc/Rooting.h"
 #include "js/RootingAPI.h"
 
@@ -18,10 +17,6 @@ class ModuleLoader {
  public:
   bool init(JSContext* cx, HandleString loadPath);
   bool loadRootModule(JSContext* cx, HandleString path);
-
-  // Testing hook to register a module that wasn't loaded by the module loader.
-  bool registerTestModule(JSContext* cx, HandleString specifier,
-                          HandleModuleObject module);
 
  private:
   static JSObject* ResolveImportedModule(JSContext* cx,
@@ -39,7 +34,7 @@ class ModuleLoader {
   static bool DynamicImportDelayRejected(JSContext* cx, unsigned argc,
                                          Value* vp);
 
-  bool loadAndExecute(JSContext* cx, HandleString path, MutableHandleValue);
+  bool loadAndExecute(JSContext* cx, HandleString path);
   JSObject* resolveImportedModule(JSContext* cx, HandleValue referencingPrivate,
                                   HandleString specifier);
   bool populateImportMeta(JSContext* cx, HandleValue privateValue,
@@ -49,8 +44,7 @@ class ModuleLoader {
   bool doDynamicImport(JSContext* cx, HandleValue referencingPrivate,
                        HandleString specifier, HandleObject promise);
   bool tryDynamicImport(JSContext* cx, HandleValue referencingPrivate,
-                        HandleString specifier, HandleObject promise,
-                        MutableHandleValue rval);
+                        HandleString specifier, HandleObject promise);
   JSObject* loadAndParse(JSContext* cx, HandleString path);
   bool lookupModuleInRegistry(JSContext* cx, HandleString path,
                               MutableHandleObject moduleOut);

@@ -221,11 +221,11 @@ class ReadableByteStreamController : public ReadableStreamController {
   static const JSClass protoClass_;
 };
 
-[[nodiscard]] extern bool CheckReadableStreamControllerCanCloseOrEnqueue(
+extern MOZ_MUST_USE bool CheckReadableStreamControllerCanCloseOrEnqueue(
     JSContext* cx, JS::Handle<ReadableStreamController*> unwrappedController,
     const char* action);
 
-[[nodiscard]] extern JSObject* ReadableStreamControllerCancelSteps(
+extern MOZ_MUST_USE JSObject* ReadableStreamControllerCancelSteps(
     JSContext* cx, JS::Handle<ReadableStreamController*> unwrappedController,
     JS::Handle<JS::Value> reason);
 

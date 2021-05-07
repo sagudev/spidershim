@@ -20,9 +20,4 @@ bool BytecodeLocation::isValid(const JSScript* script) const {
 bool BytecodeLocation::isInBounds(const JSScript* script) const {
   return script->contains(*this);
 }
-
-const JSScript* BytecodeLocation::getDebugOnlyScript() const {
-  return this->debugOnlyScript_;
-}
-
 #endif  // DEBUG

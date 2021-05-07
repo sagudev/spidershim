@@ -6,6 +6,7 @@
 
 #include "jit/Snapshots.h"
 
+#include "jit/CompileInfo.h"
 #include "jit/JitSpewer.h"
 #ifdef TRACK_SNAPSHOTS
 #  include "jit/LIR.h"
@@ -417,8 +418,7 @@ static const uint32_t SNAPSHOT_BAILOUTKIND_BITS = 6;
 static const uint32_t SNAPSHOT_BAILOUTKIND_MASK =
     COMPUTE_MASK_(SNAPSHOT_BAILOUTKIND);
 
-static_assert((1 << SNAPSHOT_BAILOUTKIND_BITS) - 1 >=
-                  uint8_t(BailoutKind::Limit),
+static_assert((1 << SNAPSHOT_BAILOUTKIND_BITS) - 1 >= Bailout_Limit,
               "Not enough bits for BailoutKinds");
 
 static const uint32_t SNAPSHOT_ROFFSET_SHIFT =

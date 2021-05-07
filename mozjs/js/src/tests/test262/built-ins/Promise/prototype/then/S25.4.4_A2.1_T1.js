@@ -21,8 +21,7 @@ var resolveP1, rejectP2, sequence = [];
 })).then(function(msg) {
   sequence.push(msg);
 }).then(function() {
-  assert.sameValue(sequence.length, 3);
-checkSequence(sequence, "Expected 1,2,3");
+  checkSequence(sequence, "Expected 1,2,3");
 }).then($DONE, $DONE);
 
 (new Promise(function(resolve, reject) {

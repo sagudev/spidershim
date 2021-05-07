@@ -8,92 +8,97 @@
 // CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-use std::{
-    io,
-    path::PathBuf,
-    sync,
-    thread,
-    thread::ThreadId,
-};
+use std::io;
+use std::num;
+use std::path::PathBuf;
+use std::str;
+use std::thread;
+use std::thread::ThreadId;
 
-use thiserror::Error;
+use failure::Fail;
 
 pub use crate::backend::SafeModeError;
 use crate::value::Type;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Fail)]
 pub enum DataError {
-    #[error("unknown type tag: {0}")]
+    #[fail(display = "unknown type tag: {}", _0)]
     UnknownType(u8),
 
-    #[error("unexpected type tag: expected {expected}, got {actual}")]
+    #[fail(display = "unexpected type tag: expected {}, got {}", expected, actual)]
     UnexpectedType {
         expected: Type,
         actual: Type,
     },
 
-    #[error("empty data; expected tag")]
+    #[fail(display = "empty data; expected tag")]
     Empty,
 
-    #[error("invalid value for type {value_type}: {err}")]
+    #[fail(display = "invalid value for type {}: {}", value_type, err)]
     DecodingError {
         value_type: Type,
         err: Box<bincode::ErrorKind>,
     },
 
-    #[error("couldn't encode value: {0}")]
-    EncodingError(#[from] Box<bincode::ErrorKind>),
+    #[fail(display = "couldn't encode value: {}", _0)]
+    EncodingError(Box<bincode::ErrorKind>),
 
-    #[error("invalid uuid bytes")]
+    #[fail(display = "invalid uuid bytes")]
     InvalidUuid,
 }
 
-#[derive(Debug, Error)]
-pub enum StoreError {
-    #[error("manager poisoned")]
-    ManagerPoisonError,
+impl From<Box<bincode::ErrorKind>> for DataError {
+    fn from(e: Box<bincode::ErrorKind>) -> DataError {
+        DataError::EncodingError(e)
+    }
+}
 
-    #[error("database corrupted")]
+#[derive(Debug, Fail)]
+pub enum StoreError {
+    #[fail(display = "database corrupted")]
     DatabaseCorrupted,
 
-    #[error("key/value pair not found")]
+    #[fail(display = "key/value pair not found")]
     KeyValuePairNotFound,
 
-    #[error("unsupported size of key/DB name/data")]
+    #[fail(display = "unsupported size of key/DB name/data")]
     KeyValuePairBadSize,
 
-    #[error("file is not a valid database")]
+    #[fail(display = "file is not a valid database")]
     FileInvalid,
 
-    #[error("environment mapsize reached")]
+    #[fail(display = "environment mapsize reached")]
     MapFull,
 
-    #[error("environment maxdbs reached")]
+    #[fail(display = "environment maxdbs reached")]
     DbsFull,
 
-    #[error("environment maxreaders reached")]
+    #[fail(display = "environment maxreaders reached")]
     ReadersFull,
 
-    #[error("I/O error: {0:?}")]
-    IoError(#[from] io::Error),
+    #[fail(display = "I/O error: {:?}", _0)]
+    IoError(io::Error),
 
-    #[error("environment path does not exist or not the right type: {0:?}")]
-    UnsuitableEnvironmentPath(PathBuf),
+    #[fail(display = "directory does not exist or not a directory: {:?}", _0)]
+    DirectoryDoesNotExistError(PathBuf),
 
-    #[error("data error: {0:?}")]
-    DataError(#[from] DataError),
+    #[fail(display = "data error: {:?}", _0)]
+    DataError(DataError),
 
-    #[error("lmdb backend error: {0}")]
+    #[fail(display = "lmdb backend error: {}", _0)]
     LmdbError(lmdb::Error),
 
-    #[error("safe mode backend error: {0}")]
+    #[fail(display = "safe mode backend error: {}", _0)]
     SafeModeError(SafeModeError),
 
-    #[error("read transaction already exists in thread {0:?}")]
+    #[fail(display = "read transaction already exists in thread {:?}", _0)]
     ReadTransactionAlreadyExists(ThreadId),
 
-    #[error("attempted to open DB during transaction in thread {0:?}")]
+    #[fail(display = "attempted to open DB during transaction in thread {:?}", _0)]
     OpenAttemptedDuringTransaction(ThreadId),
+
+    #[fail(display = "other backing store error: {}", _0)]
+    OtherError(i32),
 }
 
 impl StoreError {
@@ -106,53 +111,113 @@ impl StoreError {
     }
 }
 
-impl<T> From<sync::PoisonError<T>> for StoreError {
-    fn from(_: sync::PoisonError<T>) -> StoreError {
-        StoreError::ManagerPoisonError
+impl From<DataError> for StoreError {
+    fn from(e: DataError) -> StoreError {
+        StoreError::DataError(e)
     }
 }
 
-#[derive(Debug, Error)]
-pub enum CloseError {
-    #[error("manager poisoned")]
-    ManagerPoisonError,
-
-    #[error("close attempted while manager has an environment still open")]
-    EnvironmentStillOpen,
-
-    #[error("close attempted while an environment not known to the manager is still open")]
-    UnknownEnvironmentStillOpen,
-
-    #[error("I/O error: {0:?}")]
-    IoError(#[from] io::Error),
-}
-
-impl<T> From<sync::PoisonError<T>> for CloseError {
-    fn from(_: sync::PoisonError<T>) -> CloseError {
-        CloseError::ManagerPoisonError
+impl From<io::Error> for StoreError {
+    fn from(e: io::Error) -> StoreError {
+        StoreError::IoError(e)
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Fail)]
 pub enum MigrateError {
-    #[error("store error: {0}")]
-    StoreError(#[from] StoreError),
+    #[fail(display = "database not found: {:?}", _0)]
+    DatabaseNotFound(String),
 
-    #[error("close error: {0}")]
-    CloseError(#[from] CloseError),
+    #[fail(display = "{}", _0)]
+    FromString(String),
 
-    #[error("manager poisoned")]
-    ManagerPoisonError,
+    #[fail(display = "couldn't determine bit depth")]
+    IndeterminateBitDepth,
 
-    #[error("source is empty")]
-    SourceEmpty,
+    #[fail(display = "I/O error: {:?}", _0)]
+    IoError(io::Error),
 
-    #[error("destination is not empty")]
-    DestinationNotEmpty,
+    #[fail(display = "invalid DatabaseFlags bits")]
+    InvalidDatabaseBits,
+
+    #[fail(display = "invalid data version")]
+    InvalidDataVersion,
+
+    #[fail(display = "invalid magic number")]
+    InvalidMagicNum,
+
+    #[fail(display = "invalid NodeFlags bits")]
+    InvalidNodeBits,
+
+    #[fail(display = "invalid PageFlags bits")]
+    InvalidPageBits,
+
+    #[fail(display = "invalid page number")]
+    InvalidPageNum,
+
+    #[fail(display = "lmdb backend error: {}", _0)]
+    LmdbError(lmdb::Error),
+
+    #[fail(display = "safe mode backend error: {}", _0)]
+    SafeModeError(SafeModeError),
+
+    #[fail(display = "string conversion error")]
+    StringConversionError,
+
+    #[fail(display = "TryFromInt error: {:?}", _0)]
+    TryFromIntError(num::TryFromIntError),
+
+    #[fail(display = "unexpected Page variant")]
+    UnexpectedPageVariant,
+
+    #[fail(display = "unexpected PageHeader variant")]
+    UnexpectedPageHeaderVariant,
+
+    #[fail(display = "unsupported PageHeader variant")]
+    UnsupportedPageHeaderVariant,
+
+    #[fail(display = "UTF8 error: {:?}", _0)]
+    Utf8Error(str::Utf8Error),
 }
 
-impl<T> From<sync::PoisonError<T>> for MigrateError {
-    fn from(_: sync::PoisonError<T>) -> MigrateError {
-        MigrateError::ManagerPoisonError
+impl From<io::Error> for MigrateError {
+    fn from(e: io::Error) -> MigrateError {
+        MigrateError::IoError(e)
+    }
+}
+
+impl From<str::Utf8Error> for MigrateError {
+    fn from(e: str::Utf8Error) -> MigrateError {
+        MigrateError::Utf8Error(e)
+    }
+}
+
+impl From<num::TryFromIntError> for MigrateError {
+    fn from(e: num::TryFromIntError) -> MigrateError {
+        MigrateError::TryFromIntError(e)
+    }
+}
+
+impl From<&str> for MigrateError {
+    fn from(e: &str) -> MigrateError {
+        MigrateError::FromString(e.to_string())
+    }
+}
+
+impl From<String> for MigrateError {
+    fn from(e: String) -> MigrateError {
+        MigrateError::FromString(e)
+    }
+}
+
+impl From<lmdb::Error> for MigrateError {
+    fn from(e: lmdb::Error) -> MigrateError {
+        MigrateError::LmdbError(e)
+    }
+}
+
+impl From<SafeModeError> for MigrateError {
+    fn from(e: SafeModeError) -> MigrateError {
+        MigrateError::SafeModeError(e)
     }
 }

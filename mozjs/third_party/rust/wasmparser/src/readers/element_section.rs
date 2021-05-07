@@ -14,8 +14,8 @@
  */
 
 use super::{
-    BinaryReader, BinaryReaderError, InitExpr, Range, Result, SectionIteratorLimited,
-    SectionReader, SectionWithLimitedItems, Type,
+    BinaryReader, BinaryReaderError, InitExpr, Result, SectionIteratorLimited, SectionReader,
+    SectionWithLimitedItems, Type,
 };
 use crate::{ExternalKind, Operator};
 
@@ -45,7 +45,7 @@ pub struct ElementItems<'a> {
 
 #[derive(Debug)]
 pub enum ElementItem {
-    Null(Type),
+    Null,
     Func(u32),
 }
 
@@ -91,7 +91,7 @@ impl<'a> ElementItemsReader<'a> {
         if self.exprs {
             let offset = self.reader.original_position();
             let ret = match self.reader.read_operator()? {
-                Operator::RefNull { ty } => ElementItem::Null(ty),
+                Operator::RefNull => ElementItem::Null,
                 Operator::RefFunc { function_index } => ElementItem::Func(function_index),
                 _ => return Err(BinaryReaderError::new("invalid passive segment", offset)),
             };
@@ -142,7 +142,6 @@ impl<'a> Iterator for ElementItemsIterator<'a> {
     }
 }
 
-#[derive(Clone)]
 pub struct ElementSectionReader<'a> {
     reader: BinaryReader<'a>,
     count: u32,
@@ -166,11 +165,16 @@ impl<'a> ElementSectionReader<'a> {
     /// Reads content of the element section.
     ///
     /// # Examples
-    ///
-    /// ```no_run
+    /// ```no-run
     /// # let data: &[u8] = &[];
-    /// use wasmparser::{ElementSectionReader, ElementKind};
-    /// let mut element_reader = ElementSectionReader::new(data, 0).unwrap();
+    /// use wasmparser::{ModuleReader, ElementKind};
+    ///use wasmparser::Result;
+    /// let mut reader = ModuleReader::new(data).expect("module reader");
+    /// let section = reader.read().expect("type section");
+    /// let section = reader.read().expect("function section");
+    /// let section = reader.read().expect("table section");
+    /// let section = reader.read().expect("element section");
+    /// let mut element_reader = section.get_element_section_reader().expect("element section reader");
     /// for _ in 0..element_reader.get_count() {
     ///     let element = element_reader.read().expect("element");
     ///     if let ElementKind::Active { init_expr, .. } = element.kind {
@@ -225,7 +229,7 @@ impl<'a> ElementSectionReader<'a> {
                 self.reader.read_type()?
             } else {
                 match self.reader.read_external_kind()? {
-                    ExternalKind::Function => Type::FuncRef,
+                    ExternalKind::Function => Type::AnyFunc,
                     _ => {
                         return Err(BinaryReaderError::new(
                             "only the function external type is supported in elem segment",
@@ -235,7 +239,7 @@ impl<'a> ElementSectionReader<'a> {
                 }
             }
         } else {
-            Type::FuncRef
+            Type::AnyFunc
         };
         let data_start = self.reader.position;
         let items_count = self.reader.read_var_u32()?;
@@ -268,9 +272,6 @@ impl<'a> SectionReader for ElementSectionReader<'a> {
     }
     fn original_position(&self) -> usize {
         ElementSectionReader::original_position(self)
-    }
-    fn range(&self) -> Range {
-        self.reader.range()
     }
 }
 

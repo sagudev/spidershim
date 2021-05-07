@@ -2,10 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::errors;
-use crate::platform::monitor::Monitor;
-use crate::statecallback::StateCallback;
+use platform::monitor::Monitor;
 use runloop::RunLoop;
+use util::OnceCallback;
 
 pub struct Transaction {
     // Handle to the thread loop.
@@ -15,11 +14,11 @@ pub struct Transaction {
 impl Transaction {
     pub fn new<F, T>(
         timeout: u64,
-        callback: StateCallback<crate::Result<T>>,
+        callback: OnceCallback<T>,
         new_device_cb: F,
-    ) -> crate::Result<Self>
+    ) -> Result<Self, ::Error>
     where
-        F: Fn(String, &dyn Fn() -> bool) + Sync + Send + 'static,
+        F: Fn(String, &Fn() -> bool) + Sync + Send + 'static,
         T: 'static,
     {
         let thread = RunLoop::new_with_timeout(
@@ -28,17 +27,14 @@ impl Transaction {
                 let mut monitor = Monitor::new(new_device_cb);
 
                 // Start polling for new devices.
-                try_or!(monitor.run(alive), |_| callback
-                    .call(Err(errors::AuthenticatorError::Platform)));
+                try_or!(monitor.run(alive), |_| callback.call(Err(::Error::Unknown)));
 
                 // Send an error, if the callback wasn't called already.
-                callback.call(Err(errors::AuthenticatorError::U2FToken(
-                    errors::U2FTokenError::NotAllowed,
-                )));
+                callback.call(Err(::Error::NotAllowed));
             },
             timeout,
         )
-        .map_err(|_| errors::AuthenticatorError::Platform)?;
+        .map_err(|_| ::Error::Unknown)?;
 
         Ok(Self {
             thread: Some(thread),

@@ -31,8 +31,6 @@
 #include "js/Conversions.h"
 #include "js/ErrorReport.h"
 #include "js/ForOfIterator.h"
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
 #include "js/PropertySpec.h"
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
@@ -52,8 +50,7 @@
 #include "vm/Shape.h"
 #include "vm/Stack.h"
 #include "vm/StringType.h"
-#include "vm/ToSource.h"       // js::ValueToSource
-#include "vm/WellKnownAtom.h"  // js_*_str
+#include "vm/ToSource.h"  // js::ValueToSource
 
 #include "vm/ArrayObject-inl.h"
 #include "vm/JSContext-inl.h"
@@ -65,11 +62,11 @@
 
 using namespace js;
 
-#define IMPLEMENT_ERROR_PROTO_CLASS(name)                         \
-  {                                                               \
-#    name ".prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_##name), \
-        JS_NULL_CLASS_OPS,                                        \
-        &ErrorObject::classSpecs[JSProto_##name - JSProto_Error]  \
+#define IMPLEMENT_ERROR_PROTO_CLASS(name)                        \
+  {                                                              \
+    js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_##name),     \
+        JS_NULL_CLASS_OPS,                                       \
+        &ErrorObject::classSpecs[JSProto_##name - JSProto_Error] \
   }
 
 const JSClass ErrorObject::protoClasses[JSEXN_ERROR_LIMIT] = {
@@ -106,12 +103,16 @@ static const JSPropertySpec error_properties[] = {
     JS_PSGS("stack", ErrorObject::getStack, ErrorObject::setStack, 0),
     JS_PS_END};
 
+static const JSPropertySpec AggregateError_properties[] = {
+    COMMON_ERROR_PROPERTIES(AggregateError),
+    // Only AggregateError.prototype has .errors!
+    JS_PSG("errors", AggregateErrorObject::getErrors, 0), JS_PS_END};
+
 #define IMPLEMENT_NATIVE_ERROR_PROPERTIES(name)       \
   static const JSPropertySpec name##_properties[] = { \
       COMMON_ERROR_PROPERTIES(name), JS_PS_END};
 
 IMPLEMENT_NATIVE_ERROR_PROPERTIES(InternalError)
-IMPLEMENT_NATIVE_ERROR_PROPERTIES(AggregateError)
 IMPLEMENT_NATIVE_ERROR_PROPERTIES(EvalError)
 IMPLEMENT_NATIVE_ERROR_PROPERTIES(RangeError)
 IMPLEMENT_NATIVE_ERROR_PROPERTIES(ReferenceError)
@@ -154,24 +155,18 @@ const ClassSpec ErrorObject::classSpecs[JSEXN_ERROR_LIMIT] = {
     IMPLEMENT_NONGLOBAL_ERROR_SPEC(LinkError),
     IMPLEMENT_NONGLOBAL_ERROR_SPEC(RuntimeError)};
 
-#define IMPLEMENT_ERROR_CLASS_CORE(name, reserved_slots)         \
+#define IMPLEMENT_ERROR_CLASS_FROM(clazz, name)                  \
   {                                                              \
-#    name,                                                       \
+    js_Error_str, /* yes, really */                              \
         JSCLASS_HAS_CACHED_PROTO(JSProto_##name) |               \
-            JSCLASS_HAS_RESERVED_SLOTS(reserved_slots) |         \
+            JSCLASS_HAS_RESERVED_SLOTS(clazz::RESERVED_SLOTS) |  \
             JSCLASS_BACKGROUND_FINALIZE,                         \
         &ErrorObjectClassOps,                                    \
         &ErrorObject::classSpecs[JSProto_##name - JSProto_Error] \
   }
 
 #define IMPLEMENT_ERROR_CLASS(name) \
-  IMPLEMENT_ERROR_CLASS_CORE(name, ErrorObject::RESERVED_SLOTS)
-
-// Only used for classes that could be a Wasm trap. Classes that use this
-// macro should be kept in sync with the exception types that mightBeWasmTrap()
-// will return true for.
-#define IMPLEMENT_ERROR_CLASS_MAYBE_WASM_TRAP(name) \
-  IMPLEMENT_ERROR_CLASS_CORE(name, ErrorObject::RESERVED_SLOTS_MAYBE_WASM_TRAP)
+  IMPLEMENT_ERROR_CLASS_FROM(ErrorObject, name)
 
 static void exn_finalize(JSFreeOp* fop, JSObject* obj);
 
@@ -190,16 +185,15 @@ static const JSClassOps ErrorObjectClassOps = {
 };
 
 const JSClass ErrorObject::classes[JSEXN_ERROR_LIMIT] = {
-    IMPLEMENT_ERROR_CLASS(Error),
-    IMPLEMENT_ERROR_CLASS_MAYBE_WASM_TRAP(InternalError),
-    IMPLEMENT_ERROR_CLASS(AggregateError), IMPLEMENT_ERROR_CLASS(EvalError),
-    IMPLEMENT_ERROR_CLASS(RangeError), IMPLEMENT_ERROR_CLASS(ReferenceError),
-    IMPLEMENT_ERROR_CLASS(SyntaxError), IMPLEMENT_ERROR_CLASS(TypeError),
-    IMPLEMENT_ERROR_CLASS(URIError),
+    IMPLEMENT_ERROR_CLASS(Error), IMPLEMENT_ERROR_CLASS(InternalError),
+    IMPLEMENT_ERROR_CLASS_FROM(AggregateErrorObject, AggregateError),
+    IMPLEMENT_ERROR_CLASS(EvalError), IMPLEMENT_ERROR_CLASS(RangeError),
+    IMPLEMENT_ERROR_CLASS(ReferenceError), IMPLEMENT_ERROR_CLASS(SyntaxError),
+    IMPLEMENT_ERROR_CLASS(TypeError), IMPLEMENT_ERROR_CLASS(URIError),
     // These Error subclasses are not accessible via the global object:
     IMPLEMENT_ERROR_CLASS(DebuggeeWouldRun),
     IMPLEMENT_ERROR_CLASS(CompileError), IMPLEMENT_ERROR_CLASS(LinkError),
-    IMPLEMENT_ERROR_CLASS_MAYBE_WASM_TRAP(RuntimeError)};
+    IMPLEMENT_ERROR_CLASS(RuntimeError)};
 
 static void exn_finalize(JSFreeOp* fop, JSObject* obj) {
   MOZ_ASSERT(fop->maybeOnHelperThread());
@@ -300,9 +294,6 @@ static ArrayObject* IterableToArray(JSContext* cx, HandleValue iterable) {
   }
 
   RootedArrayObject array(cx, NewDenseEmptyArray(cx));
-  if (!array) {
-    return nullptr;
-  }
 
   RootedValue nextValue(cx);
   while (true) {
@@ -336,31 +327,26 @@ static bool AggregateError(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  // TypeError anyway, but this gives a better error message.
+  // Step 3 (Inlined IterableToList).
+
   if (!args.requireAtLeast(cx, "AggregateError", 1)) {
     return false;
   }
-
-  // 9.1.13 OrdinaryCreateFromConstructor, step 3.
-  // Step 3.
-  Rooted<ErrorObject*> obj(
-      cx, CreateErrorObject(cx, args, 1, JSEXN_AGGREGATEERR, proto));
-  if (!obj) {
-    return false;
-  }
-
-  // Step 4.
 
   RootedArrayObject errorsList(cx, IterableToArray(cx, args.get(0)));
   if (!errorsList) {
     return false;
   }
 
+  // 9.1.13 OrdinaryCreateFromConstructor, step 3.
   // Step 5.
-  RootedValue errorsVal(cx, JS::ObjectValue(*errorsList));
-  if (!NativeDefineDataProperty(cx, obj, cx->names().errors, errorsVal, 0)) {
+  auto* obj = CreateErrorObject(cx, args, 1, JSEXN_AGGREGATEERR, proto);
+  if (!obj) {
     return false;
   }
+
+  // Step 4.
+  obj->as<AggregateErrorObject>().setAggregateErrors(errorsList);
 
   // Step 6.
   args.rval().setObject(*obj);
@@ -414,7 +400,7 @@ JSObject* ErrorObject::createConstructor(JSContext* cx, JSProtoKey key) {
     ctor =
         NewFunctionWithProto(cx, native, nargs, FunctionFlags::NATIVE_CTOR,
                              nullptr, ClassName(key, cx), proto,
-                             gc::AllocKind::FUNCTION_EXTENDED, TenuredObject);
+                             gc::AllocKind::FUNCTION_EXTENDED, SingletonObject);
   }
 
   if (!ctor) {
@@ -462,9 +448,10 @@ bool js::ErrorObject::init(JSContext* cx, Handle<ErrorObject*> obj,
   // present in some error objects -- |Error.prototype|, |new Error("f")|,
   // |new Error("")| -- but not in others -- |new Error(undefined)|,
   // |new Error()|.
+  RootedShape messageShape(cx);
   if (message) {
-    Shape* messageShape = NativeObject::addDataProperty(
-        cx, obj, cx->names().message, MESSAGE_SLOT, 0);
+    messageShape = NativeObject::addDataProperty(cx, obj, cx->names().message,
+                                                 MESSAGE_SLOT, 0);
     if (!messageShape) {
       return false;
     }
@@ -491,13 +478,9 @@ bool js::ErrorObject::init(JSContext* cx, Handle<ErrorObject*> obj,
   obj->initReservedSlot(LINENUMBER_SLOT, Int32Value(lineNumber));
   obj->initReservedSlot(COLUMNNUMBER_SLOT, Int32Value(columnNumber));
   if (message) {
-    obj->initSlot(MESSAGE_SLOT, StringValue(message));
+    obj->setSlotWithType(cx, messageShape, StringValue(message));
   }
   obj->initReservedSlot(SOURCEID_SLOT, Int32Value(sourceId));
-  if (obj->mightBeWasmTrap()) {
-    MOZ_ASSERT(JSCLASS_RESERVED_SLOTS(obj->getClass()) > WASM_TRAP_SLOT);
-    obj->initReservedSlot(WASM_TRAP_SLOT, BooleanValue(false));
-  }
 
   return true;
 }
@@ -704,12 +687,6 @@ bool js::ErrorObject::setStack_impl(JSContext* cx, const CallArgs& args) {
   return DefineDataProperty(cx, thisObj, cx->names().stack, val);
 }
 
-void js::ErrorObject::setFromWasmTrap() {
-  MOZ_ASSERT(mightBeWasmTrap());
-  MOZ_ASSERT(JSCLASS_RESERVED_SLOTS(getClass()) > WASM_TRAP_SLOT);
-  setReservedSlot(WASM_TRAP_SLOT, BooleanValue(true));
-}
-
 JSString* js::ErrorToSource(JSContext* cx, HandleObject obj) {
   RootedValue nameVal(cx);
   RootedString name(cx);
@@ -795,5 +772,73 @@ static bool exn_toSource(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   args.rval().setString(str);
+  return true;
+}
+
+ArrayObject* js::AggregateErrorObject::aggregateErrors() const {
+  const Value& val = getReservedSlot(AGGREGATE_ERRORS_SLOT);
+  if (val.isUndefined()) {
+    return nullptr;
+  }
+  return &val.toObject().as<ArrayObject>();
+}
+
+void js::AggregateErrorObject::setAggregateErrors(ArrayObject* errors) {
+  MOZ_ASSERT(!aggregateErrors(),
+             "aggregated errors mustn't be modified once set");
+  setReservedSlot(AGGREGATE_ERRORS_SLOT, ObjectValue(*errors));
+}
+
+static inline bool IsAggregateError(HandleValue v) {
+  return v.isObject() && v.toObject().is<AggregateErrorObject>();
+}
+
+// get AggregateError.prototype.errors
+bool js::AggregateErrorObject::getErrors(JSContext* cx, unsigned argc,
+                                         Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  // Steps 1-4.
+  return CallNonGenericMethod<IsAggregateError, getErrors_impl>(cx, args);
+}
+
+// get AggregateError.prototype.errors
+bool js::AggregateErrorObject::getErrors_impl(JSContext* cx,
+                                              const CallArgs& args) {
+  MOZ_ASSERT(IsAggregateError(args.thisv()));
+
+  auto* obj = &args.thisv().toObject().as<AggregateErrorObject>();
+
+  // Step 5.
+  // Create a copy of the [[AggregateErrors]] list.
+
+  RootedArrayObject errorsList(cx, obj->aggregateErrors());
+
+  // [[AggregateErrors]] may be absent when this error was created through
+  // JS_ReportError.
+  if (!errorsList) {
+    ArrayObject* result = NewDenseEmptyArray(cx);
+    if (!result) {
+      return false;
+    }
+
+    args.rval().setObject(*result);
+    return true;
+  }
+
+  uint32_t length = errorsList->length();
+
+  ArrayObject* result = NewDenseFullyAllocatedArray(cx, length);
+  if (!result) {
+    return false;
+  }
+
+  result->setLength(cx, length);
+
+  if (length > 0) {
+    result->initDenseElements(errorsList, 0, length);
+  }
+
+  args.rval().setObject(*result);
   return true;
 }

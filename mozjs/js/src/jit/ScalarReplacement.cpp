@@ -13,8 +13,6 @@
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
-#include "jit/WarpBuilderShared.h"
-#include "vm/ArgumentsObject.h"
 
 #include "vm/JSObject-inl.h"
 
@@ -157,7 +155,7 @@ static inline bool IsOptimizableObjectInstruction(MInstruction* ins) {
 static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
   MOZ_ASSERT(ins->type() == MIRType::Object);
   MOZ_ASSERT(IsOptimizableObjectInstruction(ins) || ins->isGuardShape() ||
-             ins->isFunctionEnvironment());
+             ins->isGuardObjectGroup() || ins->isFunctionEnvironment());
 
   JitSpewDef(JitSpew_Escape, "Check object\n", ins);
   JitSpewIndent spewIndent(JitSpew_Escape);
@@ -223,6 +221,20 @@ static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
         MOZ_ASSERT(!ins->isGuardShape());
         if (obj->shape() != guard->shape()) {
           JitSpewDef(JitSpew_Escape, "has a non-matching guard shape\n", guard);
+          return true;
+        }
+        if (IsObjectEscaped(def->toInstruction(), obj)) {
+          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
+          return true;
+        }
+        break;
+      }
+
+      case MDefinition::Opcode::GuardObjectGroup: {
+        MGuardObjectGroup* guard = def->toGuardObjectGroup();
+        MOZ_ASSERT(!ins->isGuardObjectGroup());
+        if (obj->group() != guard->group()) {
+          JitSpewDef(JitSpew_Escape, "has a non-matching guard group\n", guard);
           return true;
         }
         if (IsObjectEscaped(def->toInstruction(), obj)) {
@@ -301,6 +313,7 @@ class ObjectMemoryView : public MDefinitionVisitorDefaultNoop {
   void visitStoreDynamicSlot(MStoreDynamicSlot* ins);
   void visitLoadDynamicSlot(MLoadDynamicSlot* ins);
   void visitGuardShape(MGuardShape* ins);
+  void visitGuardObjectGroup(MGuardObjectGroup* ins);
   void visitFunctionEnvironment(MFunctionEnvironment* ins);
   void visitLambda(MLambda* ins);
   void visitLambdaArrow(MLambdaArrow* ins);
@@ -504,7 +517,7 @@ void ObjectMemoryView::visitStoreFixedSlot(MStoreFixedSlot* ins) {
   } else {
     // UnsafeSetReserveSlot can access baked-in slots which are guarded by
     // conditions, which are not seen by the escape analysis.
-    MBail* bailout = MBail::New(alloc_, BailoutKind::Inevitable);
+    MBail* bailout = MBail::New(alloc_, Bailout_Inevitable);
     ins->block()->insertBefore(ins, bailout);
   }
 
@@ -524,7 +537,7 @@ void ObjectMemoryView::visitLoadFixedSlot(MLoadFixedSlot* ins) {
   } else {
     // UnsafeGetReserveSlot can access baked-in slots which are guarded by
     // conditions, which are not seen by the escape analysis.
-    MBail* bailout = MBail::New(alloc_, BailoutKind::Inevitable);
+    MBail* bailout = MBail::New(alloc_, Bailout_Inevitable);
     ins->block()->insertBefore(ins, bailout);
     ins->replaceAllUsesWith(undefinedVal_);
   }
@@ -566,7 +579,7 @@ void ObjectMemoryView::visitStoreDynamicSlot(MStoreDynamicSlot* ins) {
   } else {
     // UnsafeSetReserveSlot can access baked-in slots which are guarded by
     // conditions, which are not seen by the escape analysis.
-    MBail* bailout = MBail::New(alloc_, BailoutKind::Inevitable);
+    MBail* bailout = MBail::New(alloc_, Bailout_Inevitable);
     ins->block()->insertBefore(ins, bailout);
   }
 
@@ -590,7 +603,7 @@ void ObjectMemoryView::visitLoadDynamicSlot(MLoadDynamicSlot* ins) {
   } else {
     // UnsafeGetReserveSlot can access baked-in slots which are guarded by
     // conditions, which are not seen by the escape analysis.
-    MBail* bailout = MBail::New(alloc_, BailoutKind::Inevitable);
+    MBail* bailout = MBail::New(alloc_, Bailout_Inevitable);
     ins->block()->insertBefore(ins, bailout);
     ins->replaceAllUsesWith(undefinedVal_);
   }
@@ -618,6 +631,10 @@ void ObjectMemoryView::visitObjectGuard(MInstruction* ins,
 }
 
 void ObjectMemoryView::visitGuardShape(MGuardShape* ins) {
+  visitObjectGuard(ins, ins->object());
+}
+
+void ObjectMemoryView::visitGuardObjectGroup(MGuardObjectGroup* ins) {
   visitObjectGuard(ins, ins->object());
 }
 
@@ -696,7 +713,7 @@ static bool IndexOf(MDefinition* ins, int32_t* res) {
 // Returns False if the elements is not escaped and if it is optimizable by
 // ScalarReplacementOfArray.
 static bool IsElementEscaped(MDefinition* def, uint32_t arraySize) {
-  MOZ_ASSERT(def->isElements());
+  MOZ_ASSERT(def->isElements() || def->isConvertElementsToDoubles());
 
   JitSpewDef(JitSpew_Escape, "Check elements\n", def);
   JitSpewIndent spewIndent(JitSpew_Escape);
@@ -709,6 +726,17 @@ static bool IsElementEscaped(MDefinition* def, uint32_t arraySize) {
     switch (access->op()) {
       case MDefinition::Opcode::LoadElement: {
         MOZ_ASSERT(access->toLoadElement()->elements() == def);
+
+        // If we need hole checks, then the array cannot be escaped
+        // as the array might refer to the prototype chain to look
+        // for properties, thus it might do additional side-effects
+        // which are not reflected by the alias set, is we are
+        // bailing on holes.
+        if (access->toLoadElement()->needsHoleCheck()) {
+          JitSpewDef(JitSpew_Escape, "has a load element with a hole check\n",
+                     access);
+          return true;
+        }
 
         // If the index is not a constant then this index can alias
         // all others. We do not handle this case.
@@ -727,37 +755,41 @@ static bool IsElementEscaped(MDefinition* def, uint32_t arraySize) {
       }
 
       case MDefinition::Opcode::StoreElement: {
-        MStoreElement* storeElem = access->toStoreElement();
-        MOZ_ASSERT(storeElem->elements() == def);
+        MOZ_ASSERT(access->toStoreElement()->elements() == def);
 
-        // StoreElement must bail out if it stores to a hole, in case
-        // there is a setter on the prototype chain. If this StoreElement
-        // might store to a hole, we can't scalar-replace it.
-        if (storeElem->needsHoleCheck()) {
+        // If we need hole checks, then the array cannot be escaped
+        // as the array might refer to the prototype chain to look
+        // for properties, thus it might do additional side-effects
+        // which are not reflected by the alias set, is we are
+        // bailing on holes.
+        if (access->toStoreElement()->needsHoleCheck()) {
           JitSpewDef(JitSpew_Escape, "has a store element with a hole check\n",
-                     storeElem);
+                     access);
           return true;
         }
 
         // If the index is not a constant then this index can alias
         // all others. We do not handle this case.
         int32_t index;
-        if (!IndexOf(storeElem, &index)) {
+        if (!IndexOf(access, &index)) {
           JitSpewDef(JitSpew_Escape,
-                     "has a store element with a non-trivial index\n",
-                     storeElem);
+                     "has a store element with a non-trivial index\n", access);
           return true;
         }
         if (index < 0 || arraySize <= uint32_t(index)) {
           JitSpewDef(JitSpew_Escape,
                      "has a store element with an out-of-bound index\n",
-                     storeElem);
+                     access);
           return true;
         }
 
-        // Dense element holes are written using MStoreHoleValueElement instead
-        // of MStoreElement.
-        MOZ_ASSERT(storeElem->value()->type() != MIRType::MagicHole);
+        // We are not yet encoding magic hole constants in resume points.
+        if (access->toStoreElement()->value()->type() == MIRType::MagicHole) {
+          JitSpewDef(JitSpew_Escape,
+                     "has a store element with an magic-hole constant\n",
+                     access);
+          return true;
+        }
         break;
       }
 
@@ -773,6 +805,14 @@ static bool IsElementEscaped(MDefinition* def, uint32_t arraySize) {
         MOZ_ASSERT(access->toArrayLength()->elements() == def);
         break;
 
+      case MDefinition::Opcode::ConvertElementsToDoubles:
+        MOZ_ASSERT(access->toConvertElementsToDoubles()->elements() == def);
+        if (IsElementEscaped(access, arraySize)) {
+          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", access);
+          return true;
+        }
+        break;
+
       default:
         JitSpewDef(JitSpew_Escape, "is escaped by\n", access);
         return true;
@@ -783,7 +823,7 @@ static bool IsElementEscaped(MDefinition* def, uint32_t arraySize) {
 }
 
 static inline bool IsOptimizableArrayInstruction(MInstruction* ins) {
-  return ins->isNewArray();
+  return ins->isNewArray() || ins->isNewArrayCopyOnWrite();
 }
 
 // Returns False if the array is not escaped and if it is optimizable by
@@ -793,18 +833,24 @@ static inline bool IsOptimizableArrayInstruction(MInstruction* ins) {
 // changing length, with only access with known constants.
 static bool IsArrayEscaped(MInstruction* ins, MInstruction* newArray) {
   MOZ_ASSERT(ins->type() == MIRType::Object);
+  MOZ_ASSERT(IsOptimizableArrayInstruction(ins) ||
+             ins->isMaybeCopyElementsForWrite());
   MOZ_ASSERT(IsOptimizableArrayInstruction(newArray));
 
   JitSpewDef(JitSpew_Escape, "Check array\n", ins);
   JitSpewIndent spewIndent(JitSpew_Escape);
 
-  JSObject* templateObject = newArray->toNewArray()->templateObject();
-  if (!templateObject) {
-    JitSpew(JitSpew_Escape, "No template object defined.");
-    return true;
-  }
+  uint32_t length;
+  if (newArray->isNewArray()) {
+    if (!newArray->toNewArray()->templateObject()) {
+      JitSpew(JitSpew_Escape, "No template object defined.");
+      return true;
+    }
 
-  uint32_t length = newArray->toNewArray()->length();
+    length = newArray->toNewArray()->length();
+  } else {
+    length = newArray->toNewArrayCopyOnWrite()->templateObject()->length();
+  }
 
   if (length >= 16) {
     JitSpew(JitSpew_Escape, "Array has too many elements");
@@ -838,49 +884,15 @@ static bool IsArrayEscaped(MInstruction* ins, MInstruction* newArray) {
         break;
       }
 
-      case MDefinition::Opcode::GuardShape: {
-        MGuardShape* guard = def->toGuardShape();
-        if (templateObject->shape() != guard->shape()) {
-          JitSpewDef(JitSpew_Escape, "has a non-matching guard shape\n", guard);
-          return true;
-        }
-        if (IsArrayEscaped(guard, newArray)) {
-          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
-          return true;
-        }
-
-        break;
-      }
-
-      case MDefinition::Opcode::GuardToClass: {
-        MGuardToClass* guard = def->toGuardToClass();
-        if (templateObject->getClass() != guard->getClass()) {
-          JitSpewDef(JitSpew_Escape, "has a non-matching class guard\n", guard);
-          return true;
-        }
-        if (IsArrayEscaped(guard, newArray)) {
-          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
-          return true;
-        }
-
-        break;
-      }
-
-      case MDefinition::Opcode::Unbox: {
-        if (def->type() != MIRType::Object) {
-          JitSpewDef(JitSpew_Escape, "has an invalid unbox\n", def);
-          return true;
-        }
-        if (IsArrayEscaped(def->toInstruction(), newArray)) {
-          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
+      case MDefinition::Opcode::MaybeCopyElementsForWrite: {
+        MMaybeCopyElementsForWrite* copied = def->toMaybeCopyElementsForWrite();
+        MOZ_ASSERT(copied->object() == ins);
+        if (IsArrayEscaped(copied, ins)) {
+          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", copied);
           return true;
         }
         break;
       }
-
-      case MDefinition::Opcode::PostWriteBarrier:
-      case MDefinition::Opcode::PostWriteElementBarrier:
-        break;
 
       // This instruction is a no-op used to verify that scalar replacement
       // is working as expected in jit-test.
@@ -951,11 +963,8 @@ class ArrayMemoryView : public MDefinitionVisitorDefaultNoop {
   void visitSetInitializedLength(MSetInitializedLength* ins);
   void visitInitializedLength(MInitializedLength* ins);
   void visitArrayLength(MArrayLength* ins);
-  void visitPostWriteBarrier(MPostWriteBarrier* ins);
-  void visitPostWriteElementBarrier(MPostWriteElementBarrier* ins);
-  void visitGuardShape(MGuardShape* ins);
-  void visitGuardToClass(MGuardToClass* ins);
-  void visitUnbox(MUnbox* ins);
+  void visitMaybeCopyElementsForWrite(MMaybeCopyElementsForWrite* ins);
+  void visitConvertElementsToDoubles(MConvertElementsToDoubles* ins);
 };
 
 const char* ArrayMemoryView::phaseName = "Scalar Replacement of Array";
@@ -982,7 +991,10 @@ MBasicBlock* ArrayMemoryView::startingBlock() { return startBlock_; }
 bool ArrayMemoryView::initStartingState(BlockState** pState) {
   // Uninitialized elements have an "undefined" value.
   undefinedVal_ = MConstant::New(alloc_, UndefinedValue());
-  MConstant* initLength = MConstant::New(alloc_, Int32Value(0));
+  MConstant* initLength = MConstant::New(
+      alloc_, Int32Value(arr_->isNewArrayCopyOnWrite()
+                             ? arr_->toNewArrayCopyOnWrite()->length()
+                             : 0));
   arr_->block()->insertBefore(arr_, undefinedVal_);
   arr_->block()->insertBefore(arr_, initLength);
 
@@ -1162,14 +1174,7 @@ void ArrayMemoryView::visitLoadElement(MLoadElement* ins) {
   // Replace by the value contained at the index.
   int32_t index;
   MOZ_ALWAYS_TRUE(IndexOf(ins, &index));
-
-  // The only way to store a hole value in a new array is with
-  // StoreHoleValueElement, which IsElementEscaped does not allow.
-  // Therefore, we do not have to do a hole check.
-  MDefinition* element = state_->getElement(index);
-  MOZ_ASSERT(element->type() != MIRType::MagicHole);
-
-  ins->replaceAllUsesWith(element);
+  ins->replaceAllUsesWith(state_->getElement(index));
 
   // Remove original instruction.
   discardInstruction(ins, elements);
@@ -1183,7 +1188,7 @@ void ArrayMemoryView::visitSetInitializedLength(MSetInitializedLength* ins) {
   }
 
   // Replace by the new initialized length.  Note that the argument of
-  // MSetInitializedLength is the last index and not the initialized length.
+  // MSetInitalizedLength is the last index and not the initialized length.
   // To obtain the length, we need to add 1 to it, and thus we need to create
   // a new constant that we register in the ArrayState.
   state_ = BlockState::Copy(alloc_, state_);
@@ -1234,496 +1239,51 @@ void ArrayMemoryView::visitArrayLength(MArrayLength* ins) {
   discardInstruction(ins, elements);
 }
 
-void ArrayMemoryView::visitPostWriteBarrier(MPostWriteBarrier* ins) {
-  // Skip barriers on other objects.
-  if (ins->object() != arr_) {
-    return;
-  }
+void ArrayMemoryView::visitMaybeCopyElementsForWrite(
+    MMaybeCopyElementsForWrite* ins) {
+  MOZ_ASSERT(ins->numOperands() == 1);
+  MOZ_ASSERT(ins->type() == MIRType::Object);
 
-  // Remove original instruction.
-  ins->block()->discard(ins);
-}
-
-void ArrayMemoryView::visitPostWriteElementBarrier(
-    MPostWriteElementBarrier* ins) {
-  // Skip barriers on other objects.
-  if (ins->object() != arr_) {
-    return;
-  }
-
-  // Remove original instruction.
-  ins->block()->discard(ins);
-}
-
-void ArrayMemoryView::visitGuardShape(MGuardShape* ins) {
   // Skip guards on other objects.
   if (ins->object() != arr_) {
     return;
   }
 
-  // Replace the guard by its object.
+  // Nothing to do here: RArrayState::recover will copy the elements if
+  // needed.
+
+  // Replace the guard with the array.
   ins->replaceAllUsesWith(arr_);
 
   // Remove original instruction.
   ins->block()->discard(ins);
 }
 
-void ArrayMemoryView::visitGuardToClass(MGuardToClass* ins) {
-  // Skip guards on other objects.
-  if (ins->object() != arr_) {
+void ArrayMemoryView::visitConvertElementsToDoubles(
+    MConvertElementsToDoubles* ins) {
+  MOZ_ASSERT(ins->numOperands() == 1);
+  MOZ_ASSERT(ins->type() == MIRType::Elements);
+
+  // Skip other array objects.
+  MDefinition* elements = ins->elements();
+  if (!isArrayStateElements(elements)) {
     return;
   }
 
-  // Replace the guard by its object.
-  ins->replaceAllUsesWith(arr_);
-
-  // Remove original instruction.
-  ins->block()->discard(ins);
-}
-
-void ArrayMemoryView::visitUnbox(MUnbox* ins) {
-  // Skip unrelated unboxes.
-  if (ins->getOperand(0) != arr_) {
-    return;
-  }
-  MOZ_ASSERT(ins->type() == MIRType::Object);
-
-  // Replace the unbox with the array object.
-  ins->replaceAllUsesWith(arr_);
-
-  // Remove the unbox.
-  ins->block()->discard(ins);
-}
-
-static inline bool IsOptimizableArgumentsInstruction(MInstruction* ins) {
-  return ins->isCreateArgumentsObject() ||
-         ins->isCreateInlinedArgumentsObject();
-}
-
-class ArgumentsReplacer : public MDefinitionVisitorDefaultNoop {
- private:
-  MIRGenerator* mir_;
-  MIRGraph& graph_;
-  MInstruction* args_;
-
-  TempAllocator& alloc() { return graph_.alloc(); }
-
-  bool isInlinedArguments() const {
-    return args_->isCreateInlinedArgumentsObject();
-  }
-
-  void visitGuardToClass(MGuardToClass* ins);
-  void visitGuardArgumentsObjectFlags(MGuardArgumentsObjectFlags* ins);
-  void visitUnbox(MUnbox* ins);
-  void visitGetArgumentsObjectArg(MGetArgumentsObjectArg* ins);
-  void visitLoadArgumentsObjectArg(MLoadArgumentsObjectArg* ins);
-  void visitArgumentsObjectLength(MArgumentsObjectLength* ins);
-  void visitApplyArgsObj(MApplyArgsObj* ins);
-  void visitLoadFixedSlot(MLoadFixedSlot* ins);
-
- public:
-  ArgumentsReplacer(MIRGenerator* mir, MIRGraph& graph, MInstruction* args)
-      : mir_(mir), graph_(graph), args_(args) {
-    MOZ_ASSERT(IsOptimizableArgumentsInstruction(args_));
-  }
-
-  bool escapes(MInstruction* ins, bool guardedForMapped = false);
-  bool run();
-  void assertSuccess();
-};
-
-// Returns false if the arguments object does not escape.
-bool ArgumentsReplacer::escapes(MInstruction* ins, bool guardedForMapped) {
-  MOZ_ASSERT(ins->type() == MIRType::Object);
-
-  JitSpewDef(JitSpew_Escape, "Check arguments object\n", ins);
-  JitSpewIndent spewIndent(JitSpew_Escape);
-
-  // Check all uses to see whether they can be supported without
-  // allocating an ArgumentsObject.
-  for (MUseIterator i(ins->usesBegin()); i != ins->usesEnd(); i++) {
-    MNode* consumer = (*i)->consumer();
-
-    // If a resume point can observe this instruction, we can only optimize
-    // if it is recoverable.
-    if (consumer->isResumePoint()) {
-      if (!consumer->toResumePoint()->isRecoverableOperand(*i)) {
-        JitSpew(JitSpew_Escape, "Observable args object cannot be recovered");
-        return true;
-      }
-      continue;
-    }
-
-    MDefinition* def = consumer->toDefinition();
-    switch (def->op()) {
-      case MDefinition::Opcode::GuardToClass: {
-        MGuardToClass* guard = def->toGuardToClass();
-        if (!guard->isArgumentsObjectClass()) {
-          JitSpewDef(JitSpew_Escape, "has a non-matching class guard\n", guard);
-          return true;
-        }
-        bool isMapped = guard->getClass() == &MappedArgumentsObject::class_;
-        if (escapes(guard, isMapped)) {
-          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
-          return true;
-        }
-        break;
-      }
-
-      case MDefinition::Opcode::GuardArgumentsObjectFlags: {
-        if (escapes(def->toInstruction(), guardedForMapped)) {
-          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
-          return true;
-        }
-        break;
-      }
-
-      case MDefinition::Opcode::Unbox: {
-        if (def->type() != MIRType::Object) {
-          JitSpewDef(JitSpew_Escape, "has an invalid unbox\n", def);
-          return true;
-        }
-        if (escapes(def->toInstruction())) {
-          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
-          return true;
-        }
-        break;
-      }
-
-      case MDefinition::Opcode::LoadFixedSlot: {
-        MLoadFixedSlot* load = def->toLoadFixedSlot();
-
-        // We can replace arguments.callee.
-        if (load->slot() == ArgumentsObject::CALLEE_SLOT) {
-          MOZ_ASSERT(guardedForMapped);
-          continue;
-        }
-        JitSpew(JitSpew_Escape, "is escaped by unsupported LoadFixedSlot\n");
-        return true;
-      }
-
-      // This is a replaceable consumer.
-      case MDefinition::Opcode::ArgumentsObjectLength:
-      case MDefinition::Opcode::GetArgumentsObjectArg:
-      case MDefinition::Opcode::ApplyArgsObj:
-      case MDefinition::Opcode::LoadArgumentsObjectArg:
-        break;
-
-      // This instruction is a no-op used to test that scalar replacement
-      // is working as expected.
-      case MDefinition::Opcode::AssertRecoveredOnBailout:
-        break;
-
-      default:
-        JitSpewDef(JitSpew_Escape, "is escaped by\n", def);
-        return true;
-    }
-  }
-
-  JitSpew(JitSpew_Escape, "ArgumentsObject is not escaped");
-  return false;
-}
-
-// Replacing the arguments object is simpler than replacing an object
-// or array, because the arguments object does not change state.
-bool ArgumentsReplacer::run() {
-  MBasicBlock* startBlock = args_->block();
-
-  // Iterate over each basic block.
-  for (ReversePostorderIterator block = graph_.rpoBegin(startBlock);
-       block != graph_.rpoEnd(); block++) {
-    if (mir_->shouldCancel("Scalar replacement of Arguments Object")) {
-      return false;
-    }
-
-    // Iterates over phis and instructions.
-    // We do not have to visit resume points. Any resume points that capture
-    // the argument object will be handled by the Sink pass.
-    for (MNodeIterator iter(*block); iter;) {
-      // Increment the iterator before visiting the instruction, as the
-      // visit function might discard itself from the basic block.
-      MNode* ins = *iter++;
-      if (ins->isDefinition()) {
-        MDefinition* def = ins->toDefinition();
-        switch (def->op()) {
-#define MIR_OP(op)              \
-  case MDefinition::Opcode::op: \
-    visit##op(def->to##op());   \
-    break;
-          MIR_OPCODE_LIST(MIR_OP)
-#undef MIR_OP
-        }
-      }
-    }
-  }
-
-  assertSuccess();
-  return true;
-}
-
-void ArgumentsReplacer::assertSuccess() {
-  MOZ_ASSERT(args_->canRecoverOnBailout());
-  MOZ_ASSERT(!args_->hasLiveDefUses());
-}
-
-void ArgumentsReplacer::visitGuardToClass(MGuardToClass* ins) {
-  // Skip guards on other objects.
-  if (ins->object() != args_) {
-    return;
-  }
-  MOZ_ASSERT(ins->isArgumentsObjectClass());
-
-  // Replace the guard with the args object.
-  ins->replaceAllUsesWith(args_);
-
-  // Remove the guard.
-  ins->block()->discard(ins);
-}
-
-void ArgumentsReplacer::visitGuardArgumentsObjectFlags(
-    MGuardArgumentsObjectFlags* ins) {
-  // Skip other arguments objects.
-  if (ins->getArgsObject() != args_) {
-    return;
-  }
-
-#ifdef DEBUG
-  // Each *_OVERRIDDEN_BIT can only be set by setting or deleting a
-  // property of the args object. We have already determined that the
-  // args object doesn't escape, so its properties can't be mutated.
-  //
-  // FORWARDED_ARGUMENTS_BIT is set if any argument is closed over,
-  // which is an immutable property of the script. Because we are
-  // replacing the args object for a known script, we can check the
-  // flag once, which is done when we first attach the CacheIR, and
-  // rely on it.  (Note that this wouldn't be true if we didn't know
-  // the origin of args_, because it could be passed in from another
-  // function.)
-  uint32_t supportedBits = ArgumentsObject::LENGTH_OVERRIDDEN_BIT |
-                           ArgumentsObject::ITERATOR_OVERRIDDEN_BIT |
-                           ArgumentsObject::ELEMENT_OVERRIDDEN_BIT |
-                           ArgumentsObject::CALLEE_OVERRIDDEN_BIT |
-                           ArgumentsObject::FORWARDED_ARGUMENTS_BIT;
-
-  MOZ_ASSERT((ins->flags() & ~supportedBits) == 0);
-  MOZ_ASSERT_IF(ins->flags() & ArgumentsObject::FORWARDED_ARGUMENTS_BIT,
-                !args_->block()->info().anyFormalIsAliased());
-#endif
-
-  // Replace the guard with the args object.
-  ins->replaceAllUsesWith(args_);
-
-  // Remove the guard.
-  ins->block()->discard(ins);
-}
-
-void ArgumentsReplacer::visitUnbox(MUnbox* ins) {
-  // Skip unrelated unboxes.
-  if (ins->getOperand(0) != args_) {
-    return;
-  }
-  MOZ_ASSERT(ins->type() == MIRType::Object);
-
-  // Replace the unbox with the args object.
-  ins->replaceAllUsesWith(args_);
-
-  // Remove the unbox.
-  ins->block()->discard(ins);
-}
-
-void ArgumentsReplacer::visitGetArgumentsObjectArg(
-    MGetArgumentsObjectArg* ins) {
-  // Skip other arguments objects.
-  if (ins->getArgsObject() != args_) {
-    return;
-  }
-
-  // We don't support setting arguments in ArgumentsReplacer::escapes,
-  // so we can load the initial value of the argument without worrying
-  // about it being stale.
-  MDefinition* getArg;
-  if (isInlinedArguments()) {
-    // Inlined frames have direct access to the actual arguments.
-    auto* actualArgs = args_->toCreateInlinedArgumentsObject();
-    if (ins->argno() < actualArgs->numActuals()) {
-      getArg = actualArgs->getArg(ins->argno());
-    } else {
-      // Omitted arguments are not mapped to the arguments object, and
-      // will always be undefined.
-      auto* undef = MConstant::New(alloc(), UndefinedValue());
-      ins->block()->insertBefore(ins, undef);
-      getArg = undef;
-    }
-  } else {
-    // Load the argument from the frame.
-    auto* index = MConstant::New(alloc(), Int32Value(ins->argno()));
-    ins->block()->insertBefore(ins, index);
-
-    auto* loadArg = MGetFrameArgument::New(alloc(), index);
-    ins->block()->insertBefore(ins, loadArg);
-    getArg = loadArg;
-  }
-  ins->replaceAllUsesWith(getArg);
-
-  // Remove original instruction.
-  ins->block()->discard(ins);
-}
-
-void ArgumentsReplacer::visitLoadArgumentsObjectArg(
-    MLoadArgumentsObjectArg* ins) {
-  // Skip other arguments objects.
-  if (ins->getArgsObject() != args_) {
-    return;
-  }
-
-  MDefinition* index = ins->index();
-
-  MInstruction* loadArg;
-  if (isInlinedArguments()) {
-    auto* actualArgs = args_->toCreateInlinedArgumentsObject();
-
-    // TODO: optimize for constant indices.
-
-    // Insert bounds check.
-    auto* length =
-        MConstant::New(alloc(), Int32Value(actualArgs->numActuals()));
-    ins->block()->insertBefore(ins, length);
-
-    MInstruction* check = MBoundsCheck::New(alloc(), index, length);
-    check->setBailoutKind(ins->bailoutKind());
-    ins->block()->insertBefore(ins, check);
-
-    loadArg = MGetInlinedArgument::New(alloc(), check, actualArgs);
-  } else {
-    // Insert bounds check.
-    auto* length = MArgumentsLength::New(alloc());
-    ins->block()->insertBefore(ins, length);
-
-    MInstruction* check = MBoundsCheck::New(alloc(), index, length);
-    ins->block()->insertBefore(ins, check);
-
-    check->setBailoutKind(ins->bailoutKind());
-
-    if (JitOptions.spectreIndexMasking) {
-      check = MSpectreMaskIndex::New(alloc(), check, length);
-      ins->block()->insertBefore(ins, check);
-    }
-
-    loadArg = MGetFrameArgument::New(alloc(), check);
-  }
-  ins->block()->insertBefore(ins, loadArg);
-  ins->replaceAllUsesWith(loadArg);
-
-  // Remove original instruction.
-  ins->block()->discard(ins);
-}
-
-void ArgumentsReplacer::visitArgumentsObjectLength(
-    MArgumentsObjectLength* ins) {
-  // Skip other arguments objects.
-  if (ins->getArgsObject() != args_) {
-    return;
-  }
-
-  MInstruction* length;
-  if (isInlinedArguments()) {
-    uint32_t argc = args_->toCreateInlinedArgumentsObject()->numActuals();
-    length = MConstant::New(alloc(), Int32Value(argc));
-  } else {
-    length = MArgumentsLength::New(alloc());
-  }
-  ins->block()->insertBefore(ins, length);
-  ins->replaceAllUsesWith(length);
-
-  // Remove original instruction.
-  ins->block()->discard(ins);
-}
-
-void ArgumentsReplacer::visitApplyArgsObj(MApplyArgsObj* ins) {
-  // Skip other arguments objects.
-  if (ins->getArgsObj() != args_) {
-    return;
-  }
-
-  MInstruction* newIns;
-  if (isInlinedArguments()) {
-    auto* actualArgs = args_->toCreateInlinedArgumentsObject();
-    CallInfo callInfo(alloc(), /*constructing=*/false,
-                      ins->ignoresReturnValue());
-
-    callInfo.initForApplyInlinedArgs(ins->getFunction(), ins->getThis(),
-                                     actualArgs->numActuals());
-    for (uint32_t i = 0; i < actualArgs->numActuals(); i++) {
-      callInfo.initArg(i, actualArgs->getArg(i));
-    }
-
-    auto addUndefined = [this, &ins]() -> MConstant* {
-      MConstant* undef = MConstant::New(alloc(), UndefinedValue());
-      ins->block()->insertBefore(ins, undef);
-      return undef;
-    };
-
-    bool needsThisCheck = false;
-    bool isDOMCall = false;
-    auto* call = MakeCall(alloc(), addUndefined, callInfo, needsThisCheck,
-                          ins->getSingleTarget(), isDOMCall);
-    if (!ins->maybeCrossRealm()) {
-      call->setNotCrossRealm();
-    }
-    newIns = call;
-  } else {
-    auto* numArgs = MArgumentsLength::New(alloc());
-    ins->block()->insertBefore(ins, numArgs);
-
-    // TODO: Should we rename MApplyArgs?
-    auto* apply = MApplyArgs::New(alloc(), ins->getSingleTarget(),
-                                  ins->getFunction(), numArgs, ins->getThis());
-    if (!ins->maybeCrossRealm()) {
-      apply->setNotCrossRealm();
-    }
-    if (ins->ignoresReturnValue()) {
-      apply->setIgnoresReturnValue();
-    }
-    newIns = apply;
-  }
-
-  ins->block()->insertBefore(ins, newIns);
-  ins->replaceAllUsesWith(newIns);
-
-  newIns->stealResumePoint(ins);
-  ins->block()->discard(ins);
-}
-
-void ArgumentsReplacer::visitLoadFixedSlot(MLoadFixedSlot* ins) {
-  // Skip other arguments objects.
-  if (ins->object() != args_) {
-    return;
-  }
-
-  MOZ_ASSERT(ins->slot() == ArgumentsObject::CALLEE_SLOT);
-
-  MDefinition* replacement;
-  if (isInlinedArguments()) {
-    replacement = args_->toCreateInlinedArgumentsObject()->getCallee();
-  } else {
-    auto* callee = MCallee::New(alloc());
-    ins->block()->insertBefore(ins, callee);
-    replacement = callee;
-  }
-  ins->replaceAllUsesWith(replacement);
+  // We don't have to do anything else here: MConvertElementsToDoubles just
+  // exists to allow MLoadELement to use masm.loadDouble (without checking
+  // for int32 elements), but since we're using scalar replacement for the
+  // elements that doesn't matter.
+  ins->replaceAllUsesWith(elements);
 
   // Remove original instruction.
   ins->block()->discard(ins);
 }
 
 bool ScalarReplacement(MIRGenerator* mir, MIRGraph& graph) {
-  JitSpew(JitSpew_Escape, "Begin (ScalarReplacement)");
-
   EmulateStateOf<ObjectMemoryView> replaceObject(mir, graph);
   EmulateStateOf<ArrayMemoryView> replaceArray(mir, graph);
   bool addedPhi = false;
-  bool shouldReplaceArguments =
-      JitOptions.scalarReplaceArguments && !graph.osrBlock();
 
   for (ReversePostorderIterator block = graph.rpoBegin();
        block != graph.rpoEnd(); block++) {
@@ -1750,17 +1310,6 @@ bool ScalarReplacement(MIRGenerator* mir, MIRGraph& graph) {
         }
         view.assertSuccess();
         addedPhi = true;
-        continue;
-      }
-
-      if (shouldReplaceArguments && IsOptimizableArgumentsInstruction(*ins)) {
-        ArgumentsReplacer replacer(mir, graph, *ins);
-        if (replacer.escapes(*ins)) {
-          continue;
-        }
-        if (!replacer.run()) {
-          return false;
-        }
         continue;
       }
     }

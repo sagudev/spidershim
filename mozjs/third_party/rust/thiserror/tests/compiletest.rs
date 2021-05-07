@@ -1,5 +1,3 @@
-#![deny(clippy::all, clippy::pedantic)]
-
 #[rustversion::attr(not(nightly), ignore)]
 #[test]
 fn ui() {

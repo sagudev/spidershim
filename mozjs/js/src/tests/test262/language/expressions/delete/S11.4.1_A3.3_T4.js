@@ -3,18 +3,16 @@
 
 /*---
 info: If the property doesn't have the DontDelete attribute, remove the property
-esid: sec-delete-operator-runtime-semantics-evaluation
+es5id: 11.4.1_A3.3_T4
 description: Checking declared variable
 flags: [noStrict]
 ---*/
 
 //CHECK#1
-function MyFunction() {}
+function MyFunction(){};
 var MyObjectVar = new MyFunction();
 if (delete MyObjectVar !== false) {
-  $ERROR(
-    '#1: function MyFunction(){}; var MyObjectVar = new MyFunction(); delete MyObjectVar === false'
-  );
+  $ERROR('#1: function MyFunction(){}; var MyObjectVar = new MyFunction(); delete MyObjectVar === false');
 }
 
 reportCompare(0, 0);

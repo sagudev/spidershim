@@ -15,7 +15,6 @@ use std::task::Context;
 use futures_sink::Sink as Sink03;
 
 #[cfg(feature = "io-compat")]
-#[cfg_attr(docsrs, doc(cfg(feature = "io-compat")))]
 #[allow(unreachable_pub)] // https://github.com/rust-lang/rust/issues/57411
 pub use io::{AsyncRead01CompatExt, AsyncWrite01CompatExt};
 
@@ -32,8 +31,8 @@ impl<T> Unpin for Compat01As03<T> {}
 impl<T> Compat01As03<T> {
     /// Wraps a futures 0.1 Future, Stream, AsyncRead, or AsyncWrite
     /// object in a futures 0.3-compatible wrapper.
-    pub fn new(object: T) -> Self {
-        Self {
+    pub fn new(object: T) -> Compat01As03<T> {
+        Compat01As03 {
             inner: spawn01(object),
         }
     }
@@ -116,7 +115,6 @@ impl<St: Stream01> Stream01CompatExt for St {}
 
 /// Extension trait for futures 0.1 [`Sink`](futures_01::sink::Sink)
 #[cfg(feature = "sink")]
-#[cfg_attr(docsrs, doc(cfg(feature = "sink")))]
 pub trait Sink01CompatExt: Sink01 {
     /// Converts a futures 0.1
     /// [`Sink<SinkItem = T, SinkError = E>`](futures_01::sink::Sink)
@@ -182,7 +180,6 @@ impl<St: Stream01> Stream03 for Compat01As03<St> {
 
 /// Converts a futures 0.1 Sink object to a futures 0.3-compatible version
 #[cfg(feature = "sink")]
-#[cfg_attr(docsrs, doc(cfg(feature = "sink")))]
 #[derive(Debug)]
 #[must_use = "sinks do nothing unless polled"]
 pub struct Compat01As03Sink<S, SinkItem> {
@@ -197,8 +194,8 @@ impl<S, SinkItem> Unpin for Compat01As03Sink<S, SinkItem> {}
 #[cfg(feature = "sink")]
 impl<S, SinkItem> Compat01As03Sink<S, SinkItem> {
     /// Wraps a futures 0.1 Sink object in a futures 0.3-compatible wrapper.
-    pub fn new(inner: S) -> Self {
-        Self {
+    pub fn new(inner: S) -> Compat01As03Sink<S, SinkItem> {
+        Compat01As03Sink {
             inner: spawn01(inner),
             buffer: None,
             close_started: false
@@ -344,10 +341,10 @@ struct NotifyWaker(task03::Waker);
 struct WakerToHandle<'a>(&'a task03::Waker);
 
 impl From<WakerToHandle<'_>> for NotifyHandle01 {
-    fn from(handle: WakerToHandle<'_>) -> Self {
+    fn from(handle: WakerToHandle<'_>) -> NotifyHandle01 {
         let ptr = Box::new(NotifyWaker(handle.0.clone()));
 
-        unsafe { Self::new(Box::into_raw(ptr)) }
+        unsafe { NotifyHandle01::new(Box::into_raw(ptr)) }
     }
 }
 
@@ -369,7 +366,6 @@ unsafe impl UnsafeNotify01 for NotifyWaker {
 }
 
 #[cfg(feature = "io-compat")]
-#[cfg_attr(docsrs, doc(cfg(feature = "io-compat")))]
 mod io {
     use super::*;
     #[cfg(feature = "read-initializer")]
@@ -379,19 +375,20 @@ mod io {
     use tokio_io::{AsyncRead as AsyncRead01, AsyncWrite as AsyncWrite01};
 
     /// Extension trait for tokio-io [`AsyncRead`](tokio_io::AsyncRead)
-    #[cfg_attr(docsrs, doc(cfg(feature = "io-compat")))]
     pub trait AsyncRead01CompatExt: AsyncRead01 {
         /// Converts a tokio-io [`AsyncRead`](tokio_io::AsyncRead) into a futures-io 0.3
         /// [`AsyncRead`](futures_io::AsyncRead).
         ///
         /// ```
+        /// #![feature(impl_trait_in_bindings)]
+        /// # #![allow(incomplete_features)]
         /// # futures::executor::block_on(async {
         /// use futures::io::AsyncReadExt;
         /// use futures_util::compat::AsyncRead01CompatExt;
         ///
         /// let input = b"Hello World!";
-        /// let reader /* : impl tokio_io::AsyncRead */ = std::io::Cursor::new(input);
-        /// let mut reader /* : impl futures::io::AsyncRead + Unpin */ = reader.compat();
+        /// let reader: impl tokio_io::AsyncRead = std::io::Cursor::new(input);
+        /// let mut reader: impl futures::io::AsyncRead + Unpin = reader.compat();
         ///
         /// let mut output = Vec::with_capacity(12);
         /// reader.read_to_end(&mut output).await.unwrap();
@@ -408,7 +405,6 @@ mod io {
     impl<R: AsyncRead01> AsyncRead01CompatExt for R {}
 
     /// Extension trait for tokio-io [`AsyncWrite`](tokio_io::AsyncWrite)
-    #[cfg_attr(docsrs, doc(cfg(feature = "io-compat")))]
     pub trait AsyncWrite01CompatExt: AsyncWrite01 {
         /// Converts a tokio-io [`AsyncWrite`](tokio_io::AsyncWrite) into a futures-io 0.3
         /// [`AsyncWrite`](futures_io::AsyncWrite).

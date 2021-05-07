@@ -4,13 +4,12 @@
 
 #include "jsapi-tests/tests.h"
 
-static const unsigned BufSize = 20;
+static const unsigned BufferSize = 20;
 static unsigned FinalizeCalls = 0;
-static JSFinalizeStatus StatusBuffer[BufSize];
+static JSFinalizeStatus StatusBuffer[BufferSize];
 
 BEGIN_TEST(testGCFinalizeCallback) {
-  JS_SetGCParameter(cx, JSGC_INCREMENTAL_GC_ENABLED, true);
-  JS_SetGCParameter(cx, JSGC_PER_ZONE_GC_ENABLED, true);
+  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_ZONE_INCREMENTAL);
 
   /* Full GC, non-incremental. */
   FinalizeCalls = 0;
@@ -128,9 +127,6 @@ BEGIN_TEST(testGCFinalizeCallback) {
   CHECK(JS_IsGlobalObject(global2));
   CHECK(JS_IsGlobalObject(global3));
 
-  JS_SetGCParameter(cx, JSGC_INCREMENTAL_GC_ENABLED, false);
-  JS_SetGCParameter(cx, JSGC_PER_ZONE_GC_ENABLED, false);
-
   return true;
 }
 
@@ -155,13 +151,13 @@ virtual void uninit() override {
 }
 
 bool checkSingleGroup() {
-  CHECK(FinalizeCalls < BufSize);
+  CHECK(FinalizeCalls < BufferSize);
   CHECK(FinalizeCalls == 4);
   return true;
 }
 
 bool checkMultipleGroups() {
-  CHECK(FinalizeCalls < BufSize);
+  CHECK(FinalizeCalls < BufferSize);
   CHECK(FinalizeCalls % 3 == 1);
   CHECK((FinalizeCalls - 1) / 3 > 1);
   return true;
@@ -187,7 +183,7 @@ bool checkFinalizeStatus() {
 
 static void FinalizeCallback(JSFreeOp* fop, JSFinalizeStatus status,
                              void* data) {
-  if (FinalizeCalls < BufSize) {
+  if (FinalizeCalls < BufferSize) {
     StatusBuffer[FinalizeCalls] = status;
   }
   ++FinalizeCalls;

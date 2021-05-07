@@ -7,6 +7,8 @@
 #ifndef builtin_intl_PluralRules_h
 #define builtin_intl_PluralRules_h
 
+#include "mozilla/Attributes.h"
+
 #include "builtin/SelfHostingDefines.h"
 #include "js/Class.h"
 #include "js/RootingAPI.h"
@@ -33,11 +35,10 @@ class PluralRulesObject : public NativeObject {
                 "INTERNALS_SLOT must match self-hosting define for internals "
                 "object slot");
 
-  // Estimated memory use for UNumberFormatter and UFormattedNumber
-  // (see IcuMemoryUsage).
+  // Estimated memory use for UNumberFormatter and UFormattedNumber.
   static constexpr size_t UNumberFormatterEstimatedMemoryUse = 750;
 
-  // Estimated memory use for UPluralRules (see IcuMemoryUsage).
+  // Estimated memory use for UPluralRules.
   static constexpr size_t UPluralRulesEstimatedMemoryUse = 2976;
 
   UPluralRules* getPluralRules() const {
@@ -92,8 +93,8 @@ class PluralRulesObject : public NativeObject {
  *
  * Usage: rule = intl_SelectPluralRule(pluralRules, x)
  */
-[[nodiscard]] extern bool intl_SelectPluralRule(JSContext* cx, unsigned argc,
-                                                JS::Value* vp);
+extern MOZ_MUST_USE bool intl_SelectPluralRule(JSContext* cx, unsigned argc,
+                                               JS::Value* vp);
 
 /**
  * Returns an array of plural rules categories for a given pluralRules object.
@@ -105,8 +106,8 @@ class PluralRulesObject : public NativeObject {
  * pluralRules = new Intl.PluralRules('pl', {type: 'cardinal'});
  * intl_getPluralCategories(pluralRules); // ['one', 'few', 'many', 'other']
  */
-[[nodiscard]] extern bool intl_GetPluralCategories(JSContext* cx, unsigned argc,
-                                                   JS::Value* vp);
+extern MOZ_MUST_USE bool intl_GetPluralCategories(JSContext* cx, unsigned argc,
+                                                  JS::Value* vp);
 
 }  // namespace js
 

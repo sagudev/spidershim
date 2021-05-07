@@ -1,4 +1,4 @@
-// |jit-test| test-also=--wasm-compiler=optimizing; error: TestComplete; skip-if: !wasmDebuggingEnabled()
+// |jit-test| test-also=--wasm-compiler=ion; error: TestComplete; skip-if: !wasmDebuggingIsSupported()
 // Tests that wasm module scripts raises onEnterFrame and onLeaveFrame events.
 
 load(libdir + "asserts.js");
@@ -52,7 +52,7 @@ runWasmWithDebugger(
             assertEq(env.inspectable, true);
             assertEq(env.parent !== null, true);
             assertEq(env.type, 'declarative');
-            assertEq(env.calleeScript, null);
+            assertEq(env.callee, null);
             assertEq(Array.isArray(env.names()), true);
             assertEq(env.names().length, 0);
 

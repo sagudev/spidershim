@@ -9,7 +9,6 @@
 #include "builtin/Array.h"
 
 #include "jit/InlinableNatives.h"
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_NOT_EXPECTED_TYPE
 #include "js/PropertySpec.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/JSContext.h"
@@ -45,7 +44,7 @@ static bool Reflect_deleteProperty(JSContext* cx, unsigned argc, Value* vp) {
   if (!DeleteProperty(cx, target, key, result)) {
     return false;
   }
-  args.rval().setBoolean(result.ok());
+  args.rval().setBoolean(result.reallyOk());
   return true;
 }
 
@@ -125,7 +124,7 @@ static bool Reflect_preventExtensions(JSContext* cx, unsigned argc, Value* vp) {
   if (!PreventExtensions(cx, target, result)) {
     return false;
   }
-  args.rval().setBoolean(result.ok());
+  args.rval().setBoolean(result.reallyOk());
   return true;
 }
 
@@ -156,7 +155,7 @@ static bool Reflect_set(JSContext* cx, unsigned argc, Value* vp) {
   if (!SetProperty(cx, target, key, value, receiver, result)) {
     return false;
   }
-  args.rval().setBoolean(result.ok());
+  args.rval().setBoolean(result.reallyOk());
   return true;
 }
 
@@ -191,7 +190,7 @@ static bool Reflect_setPrototypeOf(JSContext* cx, unsigned argc, Value* vp) {
   if (!SetPrototype(cx, obj, proto, result)) {
     return false;
   }
-  args.rval().setBoolean(result.ok());
+  args.rval().setBoolean(result.reallyOk());
   return true;
 }
 
@@ -213,9 +212,6 @@ static const JSFunctionSpec reflect_methods[] = {
     JS_FN("setPrototypeOf", Reflect_setPrototypeOf, 2, 0),
     JS_FS_END};
 
-static const JSPropertySpec reflect_properties[] = {
-    JS_STRING_SYM_PS(toStringTag, "Reflect", JSPROP_READONLY), JS_PS_END};
-
 /*** Setup ******************************************************************/
 
 static JSObject* CreateReflectObject(JSContext* cx, JSProtoKey key) {
@@ -224,11 +220,11 @@ static JSObject* CreateReflectObject(JSContext* cx, JSProtoKey key) {
   if (!proto) {
     return nullptr;
   }
-  return NewTenuredObjectWithGivenProto<PlainObject>(cx, proto);
+  return NewSingletonObjectWithGivenProto<PlainObject>(cx, proto);
 }
 
 static const ClassSpec ReflectClassSpec = {CreateReflectObject, nullptr,
-                                           reflect_methods, reflect_properties};
+                                           reflect_methods, nullptr};
 
 const JSClass js::ReflectClass = {"Reflect", 0, JS_NULL_CLASS_OPS,
                                   &ReflectClassSpec};

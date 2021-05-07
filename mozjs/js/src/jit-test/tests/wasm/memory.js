@@ -113,7 +113,7 @@ function testStore(type, ext, base, offset, align, value) {
 function testStoreOOB(type, ext, base, offset, align, value) {
     if (type === 'i64') {
         assertErrorMessage(() => wasmAssert(
-            storeModuleSrc(type, ext, offset, align),
+            storeModuleSrc(type, ext, offset, align, value),
             [{type, func: '$store', args: [`i32.const ${base}`, `i64.const ${value}`]}]
         ), RuntimeError, /index out of bounds/);
     } else {
@@ -122,11 +122,11 @@ function testStoreOOB(type, ext, base, offset, align, value) {
 }
 
 function badLoadModule(type, ext) {
-    wasmFailValidateText( `(module (func (param i32) (${type}.load${ext} (local.get 0))) (export "" (func 0)))`, /(can't touch memory)|(unknown memory 0)/);
+    wasmFailValidateText( `(module (func (param i32) (${type}.load${ext} (local.get 0))) (export "" (func 0)))`, /can't touch memory/);
 }
 
 function badStoreModule(type, ext) {
-    wasmFailValidateText(`(module (func (param i32) (${type}.store${ext} (local.get 0) (${type}.const 0))) (export "" (func 0)))`, /(can't touch memory)|(unknown memory 0)/);
+    wasmFailValidateText(`(module (func (param i32) (${type}.store${ext} (local.get 0) (${type}.const 0))) (export "" (func 0)))`, /can't touch memory/);
 }
 
 // Can't touch memory.
@@ -266,7 +266,7 @@ for (var foldOffsets = 0; foldOffsets <= 1; foldOffsets++) {
         }
 
         // Ensure wrapping doesn't apply.
-        offset = 0x7fffffff;
+        offset = 0x7fffffff; // maximum allowed offset that doesn't always throw.
         for (let index of [0, 1, 2, 3, 0x7fffffff, 0x80000000, 0x80000001]) {
             if (align < 2) {
                 testLoadOOB('i32', '8_s', index, offset, align);

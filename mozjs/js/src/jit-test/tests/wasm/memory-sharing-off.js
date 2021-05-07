@@ -1,4 +1,4 @@
-// |jit-test| --shared-memory=off; skip-if: !wasmThreadsEnabled()
+// |jit-test| --shared-memory=off; skip-if: !wasmThreadsSupported()
 
 // A module using shared memory should be convertable from text to binary even
 // if shared memory is disabled.

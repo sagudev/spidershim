@@ -4,9 +4,9 @@ extern crate euclid;
 extern crate plane_split;
 extern crate test;
 
-use euclid::vec3;
-use plane_split::{make_grid, BspSplitter, Splitter};
 use std::sync::Arc;
+use euclid::vec3;
+use plane_split::{BspSplitter, Splitter, make_grid};
 
 #[bench]
 fn bench_bsp(b: &mut test::Bencher) {

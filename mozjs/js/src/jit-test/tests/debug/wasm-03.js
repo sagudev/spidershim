@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmDebuggingEnabled()
+// |jit-test| skip-if: !wasmDebuggingIsSupported()
 
 // Tests that wasm module scripts have synthesized sources.
 

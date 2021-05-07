@@ -1233,22 +1233,6 @@ impl<'alloc> AstBuilder<'alloc> {
         })
     }
 
-    // OptionalChain : `?.` PrivateIdentifier
-    pub fn optional_private_field_member_expr_tail(
-        &self,
-        start_token: arena::Box<'alloc, Token>,
-        private_identifier: arena::Box<'alloc, Token>,
-    ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
-        let private_identifier_loc = private_identifier.loc;
-        let field = self.private_identifier(private_identifier)?;
-        Ok(self.alloc_with(|| {
-            Expression::OptionalChain(OptionalChain::PrivateFieldExpressionTail {
-                field,
-                loc: SourceLocation::from_parts(start_token.loc, private_identifier_loc),
-            })
-        }))
-    }
-
     // OptionalChain : `?.` Arguments
     pub fn optional_call_expr_tail(
         &self,
@@ -1309,26 +1293,6 @@ impl<'alloc> AstBuilder<'alloc> {
         })
     }
 
-    // OptionalChain : OptionalChain `.` PrivateIdentifier
-    pub fn optional_private_field_member_expr(
-        &self,
-        object: arena::Box<'alloc, Expression<'alloc>>,
-        private_identifier: arena::Box<'alloc, Token>,
-    ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
-        let object_loc = object.get_loc();
-        let private_identifier_loc = private_identifier.loc;
-        let field = self.private_identifier(private_identifier)?;
-        Ok(self.alloc_with(|| {
-            Expression::OptionalChain(OptionalChain::PrivateFieldExpression(
-                PrivateFieldExpression {
-                    object: ExpressionOrSuper::Expression(object),
-                    field,
-                    loc: SourceLocation::from_parts(object_loc, private_identifier_loc),
-                },
-            ))
-        }))
-    }
-
     // OptionalChain : OptionalChain Arguments
     pub fn optional_call_expr(
         &self,
@@ -1360,20 +1324,11 @@ impl<'alloc> AstBuilder<'alloc> {
         }
     }
 
-    fn private_identifier(
-        &self,
-        _token: arena::Box<'alloc, Token>,
-    ) -> Result<'alloc, PrivateIdentifier> {
-        Err(ParseError::NotImplemented(
-            "private fields depends on shell switch, that is not supported",
-        )
-        .into())
-        /*
-                PrivateIdentifier {
-                    value: token.value.as_atom(),
-                    loc: token.loc,
-                }
-        */
+    fn private_identifier(&self, token: arena::Box<'alloc, Token>) -> PrivateIdentifier {
+        PrivateIdentifier {
+            value: token.value.as_atom(),
+            loc: token.loc,
+        }
     }
 
     // MemberExpression : MemberExpression `.` IdentifierName
@@ -1427,19 +1382,18 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         object: arena::Box<'alloc, Expression<'alloc>>,
         private_identifier: arena::Box<'alloc, Token>,
-    ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
+    ) -> arena::Box<'alloc, Expression<'alloc>> {
         let object_loc = object.get_loc();
         let field_loc = private_identifier.loc;
-        let field = self.private_identifier(private_identifier)?;
-        Ok(self.alloc_with(|| {
+        self.alloc_with(|| {
             Expression::MemberExpression(MemberExpression::PrivateFieldExpression(
                 PrivateFieldExpression {
-                    object: ExpressionOrSuper::Expression(object),
-                    field,
+                    object,
+                    field: self.private_identifier(private_identifier),
                     loc: SourceLocation::from_parts(object_loc, field_loc),
                 },
             ))
-        }))
+        })
     }
 
     // SuperProperty : `super` `[` Expression `]`
@@ -1448,11 +1402,9 @@ impl<'alloc> AstBuilder<'alloc> {
         super_token: arena::Box<'alloc, Token>,
         expression: arena::Box<'alloc, Expression<'alloc>>,
         close_token: arena::Box<'alloc, Token>,
-    ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
-        self.check_super()?;
-
+    ) -> arena::Box<'alloc, Expression<'alloc>> {
         let super_loc = super_token.loc;
-        Ok(self.alloc_with(|| {
+        self.alloc_with(|| {
             Expression::MemberExpression(MemberExpression::ComputedMemberExpression(
                 ComputedMemberExpression {
                     object: ExpressionOrSuper::Super { loc: super_loc },
@@ -1460,7 +1412,7 @@ impl<'alloc> AstBuilder<'alloc> {
                     loc: SourceLocation::from_parts(super_loc, close_token.loc),
                 },
             ))
-        }))
+        })
     }
 
     // SuperProperty : `super` `.` IdentifierName
@@ -1468,12 +1420,10 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         super_token: arena::Box<'alloc, Token>,
         identifier_token: arena::Box<'alloc, Token>,
-    ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
-        self.check_super()?;
-
+    ) -> arena::Box<'alloc, Expression<'alloc>> {
         let super_loc = super_token.loc;
         let identifier_loc = identifier_token.loc;
-        Ok(self.alloc_with(|| {
+        self.alloc_with(|| {
             Expression::MemberExpression(MemberExpression::StaticMemberExpression(
                 StaticMemberExpression {
                     object: ExpressionOrSuper::Super { loc: super_loc },
@@ -1481,7 +1431,7 @@ impl<'alloc> AstBuilder<'alloc> {
                     loc: SourceLocation::from_parts(super_loc, identifier_loc),
                 },
             ))
-        }))
+        })
     }
 
     // NewTarget : `new` `.` `target`
@@ -1536,18 +1486,16 @@ impl<'alloc> AstBuilder<'alloc> {
         &self,
         super_token: arena::Box<'alloc, Token>,
         arguments: arena::Box<'alloc, Arguments<'alloc>>,
-    ) -> Result<'alloc, arena::Box<'alloc, Expression<'alloc>>> {
-        self.check_super()?;
-
+    ) -> arena::Box<'alloc, Expression<'alloc>> {
         let super_loc = super_token.loc;
         let arguments_loc = arguments.loc;
-        Ok(self.alloc_with(|| {
+        self.alloc_with(|| {
             Expression::CallExpression(CallExpression {
                 callee: ExpressionOrSuper::Super { loc: super_loc },
                 arguments: arguments.unbox(),
                 loc: SourceLocation::from_parts(super_loc, arguments_loc),
             })
-        }))
+        })
     }
 
     // ImportCall : `import` `(` AssignmentExpression `)`
@@ -2180,13 +2128,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         expression,
                         loc,
                     },
-                ),
-            ),
-            Expression::MemberExpression(MemberExpression::PrivateFieldExpression(
-                PrivateFieldExpression { object, field, loc },
-            )) => SimpleAssignmentTarget::MemberAssignmentTarget(
-                MemberAssignmentTarget::PrivateFieldAssignmentTarget(
-                    PrivateFieldAssignmentTarget { object, field, loc },
                 ),
             ),
 
@@ -3878,10 +3819,10 @@ impl<'alloc> AstBuilder<'alloc> {
         self.alloc_with(|| ArrowExpressionBody::FunctionBody(body.unbox()))
     }
 
-    // MethodDefinition : ClassElementName `(` UniqueFormalParameters `)` `{` FunctionBody `}`
+    // MethodDefinition : PropertyName `(` UniqueFormalParameters `)` `{` FunctionBody `}`
     pub fn method_definition(
         &mut self,
-        name: arena::Box<'alloc, ClassElementName<'alloc>>,
+        name: arena::Box<'alloc, PropertyName<'alloc>>,
         param_open_token: arena::Box<'alloc, Token>,
         mut params: arena::Box<'alloc, FormalParameters<'alloc>>,
         param_close_token: arena::Box<'alloc, Token>,
@@ -3911,11 +3852,11 @@ impl<'alloc> AstBuilder<'alloc> {
         }))
     }
 
-    // MethodDefinition : `get` ClassElementName `(` `)` `{` FunctionBody `}`
+    // MethodDefinition : `get` PropertyName `(` `)` `{` FunctionBody `}`
     pub fn getter(
         &self,
         get_token: arena::Box<'alloc, Token>,
-        name: arena::Box<'alloc, ClassElementName<'alloc>>,
+        name: arena::Box<'alloc, PropertyName<'alloc>>,
         body_open_token: arena::Box<'alloc, Token>,
         mut body: arena::Box<'alloc, FunctionBody<'alloc>>,
         body_close_token: arena::Box<'alloc, Token>,
@@ -3931,11 +3872,11 @@ impl<'alloc> AstBuilder<'alloc> {
         })
     }
 
-    // MethodDefinition : `set` ClassElementName `(` PropertySetParameterList `)` `{` FunctionBody `}`
+    // MethodDefinition : `set` PropertyName `(` PropertySetParameterList `)` `{` FunctionBody `}`
     pub fn setter(
         &mut self,
         set_token: arena::Box<'alloc, Token>,
-        name: arena::Box<'alloc, ClassElementName<'alloc>>,
+        name: arena::Box<'alloc, PropertyName<'alloc>>,
         param_open_token: arena::Box<'alloc, Token>,
         mut parameter: arena::Box<'alloc, Parameter<'alloc>>,
         param_close_token: arena::Box<'alloc, Token>,
@@ -3963,11 +3904,11 @@ impl<'alloc> AstBuilder<'alloc> {
         }))
     }
 
-    // GeneratorMethod : `*` ClassElementName `(` UniqueFormalParameters `)` `{` GeneratorBody `}`
+    // GeneratorMethod : `*` PropertyName `(` UniqueFormalParameters `)` `{` GeneratorBody `}`
     pub fn generator_method(
         &mut self,
         generator_token: arena::Box<'alloc, Token>,
-        name: arena::Box<'alloc, ClassElementName<'alloc>>,
+        name: arena::Box<'alloc, PropertyName<'alloc>>,
         param_open_token: arena::Box<'alloc, Token>,
         mut params: arena::Box<'alloc, FormalParameters<'alloc>>,
         param_close_token: arena::Box<'alloc, Token>,
@@ -4029,11 +3970,11 @@ impl<'alloc> AstBuilder<'alloc> {
         })
     }
 
-    // AsyncGeneratorMethod ::= "async" "*" ClassElementName "(" UniqueFormalParameters ")" "{" AsyncGeneratorBody "}"
+    // AsyncGeneratorMethod ::= "async" "*" PropertyName "(" UniqueFormalParameters ")" "{" AsyncGeneratorBody "}"
     pub fn async_generator_method(
         &mut self,
         async_token: arena::Box<'alloc, Token>,
-        name: arena::Box<'alloc, ClassElementName<'alloc>>,
+        name: arena::Box<'alloc, PropertyName<'alloc>>,
         param_open_token: arena::Box<'alloc, Token>,
         mut params: arena::Box<'alloc, FormalParameters<'alloc>>,
         param_close_token: arena::Box<'alloc, Token>,
@@ -4186,9 +4127,10 @@ impl<'alloc> AstBuilder<'alloc> {
     pub fn class_element_name_private(
         &self,
         private_identifier: arena::Box<'alloc, Token>,
-    ) -> Result<'alloc, arena::Box<'alloc, ClassElementName<'alloc>>> {
-        let name = self.private_identifier(private_identifier)?;
-        Ok(self.alloc_with(|| ClassElementName::PrivateFieldName(name)))
+    ) -> arena::Box<'alloc, ClassElementName<'alloc>> {
+        self.alloc_with(|| {
+            ClassElementName::PrivateFieldName(self.private_identifier(private_identifier))
+        })
     }
 
     // ClassElement : MethodDefinition
@@ -4244,11 +4186,11 @@ impl<'alloc> AstBuilder<'alloc> {
         self.alloc_with(|| self.new_vec())
     }
 
-    // AsyncMethod : `async` ClassElementName `(` UniqueFormalParameters `)` `{` AsyncFunctionBody `}`
+    // AsyncMethod : `async` PropertyName `(` UniqueFormalParameters `)` `{` AsyncFunctionBody `}`
     pub fn async_method(
         &mut self,
         async_token: arena::Box<'alloc, Token>,
-        name: arena::Box<'alloc, ClassElementName<'alloc>>,
+        name: arena::Box<'alloc, PropertyName<'alloc>>,
         param_open_token: arena::Box<'alloc, Token>,
         mut params: arena::Box<'alloc, FormalParameters<'alloc>>,
         param_close_token: arena::Box<'alloc, Token>,

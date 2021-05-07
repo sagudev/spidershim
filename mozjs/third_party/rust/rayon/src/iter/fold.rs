@@ -60,7 +60,7 @@ where
     }
 }
 
-struct FoldConsumer<'c, C, ID, F> {
+struct FoldConsumer<'c, C, ID: 'c, F: 'c> {
     base: C,
     fold_op: &'c F,
     identity: &'c ID,
@@ -121,7 +121,7 @@ where
     }
 }
 
-struct FoldFolder<'r, C, ID, F> {
+struct FoldFolder<'r, C, ID, F: 'r> {
     base: C,
     fold_op: &'r F,
     item: ID,
@@ -237,7 +237,7 @@ where
     }
 }
 
-struct FoldWithConsumer<'c, C, U, F> {
+struct FoldWithConsumer<'c, C, U, F: 'c> {
     base: C,
     item: U,
     fold_op: &'c F,

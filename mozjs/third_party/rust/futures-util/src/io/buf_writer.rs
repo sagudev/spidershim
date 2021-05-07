@@ -1,40 +1,43 @@
-use futures_core::ready;
 use futures_core::task::{Context, Poll};
-use futures_io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite, IoSlice, SeekFrom};
-use pin_project_lite::pin_project;
+#[cfg(feature = "read-initializer")]
+use futures_io::Initializer;
+use futures_io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite, IoSlice, IoSliceMut, SeekFrom};
+use pin_utils::{unsafe_pinned, unsafe_unpinned};
 use std::fmt;
 use std::io::{self, Write};
 use std::pin::Pin;
 use super::DEFAULT_BUF_SIZE;
 
-pin_project! {
-    /// Wraps a writer and buffers its output.
-    ///
-    /// It can be excessively inefficient to work directly with something that
-    /// implements [`AsyncWrite`]. A `BufWriter` keeps an in-memory buffer of data and
-    /// writes it to an underlying writer in large, infrequent batches.
-    ///
-    /// `BufWriter` can improve the speed of programs that make *small* and
-    /// *repeated* write calls to the same file or network socket. It does not
-    /// help when writing very large amounts at once, or writing just one or a few
-    /// times. It also provides no advantage when writing to a destination that is
-    /// in memory, like a `Vec<u8>`.
-    ///
-    /// When the `BufWriter` is dropped, the contents of its buffer will be
-    /// discarded. Creating multiple instances of a `BufWriter` on the same
-    /// stream can cause data loss. If you need to write out the contents of its
-    /// buffer, you must manually call flush before the writer is dropped.
-    ///
-    /// [`AsyncWrite`]: futures_io::AsyncWrite
-    /// [`flush`]: super::AsyncWriteExt::flush
-    ///
-    // TODO: Examples
-    pub struct BufWriter<W> {
-        #[pin]
-        inner: W,
-        buf: Vec<u8>,
-        written: usize,
-    }
+/// Wraps a writer and buffers its output.
+///
+/// It can be excessively inefficient to work directly with something that
+/// implements [`AsyncWrite`]. A `BufWriter` keeps an in-memory buffer of data and
+/// writes it to an underlying writer in large, infrequent batches.
+///
+/// `BufWriter` can improve the speed of programs that make *small* and
+/// *repeated* write calls to the same file or network socket. It does not
+/// help when writing very large amounts at once, or writing just one or a few
+/// times. It also provides no advantage when writing to a destination that is
+/// in memory, like a `Vec<u8>`.
+///
+/// When the `BufWriter` is dropped, the contents of its buffer will be
+/// discarded. Creating multiple instances of a `BufWriter` on the same
+/// stream can cause data loss. If you need to write out the contents of its
+/// buffer, you must manually call flush before the writer is dropped.
+///
+/// [`AsyncWrite`]: futures_io::AsyncWrite
+/// [`flush`]: super::AsyncWriteExt::flush
+///
+// TODO: Examples
+pub struct BufWriter<W> {
+    inner: W,
+    buf: Vec<u8>,
+    written: usize,
+}
+
+impl<W> BufWriter<W> {
+    unsafe_pinned!(inner: W);
+    unsafe_unpinned!(buf: Vec<u8>);
 }
 
 impl<W: AsyncWrite> BufWriter<W> {
@@ -54,12 +57,13 @@ impl<W: AsyncWrite> BufWriter<W> {
     }
 
     fn flush_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut this = self.project();
+        let Self { inner, buf, written } = unsafe { self.get_unchecked_mut() };
+        let mut inner = unsafe { Pin::new_unchecked(inner) };
 
-        let len = this.buf.len();
+        let len = buf.len();
         let mut ret = Ok(());
-        while *this.written < len {
-            match ready!(this.inner.as_mut().poll_write(cx, &this.buf[*this.written..])) {
+        while *written < len {
+            match ready!(inner.as_mut().poll_write(cx, &buf[*written..])) {
                 Ok(0) => {
                     ret = Err(io::Error::new(
                         io::ErrorKind::WriteZero,
@@ -67,21 +71,45 @@ impl<W: AsyncWrite> BufWriter<W> {
                     ));
                     break;
                 }
-                Ok(n) => *this.written += n,
+                Ok(n) => *written += n,
                 Err(e) => {
                     ret = Err(e);
                     break;
                 }
             }
         }
-        if *this.written > 0 {
-            this.buf.drain(..*this.written);
+        if *written > 0 {
+            buf.drain(..*written);
         }
-        *this.written = 0;
+        *written = 0;
         Poll::Ready(ret)
     }
 
-    delegate_access_inner!(inner, W, ());
+    /// Gets a reference to the underlying writer.
+    pub fn get_ref(&self) -> &W {
+        &self.inner
+    }
+
+    /// Gets a mutable reference to the underlying writer.
+    ///
+    /// It is inadvisable to directly write to the underlying writer.
+    pub fn get_mut(&mut self) -> &mut W {
+        &mut self.inner
+    }
+
+    /// Gets a pinned mutable reference to the underlying writer.
+    ///
+    /// It is inadvisable to directly write to the underlying writer.
+    pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut W> {
+        self.inner()
+    }
+
+    /// Consumes this `BufWriter`, returning the underlying writer.
+    ///
+    /// Note that any leftover data in the internal buffer is lost.
+    pub fn into_inner(self) -> W {
+        self.inner
+    }
 
     /// Returns a reference to the internally buffered data.
     pub fn buffer(&self) -> &[u8] {
@@ -99,9 +127,9 @@ impl<W: AsyncWrite> AsyncWrite for BufWriter<W> {
             ready!(self.as_mut().flush_buf(cx))?;
         }
         if buf.len() >= self.buf.capacity() {
-            self.project().inner.poll_write(cx, buf)
+            self.inner().poll_write(cx, buf)
         } else {
-            Poll::Ready(self.project().buf.write(buf))
+            Poll::Ready(self.buf().write(buf))
         }
     }
 
@@ -115,29 +143,58 @@ impl<W: AsyncWrite> AsyncWrite for BufWriter<W> {
             ready!(self.as_mut().flush_buf(cx))?;
         }
         if total_len >= self.buf.capacity() {
-            self.project().inner.poll_write_vectored(cx, bufs)
+            self.inner().poll_write_vectored(cx, bufs)
         } else {
-            Poll::Ready(self.project().buf.write_vectored(bufs))
+            Poll::Ready(self.buf().write_vectored(bufs))
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         ready!(self.as_mut().flush_buf(cx))?;
-        self.project().inner.poll_flush(cx)
+        self.inner().poll_flush(cx)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         ready!(self.as_mut().flush_buf(cx))?;
-        self.project().inner.poll_close(cx)
+        self.inner().poll_close(cx)
     }
 }
 
 impl<W: AsyncRead> AsyncRead for BufWriter<W> {
-    delegate_async_read!(inner);
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.inner().poll_read(cx, buf)
+    }
+
+    fn poll_read_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &mut [IoSliceMut<'_>],
+    ) -> Poll<io::Result<usize>> {
+        self.inner().poll_read_vectored(cx, bufs)
+    }
+
+    // we can't skip unconditionally because of the large buffer case in read.
+    #[cfg(feature = "read-initializer")]
+    unsafe fn initializer(&self) -> Initializer {
+        self.inner.initializer()
+    }
 }
 
 impl<W: AsyncBufRead> AsyncBufRead for BufWriter<W> {
-    delegate_async_buf_read!(inner);
+    fn poll_fill_buf(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<&[u8]>> {
+        self.inner().poll_fill_buf(cx)
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        self.inner().consume(amt)
+    }
 }
 
 impl<W: fmt::Debug> fmt::Debug for BufWriter<W> {
@@ -160,6 +217,6 @@ impl<W: AsyncWrite + AsyncSeek> AsyncSeek for BufWriter<W> {
         pos: SeekFrom,
     ) -> Poll<io::Result<u64>> {
         ready!(self.as_mut().flush_buf(cx))?;
-        self.project().inner.poll_seek(cx, pos)
+        self.inner().poll_seek(cx, pos)
     }
 }

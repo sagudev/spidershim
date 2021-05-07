@@ -11,7 +11,7 @@
 
 use crate::err::{secstatus_to_res, Error, Res};
 
-use neqo_common::hex_with_len;
+use neqo_common::hex;
 
 use std::convert::TryInto;
 use std::ops::{Deref, DerefMut};
@@ -70,7 +70,7 @@ impl SymKey {
     ///
     /// # Errors
     /// Internal errors in case of failures in NSS.
-    pub fn as_bytes(&self) -> Res<&[u8]> {
+    pub fn as_bytes<'a>(&'a self) -> Res<&'a [u8]> {
         secstatus_to_res(unsafe { PK11_ExtractKeyValue(self.ptr) })?;
 
         let key_item = unsafe { PK11_GetKeyData(self.ptr) };
@@ -94,7 +94,7 @@ impl Clone for SymKey {
 impl std::fmt::Debug for SymKey {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         if let Ok(b) = self.as_bytes() {
-            write!(f, "SymKey {}", hex_with_len(b))
+            write!(f, "SymKey {}", hex(b))
         } else {
             write!(f, "Opaque SymKey")
         }

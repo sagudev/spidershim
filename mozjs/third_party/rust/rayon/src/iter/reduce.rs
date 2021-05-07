@@ -15,7 +15,7 @@ where
     pi.drive_unindexed(consumer)
 }
 
-struct ReduceConsumer<'r, R, ID> {
+struct ReduceConsumer<'r, R: 'r, ID: 'r> {
     identity: &'r ID,
     reduce_op: &'r R,
 }
@@ -78,7 +78,7 @@ where
     }
 }
 
-struct ReduceFolder<'r, R, T> {
+struct ReduceFolder<'r, R: 'r, T> {
     reduce_op: &'r R,
     item: T,
 }

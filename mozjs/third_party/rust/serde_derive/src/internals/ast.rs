@@ -110,8 +110,8 @@ impl<'a> Container<'a> {
 
         let mut item = Container {
             ident: item.ident.clone(),
-            attrs,
-            data,
+            attrs: attrs,
+            data: data,
             generics: &item.generics,
             original: item,
         };
@@ -148,9 +148,9 @@ fn enum_from_ast<'a>(
                 struct_from_ast(cx, &variant.fields, Some(&attrs), container_default);
             Variant {
                 ident: variant.ident.clone(),
-                attrs,
-                style,
-                fields,
+                attrs: attrs,
+                style: style,
+                fields: fields,
                 original: variant,
             }
         })

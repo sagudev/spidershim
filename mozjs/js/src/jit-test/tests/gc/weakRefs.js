@@ -1,3 +1,5 @@
+// |jit-test| --enable-weak-refs
+//
 // https://tc39.es/proposal-weakrefs/#sec-keepduringjob
 // When the abstract operation KeepDuringJob is called with a target object
 // reference, it adds the target to an identity Set that will point strongly at

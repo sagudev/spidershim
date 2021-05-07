@@ -7,7 +7,7 @@
 use std::net::SocketAddr;
 use std::ops::Deref;
 
-use crate::hex_with_len;
+use crate::hex;
 
 #[derive(PartialEq, Clone)]
 pub struct Datagram {
@@ -51,7 +51,7 @@ impl std::fmt::Debug for Datagram {
             "Datagram {:?}->{:?}: {}",
             self.src,
             self.dst,
-            hex_with_len(&self.d)
+            hex(&self.d)
         )
     }
 }

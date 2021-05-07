@@ -1,5 +1,4 @@
 use super::AutoCfg;
-use std::env;
 
 impl AutoCfg {
     fn core_std(&self, path: &str) -> String {
@@ -14,18 +13,11 @@ impl AutoCfg {
     fn assert_min(&self, major: usize, minor: usize, probe_result: bool) {
         assert_eq!(self.probe_rustc_version(major, minor), probe_result);
     }
-
-    fn for_test() -> Result<Self, super::error::Error> {
-        match env::var_os("TESTS_TARGET_DIR") {
-            Some(d) => Self::with_dir(d),
-            None => Self::with_dir("target"),
-        }
-    }
 }
 
 #[test]
 fn autocfg_version() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     println!("version: {:?}", ac.rustc_version);
     assert!(ac.probe_rustc_version(1, 0));
 }
@@ -45,7 +37,7 @@ fn version_cmp() {
 
 #[test]
 fn probe_add() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     let add = ac.core_std("ops::Add");
     let add_rhs = add.clone() + "<i32>";
     let add_rhs_output = add.clone() + "<i32, Output = i32>";
@@ -59,7 +51,7 @@ fn probe_add() {
 
 #[test]
 fn probe_as_ref() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     let as_ref = ac.core_std("convert::AsRef");
     let as_ref_str = as_ref.clone() + "<str>";
     let dyn_as_ref_str = "dyn ".to_string() + &*as_ref_str;
@@ -71,7 +63,7 @@ fn probe_as_ref() {
 
 #[test]
 fn probe_i128() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     let i128_path = ac.core_std("i128");
     ac.assert_min(1, 26, ac.probe_path(&i128_path));
     ac.assert_min(1, 26, ac.probe_type("i128"));
@@ -79,7 +71,7 @@ fn probe_i128() {
 
 #[test]
 fn probe_sum() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     let sum = ac.core_std("iter::Sum");
     let sum_i32 = sum.clone() + "<i32>";
     let dyn_sum_i32 = "dyn ".to_string() + &*sum_i32;
@@ -92,25 +84,25 @@ fn probe_sum() {
 
 #[test]
 fn probe_std() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     ac.assert_std(ac.probe_sysroot_crate("std"));
 }
 
 #[test]
 fn probe_alloc() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     ac.assert_min(1, 36, ac.probe_sysroot_crate("alloc"));
 }
 
 #[test]
 fn probe_bad_sysroot_crate() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     assert!(!ac.probe_sysroot_crate("doesnt_exist"));
 }
 
 #[test]
 fn probe_no_std() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     assert!(ac.probe_type("i32"));
     assert!(ac.probe_type("[i32]"));
     ac.assert_std(ac.probe_type("Vec<i32>"));
@@ -118,7 +110,7 @@ fn probe_no_std() {
 
 #[test]
 fn probe_expression() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     assert!(ac.probe_expression(r#""test".trim_left()"#));
     ac.assert_min(1, 30, ac.probe_expression(r#""test".trim_start()"#));
     ac.assert_std(ac.probe_expression("[1, 2, 3].to_vec()"));
@@ -126,44 +118,8 @@ fn probe_expression() {
 
 #[test]
 fn probe_constant() {
-    let ac = AutoCfg::for_test().unwrap();
+    let ac = AutoCfg::with_dir("target").unwrap();
     assert!(ac.probe_constant("1 + 2 + 3"));
     ac.assert_min(1, 33, ac.probe_constant("{ let x = 1 + 2 + 3; x * x }"));
     ac.assert_min(1, 39, ac.probe_constant(r#""test".len()"#));
-}
-
-#[test]
-fn dir_does_not_contain_target() {
-    assert!(!super::dir_contains_target(
-        &Some("x86_64-unknown-linux-gnu".into()),
-        &"/project/target/debug/build/project-ea75983148559682/out".into(),
-        None,
-    ));
-}
-
-#[test]
-fn dir_does_contain_target() {
-    assert!(super::dir_contains_target(
-        &Some("x86_64-unknown-linux-gnu".into()),
-        &"/project/target/x86_64-unknown-linux-gnu/debug/build/project-0147aca016480b9d/out".into(),
-        None,
-    ));
-}
-
-#[test]
-fn dir_does_not_contain_target_with_custom_target_dir() {
-    assert!(!super::dir_contains_target(
-        &Some("x86_64-unknown-linux-gnu".into()),
-        &"/project/custom/debug/build/project-ea75983148559682/out".into(),
-        Some("custom".into()),
-    ));
-}
-
-#[test]
-fn dir_does_contain_target_with_custom_target_dir() {
-    assert!(super::dir_contains_target(
-        &Some("x86_64-unknown-linux-gnu".into()),
-        &"/project/custom/x86_64-unknown-linux-gnu/debug/build/project-0147aca016480b9d/out".into(),
-        Some("custom".into()),
-    ));
 }

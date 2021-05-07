@@ -48,7 +48,7 @@ info: |
     Result: Throw a TypeError exception.
 
 includes: [testBigIntTypedArray.js]
-features: [align-detached-buffer-semantics-with-web-reality, BigInt, TypedArray, Symbol]
+features: [BigInt, TypedArray, Symbol]
 ---*/
 
 var s = Symbol()
@@ -58,7 +58,7 @@ testWithBigIntTypedArrayConstructors(function(TA) {
 
   assert.throws(TypeError, function() {
     typedArray[0] = s;
-  }, '`typedArray[0] = s` throws TypeError');
+  }, "abrupt completion from Symbol");
 
 });
 

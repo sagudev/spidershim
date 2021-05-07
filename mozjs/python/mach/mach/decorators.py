@@ -17,51 +17,44 @@ class _MachCommand(object):
 
     __slots__ = (
         # Content from decorator arguments to define the command.
-        "name",
-        "subcommand",
-        "category",
-        "description",
-        "conditions",
-        "_parser",
-        "arguments",
-        "argument_group_names",
-        "virtualenv_name",
-        "ok_if_tests_disabled",
+        'name',
+        'subcommand',
+        'category',
+        'description',
+        'conditions',
+        '_parser',
+        'arguments',
+        'argument_group_names',
+        'virtualenv_name',
+
         # By default, subcommands will be sorted. If this is set to
         # 'declaration', they will be left in declaration order.
-        "order",
+        'order',
+
         # Describes how dispatch is performed.
+
         # The Python class providing the command. This is the class type not
         # an instance of the class. Mach will instantiate a new instance of
         # the class if the command is executed.
-        "cls",
-        # The path to the `metrics.yaml` file that describes data that telemetry will
-        # gather for this command. This path is optional.
-        "metrics_path",
+        'cls',
+
         # The name of the method providing the command. In other words, this
         # is the str name of the attribute on the class type corresponding to
         # the name of the function.
-        "method",
+        'method',
+
         # Dict of string to _MachCommand defining sub-commands for this
         # command.
-        "subcommand_handlers",
+        'subcommand_handlers',
+
         # For subcommands, the global order that the subcommand's declaration
         # was seen.
-        "decl_order",
+        'decl_order',
     )
 
-    def __init__(
-        self,
-        name=None,
-        subcommand=None,
-        category=None,
-        description=None,
-        conditions=None,
-        parser=None,
-        order=None,
-        virtualenv_name=None,
-        ok_if_tests_disabled=False,
-    ):
+    def __init__(self, name=None, subcommand=None, category=None,
+                 description=None, conditions=None, parser=None,
+                 order=None, virtualenv_name=None):
         self.name = name
         self.subcommand = subcommand
         self.category = category
@@ -72,23 +65,11 @@ class _MachCommand(object):
         self.argument_group_names = []
         self.virtualenv_name = virtualenv_name
         self.order = order
-        if ok_if_tests_disabled and category != "testing":
-            raise ValueError(
-                "ok_if_tests_disabled should only be set for " "`testing` mach commands"
-            )
-        self.ok_if_tests_disabled = ok_if_tests_disabled
 
         self.cls = None
-        self.metrics_path = None
         self.method = None
         self.subcommand_handlers = {}
         self.decl_order = None
-
-    def create_instance(self, context, virtualenv_name):
-        metrics = None
-        if self.metrics_path:
-            metrics = context.telemetry.metrics(self.metrics_path)
-        return self.cls(context, virtualenv_name=virtualenv_name, metrics=metrics)
 
     @property
     def parser(self):
@@ -105,7 +86,7 @@ class _MachCommand(object):
 
     def __ior__(self, other):
         if not isinstance(other, _MachCommand):
-            raise ValueError("can only operate on _MachCommand instances")
+            raise ValueError('can only operate on _MachCommand instances')
 
         for a in self.__slots__:
             if not getattr(self, a):
@@ -115,11 +96,23 @@ class _MachCommand(object):
 
 
 def CommandProvider(cls):
+    """Class decorator to denote that it provides subcommands for Mach.
+
+    When this decorator is present, mach looks for commands being defined by
+    methods inside the class.
+    """
+
+    # The implementation of this decorator relies on the parse-time behavior of
+    # decorators. When the module is imported, the method decorators (like
+    # @Command and @CommandArgument) are called *before* this class decorator.
+    # The side-effect of the method decorators is to store specifically-named
+    # attributes on the function types. We just scan over all functions in the
+    # class looking for the side-effects of the method decorators.
+
     if not issubclass(cls, MachCommandBase):
         raise MachError(
-            "Mach command provider class %s must be a subclass of "
-            "mozbuild.base.MachComandBase" % cls.__name__
-        )
+            'Mach command provider class %s must be a subclass of '
+            'mozbuild.base.MachComandBase' % cls.__name__)
 
     seen_commands = set()
 
@@ -127,13 +120,11 @@ def CommandProvider(cls):
     # not inherited ones. If we did inherited attributes, we could potentially
     # define commands multiple times. We also sort keys so commands defined in
     # the same class are grouped in a sane order.
-    command_methods = sorted(
-        [
-            (name, value._mach_command)
-            for name, value in cls.__dict__.items()
-            if hasattr(value, "_mach_command")
-        ]
-    )
+    command_methods = sorted([
+        (name, value._mach_command)
+        for name, value in cls.__dict__.items()
+        if hasattr(value, '_mach_command')
+    ])
 
     for method, command in command_methods:
         # Ignore subcommands for now: we handle them later.
@@ -145,18 +136,16 @@ def CommandProvider(cls):
         if not command.conditions and Registrar.require_conditions:
             continue
 
-        msg = (
-            "Mach command '%s' implemented incorrectly. "
-            + "Conditions argument must take a list "
-            + "of functions. Found %s instead."
-        )
+        msg = 'Mach command \'%s\' implemented incorrectly. ' + \
+              'Conditions argument must take a list ' + \
+              'of functions. Found %s instead.'
 
         if not isinstance(command.conditions, collections.Iterable):
             msg = msg % (command.name, type(command.conditions))
             raise MachError(msg)
 
         for c in command.conditions:
-            if not hasattr(c, "__call__"):
+            if not hasattr(c, '__call__'):
                 msg = msg % (command.name, type(c))
                 raise MachError(msg)
 
@@ -174,9 +163,8 @@ def CommandProvider(cls):
             continue
 
         if command.name not in seen_commands:
-            raise MachError(
-                "Command referenced by sub-command does not exist: %s" % command.name
-            )
+            raise MachError('Command referenced by sub-command does not '
+                            'exist: %s' % command.name)
 
         if command.name not in Registrar.command_handlers:
             continue
@@ -186,7 +174,7 @@ def CommandProvider(cls):
         parent = Registrar.command_handlers[command.name]
 
         if command.subcommand in parent.subcommand_handlers:
-            raise MachError("sub-command already defined: %s" % command.subcommand)
+            raise MachError('sub-command already defined: %s' % command.subcommand)
 
         parent.subcommand_handlers[command.subcommand] = command
 
@@ -214,13 +202,11 @@ class Command(object):
         def foo(self):
             pass
     """
-
-    def __init__(self, name, metrics_path=None, **kwargs):
+    def __init__(self, name, **kwargs):
         self._mach_command = _MachCommand(name=name, **kwargs)
-        self._mach_command.metrics_path = metrics_path
 
     def __call__(self, func):
-        if not hasattr(func, "_mach_command"):
+        if not hasattr(func, '_mach_command'):
             func._mach_command = _MachCommand()
 
         func._mach_command |= self._mach_command
@@ -248,19 +234,15 @@ class SubCommand(object):
 
     global_order = 0
 
-    def __init__(
-        self, command, subcommand, description=None, parser=None, metrics_path=None
-    ):
-        self._mach_command = _MachCommand(
-            name=command, subcommand=subcommand, description=description, parser=parser
-        )
+    def __init__(self, command, subcommand, description=None, parser=None):
+        self._mach_command = _MachCommand(name=command, subcommand=subcommand,
+                                          description=description,
+                                          parser=parser)
         self._mach_command.decl_order = SubCommand.global_order
         SubCommand.global_order += 1
 
-        self._mach_command.metrics_path = metrics_path
-
     def __call__(self, func):
-        if not hasattr(func, "_mach_command"):
+        if not hasattr(func, '_mach_command'):
             func._mach_command = _MachCommand()
 
         func._mach_command |= self._mach_command
@@ -282,19 +264,16 @@ class CommandArgument(object):
         def foo(self):
             pass
     """
-
     def __init__(self, *args, **kwargs):
-        if kwargs.get("nargs") == argparse.REMAINDER:
+        if kwargs.get('nargs') == argparse.REMAINDER:
             # These are the assertions we make in dispatcher.py about
             # those types of CommandArguments.
             assert len(args) == 1
-            assert all(
-                k in ("default", "nargs", "help", "group", "metavar") for k in kwargs
-            )
+            assert all(k in ('default', 'nargs', 'help', 'group', 'metavar') for k in kwargs)
         self._command_args = (args, kwargs)
 
     def __call__(self, func):
-        if not hasattr(func, "_mach_command"):
+        if not hasattr(func, '_mach_command'):
             func._mach_command = _MachCommand()
 
         func._mach_command.arguments.insert(0, self._command_args)
@@ -322,12 +301,11 @@ class CommandArgumentGroup(object):
     'Command Arguments for <name>' because that's how it will be shown in the
     help message.
     """
-
     def __init__(self, group_name):
         self._group_name = group_name
 
     def __call__(self, func):
-        if not hasattr(func, "_mach_command"):
+        if not hasattr(func, '_mach_command'):
             func._mach_command = _MachCommand()
 
         func._mach_command.argument_group_names.insert(0, self._group_name)
@@ -342,14 +320,12 @@ def SettingsProvider(cls):
     be registered with the Mach registrar and will (likely) be hooked up to the
     mach driver.
     """
-    if not hasattr(cls, "config_settings"):
-        raise MachError(
-            "@SettingsProvider must contain a config_settings attribute. It "
-            "may either be a list of tuples, or a callable that returns a list "
-            "of tuples. Each tuple must be of the form:\n"
-            "(<section>.<option>, <type_cls>, <description>, <default>, <choices>)\n"
-            "as specified by ConfigSettings._format_metadata."
-        )
+    if not hasattr(cls, 'config_settings'):
+        raise MachError('@SettingsProvider must contain a config_settings attribute. It '
+                        'may either be a list of tuples, or a callable that returns a list '
+                        'of tuples. Each tuple must be of the form:\n'
+                        '(<section>.<option>, <type_cls>, <description>, <default>, <choices>)\n'
+                        'as specified by ConfigSettings._format_metadata.')
 
     Registrar.register_settings_provider(cls)
     return cls

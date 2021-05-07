@@ -11,6 +11,7 @@
 #ifndef gc_GCInternals_h
 #define gc_GCInternals_h
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Maybe.h"
 
 #include "gc/GC.h"
@@ -108,7 +109,7 @@ class MOZ_RAII AutoHeapSession {
 
   GCRuntime* gc;
   JS::HeapState prevState;
-  mozilla::Maybe<AutoGeckoProfilerEntry> profilingStackFrame;
+  AutoGeckoProfilerEntry profilingStackFrame;
 };
 
 class MOZ_RAII AutoGCSession : public AutoHeapSession {
@@ -123,11 +124,6 @@ class MOZ_RAII AutoGCSession : public AutoHeapSession {
   // During a GC we can check that it's not possible for anything else to be
   // using the atoms zone.
   mozilla::Maybe<AutoCheckCanAccessAtomsDuringGC> maybeCheckAtomsAccess;
-};
-
-class MOZ_RAII AutoMajorGCProfilerEntry : public AutoGeckoProfilerEntry {
- public:
-  explicit AutoMajorGCProfilerEntry(GCRuntime* gc);
 };
 
 class MOZ_RAII AutoTraceSession : public AutoLockAllAtoms,
@@ -168,19 +164,7 @@ class MOZ_RAII AutoEmptyNurseryAndPrepareForTracing : private AutoFinishGC,
         AutoTraceSession(cx->runtime()) {}
 };
 
-/*
- * Temporarily disable incremental barriers.
- */
-class AutoDisableBarriers {
- public:
-  explicit AutoDisableBarriers(GCRuntime* gc);
-  ~AutoDisableBarriers();
-
- private:
-  GCRuntime* gc;
-};
-
-GCAbortReason IsIncrementalGCUnsafe(JSRuntime* rt);
+AbortReason IsIncrementalGCUnsafe(JSRuntime* rt);
 
 #ifdef JS_GC_ZEAL
 
@@ -229,46 +213,98 @@ void CheckHashTablesAfterMovingGC(JSRuntime* rt);
 void CheckHeapAfterGC(JSRuntime* rt);
 #endif
 
-struct MovingTracer final : public GenericTracer {
+struct MovingTracer final : public JS::CallbackTracer {
   explicit MovingTracer(JSRuntime* rt)
-      : GenericTracer(rt, JS::TracerKind::Moving,
-                      JS::WeakMapTraceAction::TraceKeysAndValues) {}
+      : CallbackTracer(rt, TraceWeakMapKeysValues) {}
 
-  JSObject* onObjectEdge(JSObject* obj) override;
-  Shape* onShapeEdge(Shape* shape) override;
-  JSString* onStringEdge(JSString* string) override;
-  js::BaseScript* onScriptEdge(js::BaseScript* script) override;
-  BaseShape* onBaseShapeEdge(BaseShape* base) override;
-  Scope* onScopeEdge(Scope* scope) override;
-  RegExpShared* onRegExpSharedEdge(RegExpShared* shared) override;
-  BigInt* onBigIntEdge(BigInt* bi) override;
-  JS::Symbol* onSymbolEdge(JS::Symbol* sym) override;
-  jit::JitCode* onJitCodeEdge(jit::JitCode* jit) override;
+  bool onObjectEdge(JSObject** objp) override;
+  bool onShapeEdge(Shape** shapep) override;
+  bool onStringEdge(JSString** stringp) override;
+  bool onScriptEdge(js::BaseScript** scriptp) override;
+  bool onBaseShapeEdge(BaseShape** basep) override;
+  bool onScopeEdge(Scope** scopep) override;
+  bool onRegExpSharedEdge(RegExpShared** sharedp) override;
+  bool onBigIntEdge(BigInt** bip) override;
+  bool onChild(const JS::GCCellPtr& thing) override {
+    MOZ_ASSERT(!thing.asCell()->isForwarded());
+    return true;
+  }
+
+#ifdef DEBUG
+  TracerKind getTracerKind() const override { return TracerKind::Moving; }
+#endif
 
  private:
   template <typename T>
-  T* onEdge(T* thingp);
+  bool updateEdge(T** thingp);
 };
 
-struct SweepingTracer final : public GenericTracer {
+struct SweepingTracer final : public JS::CallbackTracer {
   explicit SweepingTracer(JSRuntime* rt)
-      : GenericTracer(rt, JS::TracerKind::Sweeping,
-                      JS::WeakMapTraceAction::TraceKeysAndValues) {}
+      : CallbackTracer(rt, TraceWeakMapKeysValues) {}
 
-  JSObject* onObjectEdge(JSObject* obj) override;
-  Shape* onShapeEdge(Shape* shape) override;
-  JSString* onStringEdge(JSString* string) override;
-  js::BaseScript* onScriptEdge(js::BaseScript* script) override;
-  BaseShape* onBaseShapeEdge(BaseShape* base) override;
-  jit::JitCode* onJitCodeEdge(jit::JitCode* jit) override;
-  Scope* onScopeEdge(Scope* scope) override;
-  RegExpShared* onRegExpSharedEdge(RegExpShared* shared) override;
-  BigInt* onBigIntEdge(BigInt* bi) override;
-  JS::Symbol* onSymbolEdge(JS::Symbol* sym) override;
+  bool onObjectEdge(JSObject** objp) override;
+  bool onShapeEdge(Shape** shapep) override;
+  bool onStringEdge(JSString** stringp) override;
+  bool onScriptEdge(js::BaseScript** scriptp) override;
+  bool onBaseShapeEdge(BaseShape** basep) override;
+  bool onJitCodeEdge(jit::JitCode** jitp) override;
+  bool onScopeEdge(Scope** scopep) override;
+  bool onRegExpSharedEdge(RegExpShared** sharedp) override;
+  bool onBigIntEdge(BigInt** bip) override;
+  bool onObjectGroupEdge(js::ObjectGroup** groupp) override;
+  bool onChild(const JS::GCCellPtr& thing) override {
+    MOZ_CRASH("unexpected edge.");
+    return true;
+  }
+
+#ifdef DEBUG
+  TracerKind getTracerKind() const override { return TracerKind::Sweeping; }
+#endif
 
  private:
   template <typename T>
-  T* onEdge(T* thingp);
+  bool sweepEdge(T** thingp);
+};
+
+// Structure for counting how many times objects in a particular group have
+// been tenured during a minor collection.
+struct TenureCount {
+  ObjectGroup* group;
+  unsigned count;
+
+  // ObjectGroups are never nursery-allocated, and TenureCounts are only used
+  // in minor GC (not compacting GC), so prevent the analysis from
+  // complaining about TenureCounts being held live across a minor GC.
+} JS_HAZ_NON_GC_POINTER;
+
+// Keep rough track of how many times we tenure objects in particular groups
+// during minor collections, using a fixed size hash for efficiency at the cost
+// of potential collisions.
+struct TenureCountCache {
+  static const size_t EntryShift = 4;
+  static const size_t EntryCount = 1 << EntryShift;
+
+  TenureCount entries[EntryCount] = {};  // zeroes
+
+  TenureCountCache() = default;
+
+  HashNumber hash(ObjectGroup* group) {
+#if JS_BITS_PER_WORD == 32
+    static const size_t ZeroBits = 3;
+#else
+    static const size_t ZeroBits = 4;
+#endif
+
+    uintptr_t word = uintptr_t(group);
+    MOZ_ASSERT((word & ((1 << ZeroBits) - 1)) == 0);
+    word >>= ZeroBits;
+    return HashNumber((word >> EntryShift) ^ word);
+  }
+
+  TenureCount& findEntry(ObjectGroup* group) {
+    return entries[hash(group) % EntryCount];
+  }
 };
 
 extern void DelayCrossCompartmentGrayMarking(JSObject* src);
@@ -276,13 +312,6 @@ extern void DelayCrossCompartmentGrayMarking(JSObject* src);
 inline bool IsOOMReason(JS::GCReason reason) {
   return reason == JS::GCReason::LAST_DITCH ||
          reason == JS::GCReason::MEM_PRESSURE;
-}
-
-// TODO: Bug 1650075. Adding XPCONNECT_SHUTDOWN seems to cause crash.
-inline bool IsShutdownReason(JS::GCReason reason) {
-  return reason == JS::GCReason::WORKER_SHUTDOWN ||
-         reason == JS::GCReason::SHUTDOWN_CC ||
-         reason == JS::GCReason::DESTROY_RUNTIME;
 }
 
 TenuredCell* AllocateCellInGC(JS::Zone* zone, AllocKind thingKind);

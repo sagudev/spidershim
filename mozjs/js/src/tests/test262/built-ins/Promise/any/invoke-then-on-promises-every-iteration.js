@@ -1,4 +1,4 @@
-// |reftest| async
+// |reftest| skip-if(release_or_beta) async -- Promise.any is not released yet
 // Copyright (C) 2019 Sergey Rubanov. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -39,4 +39,4 @@ promises.forEach(promise => {
 Promise.any(promises)
   .then(() => {
       assert.sameValue(callCount, 3, '`then` invoked once for every iterated value');
-    }).then($DONE, $DONE);
+    }, $DONE).then($DONE, $DONE);

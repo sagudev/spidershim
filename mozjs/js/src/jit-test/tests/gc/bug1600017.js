@@ -1,3 +1,5 @@
+// |jit-test| --enable-weak-refs
+
 var registry = new FinalizationRegistry(x => {
   if (target1 === null) {
       return;

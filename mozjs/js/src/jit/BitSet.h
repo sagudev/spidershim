@@ -7,16 +7,12 @@
 #ifndef jit_BitSet_h
 #define jit_BitSet_h
 
-#include "mozilla/Assertions.h"
 #include "mozilla/MathAlgorithms.h"
 
-#include <stddef.h>
-#include <stdint.h>
+#include "jit/JitAllocPolicy.h"
 
 namespace js {
 namespace jit {
-
-class TempAllocator;
 
 // Provides constant time set insertion and removal, and fast linear
 // set operations such as intersection, difference, and union.
@@ -52,7 +48,7 @@ class BitSet {
 
   explicit BitSet(unsigned int numBits) : bits_(nullptr), numBits_(numBits) {}
 
-  [[nodiscard]] bool init(TempAllocator& alloc);
+  MOZ_MUST_USE bool init(TempAllocator& alloc);
 
   unsigned int getNumBits() const { return numBits_; }
 

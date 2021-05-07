@@ -1,6 +1,11 @@
-# libloading
+# libloading [![Travis CI][tcii]][tci] [![Appveyor CI][acii]][aci]
 
-Safer bindings around system dynamic library loading primitives. The most important safety
+[tcii]: https://travis-ci.org/nagisa/rust_libloading.svg?branch=master
+[tci]: https://travis-ci.org/nagisa/rust_libloading
+[acii]: https://ci.appveyor.com/api/projects/status/cnncnu58qcxb1ikf/branch/master?svg=true
+[aci]: https://ci.appveyor.com/project/nagisa/rust-libloading
+
+A memory-safer wrapper around system dynamic library loading primitives. The most important safety
 guarantee by this library is prevention of dangling-`Symbol`s that may occur after a `Library` is
 unloaded.
 
@@ -13,4 +18,4 @@ functions and static variables these libraries contain.
 [docs]: https://docs.rs/libloading/
 [changelog]: https://docs.rs/libloading/*/libloading/changelog/index.html
 
-libloading is available to use under ISC (MIT-like) license.
+libloading is distributed under ISC (MIT-like) license.

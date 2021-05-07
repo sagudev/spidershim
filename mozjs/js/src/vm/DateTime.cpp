@@ -6,6 +6,7 @@
 
 #include "vm/DateTime.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/TextUtils.h"
 #include "mozilla/Unused.h"
@@ -13,7 +14,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
-#include <iterator>
 #include <time.h>
 
 #if !defined(XP_WIN)
@@ -22,7 +22,6 @@
 #endif /* !defined(XP_WIN) */
 
 #include "js/Date.h"
-#include "js/GCAPI.h"
 #include "threading/ExclusiveData.h"
 
 #if JS_HAS_INTL_API && !MOZ_SYSTEM_ICU
@@ -596,36 +595,6 @@ static inline const char* TZContainsAbsolutePath(const char* tzVar) {
 }
 
 /**
- * Reject the input if it doesn't match the time zone id pattern or legacy time
- * zone names.
- *
- * See <https://github.com/eggert/tz/blob/master/theory.html>.
- */
-static icu::UnicodeString MaybeTimeZoneId(const char* timeZone) {
-  size_t timeZoneLen = std::strlen(timeZone);
-
-  for (size_t i = 0; i < timeZoneLen; i++) {
-    char c = timeZone[i];
-
-    // According to theory.html, '.' is allowed in time zone ids, but the
-    // accompanying zic.c file doesn't allow it. Assume the source file is
-    // correct and disallow '.' here, too.
-    if (mozilla::IsAsciiAlphanumeric(c) || c == '_' || c == '-' || c == '+') {
-      continue;
-    }
-
-    // Reject leading, trailing, or consecutive '/' characters.
-    if (c == '/' && i > 0 && i + 1 < timeZoneLen && timeZone[i + 1] != '/') {
-      continue;
-    }
-
-    return icu::UnicodeString();
-  }
-
-  return icu::UnicodeString(timeZone, timeZoneLen, US_INV);
-}
-
-/**
  * Given a presumptive path |tz| to a zoneinfo time zone file
  * (e.g. /etc/localtime), attempt to compute the time zone encoded by that
  * path by repeatedly resolving symlinks until a path containing "/zoneinfo/"
@@ -640,7 +609,8 @@ static icu::UnicodeString ReadTimeZoneLink(const char* tz) {
   // The resolved link name can have different paths depending on the OS.
   // Follow ICU and only search for "/zoneinfo/"; see $ICU/common/putil.cpp.
   static constexpr char ZoneInfoPath[] = "/zoneinfo/";
-  constexpr size_t ZoneInfoPathLength = js_strlen(ZoneInfoPath);
+  constexpr size_t ZoneInfoPathLength =
+      mozilla::ArrayLength(ZoneInfoPath) - 1;  // exclude NUL
 
   // Stop following symlinks after a fixed depth, because some common time
   // zones are stored in files whose name doesn't match an Olson time zone
@@ -659,7 +629,7 @@ static icu::UnicodeString ReadTimeZoneLink(const char* tz) {
 
   char linkName[PathMax];
   constexpr size_t linkNameLen =
-      std::size(linkName) - 1;  // -1 to null-terminate.
+      mozilla::ArrayLength(linkName) - 1;  // -1 to null-terminate.
 
   // Return if the TZ value is too large.
   if (std::strlen(tz) > linkNameLen) {
@@ -670,7 +640,7 @@ static icu::UnicodeString ReadTimeZoneLink(const char* tz) {
 
   char linkTarget[PathMax];
   constexpr size_t linkTargetLen =
-      std::size(linkTarget) - 1;  // -1 to null-terminate.
+      mozilla::ArrayLength(linkTarget) - 1;  // -1 to null-terminate.
 
   uint32_t depth = 0;
 
@@ -723,7 +693,30 @@ static icu::UnicodeString ReadTimeZoneLink(const char* tz) {
   }
 
   const char* timeZone = timeZoneWithZoneInfo + ZoneInfoPathLength;
-  return MaybeTimeZoneId(timeZone);
+  size_t timeZoneLen = std::strlen(timeZone);
+
+  // Reject the result if it doesn't match the time zone id pattern or
+  // legacy time zone names.
+  // See <https://github.com/eggert/tz/blob/master/theory.html>.
+  for (size_t i = 0; i < timeZoneLen; i++) {
+    char c = timeZone[i];
+
+    // According to theory.html, '.' is allowed in time zone ids, but the
+    // accompanying zic.c file doesn't allow it. Assume the source file is
+    // correct and disallow '.' here, too.
+    if (mozilla::IsAsciiAlphanumeric(c) || c == '_' || c == '-' || c == '+') {
+      continue;
+    }
+
+    // Reject leading, trailing, or consecutive '/' characters.
+    if (c == '/' && i > 0 && i + 1 < timeZoneLen && timeZone[i + 1] != '/') {
+      continue;
+    }
+
+    return icu::UnicodeString();
+  }
+
+  return icu::UnicodeString(timeZone, timeZoneLen, US_INV);
 }
 #endif /* JS_HAS_INTL_API && !MOZ_SYSTEM_ICU */
 
@@ -755,14 +748,6 @@ void js::DateTimeInfo::internalResyncICUDefaultTimeZone() {
     if (const char* tzlink = TZContainsAbsolutePath(tz)) {
       tzid.setTo(ReadTimeZoneLink(tzlink));
     }
-
-#    ifdef ANDROID
-    // ICU ignores the TZ environment variable on Android. If it doesn't contain
-    // an absolute path, try to parse it as a time zone name.
-    else {
-      tzid.setTo(MaybeTimeZoneId(tz));
-    }
-#    endif
 #  endif /* defined(XP_WIN) */
 
     if (!tzid.isEmpty()) {

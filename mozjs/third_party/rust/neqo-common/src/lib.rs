@@ -9,55 +9,31 @@
 
 mod codec;
 mod datagram;
-pub mod event;
-pub mod hrtime;
 mod incrdecoder;
 pub mod log;
-pub mod qlog;
 pub mod timer;
 
 pub use self::codec::{Decoder, Encoder};
 pub use self::datagram::Datagram;
-pub use self::incrdecoder::{
-    IncrementalDecoderBuffer, IncrementalDecoderIgnore, IncrementalDecoderUint,
-};
+pub use self::incrdecoder::{IncrementalDecoder, IncrementalDecoderResult};
 
 #[macro_use]
 extern crate lazy_static;
 
-#[must_use]
-pub fn hex(buf: impl AsRef<[u8]>) -> String {
-    let mut ret = String::with_capacity(buf.as_ref().len() * 2);
-    for b in buf.as_ref() {
-        ret.push_str(&format!("{:02x}", b));
-    }
-    ret
-}
-
-#[must_use]
-pub fn hex_snip_middle(buf: impl AsRef<[u8]>) -> String {
-    const SHOW_LEN: usize = 8;
-    let buf = buf.as_ref();
-    if buf.len() <= SHOW_LEN * 2 {
-        hex_with_len(buf)
-    } else {
-        let mut ret = String::with_capacity(SHOW_LEN * 2 + 16);
-        ret.push_str(&format!("[{}]: ", buf.len()));
-        for b in &buf[..SHOW_LEN] {
-            ret.push_str(&format!("{:02x}", b));
+// Cribbed from the |matches| crate, for simplicity.
+#[macro_export]
+macro_rules! matches {
+    ($expression:expr, $($pattern:tt)+) => {
+        match $expression {
+            $($pattern)+ => true,
+            _ => false
         }
-        ret.push_str("..");
-        for b in &buf[buf.len() - SHOW_LEN..] {
-            ret.push_str(&format!("{:02x}", b));
-        }
-        ret
     }
 }
 
 #[must_use]
-pub fn hex_with_len(buf: impl AsRef<[u8]>) -> String {
-    let buf = buf.as_ref();
-    let mut ret = String::with_capacity(10 + buf.len() * 2);
+pub fn hex(buf: &[u8]) -> String {
+    let mut ret = String::with_capacity(10 + buf.len() * 3);
     ret.push_str(&format!("[{}]: ", buf.len()));
     for b in buf {
         ret.push_str(&format!("{:02x}", b));
@@ -72,27 +48,4 @@ pub const fn const_max(a: usize, b: usize) -> usize {
 #[must_use]
 pub const fn const_min(a: usize, b: usize) -> usize {
     [a, b][(a >= b) as usize]
-}
-
-#[derive(Debug, PartialEq, Copy, Clone)]
-/// Client or Server.
-pub enum Role {
-    Client,
-    Server,
-}
-
-impl Role {
-    #[must_use]
-    pub fn remote(self) -> Self {
-        match self {
-            Self::Client => Self::Server,
-            Self::Server => Self::Client,
-        }
-    }
-}
-
-impl ::std::fmt::Display for Role {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
 }

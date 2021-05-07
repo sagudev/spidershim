@@ -11,7 +11,6 @@
 //               all platforms
 // Bug 1141121 - immediate operand in atomic operations on x86/x64
 
-function test(SharedOrUnsharedArrayBuffer) {
 var sum = 0;
 
 function f(ia, k) {
@@ -81,7 +80,7 @@ function g4(ia, k) {
     sum += Atomics.or(ia, 7, 1);
 }
 
-var i8a = new Int8Array(new SharedOrUnsharedArrayBuffer(65536));
+var i8a = new Int8Array(new SharedArrayBuffer(65536));
 for ( var i=0 ; i < 10000 ; i++ ) {
     f(i8a, i % 10);
     g(i8a, i % 10);
@@ -97,7 +96,3 @@ assertEq(i8a[2], ((-10000 + -10000*4.5) << 24) >> 24);
 assertEq(i8a[3], ((-10000 + -10000*4.5) << 24) >> 24);
 assertEq(i8a[6], 15);
 assertEq(i8a[7], 15);
-}
-
-test(SharedArrayBuffer);
-test(ArrayBuffer);

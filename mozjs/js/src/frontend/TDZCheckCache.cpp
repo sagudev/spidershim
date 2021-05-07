@@ -24,7 +24,7 @@ bool TDZCheckCache::ensureCache(BytecodeEmitter* bce) {
 }
 
 Maybe<MaybeCheckTDZ> TDZCheckCache::needsTDZCheck(BytecodeEmitter* bce,
-                                                  TaggedParserAtomIndex name) {
+                                                  JSAtom* name) {
   if (!ensureCache(bce)) {
     return Nothing();
   }
@@ -52,8 +52,7 @@ Maybe<MaybeCheckTDZ> TDZCheckCache::needsTDZCheck(BytecodeEmitter* bce,
   return Some(rv);
 }
 
-bool TDZCheckCache::noteTDZCheck(BytecodeEmitter* bce,
-                                 TaggedParserAtomIndex name,
+bool TDZCheckCache::noteTDZCheck(BytecodeEmitter* bce, JSAtom* name,
                                  MaybeCheckTDZ check) {
   if (!ensureCache(bce)) {
     return false;

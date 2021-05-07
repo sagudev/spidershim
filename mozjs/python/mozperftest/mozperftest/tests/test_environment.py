@@ -9,25 +9,21 @@ import pytest
 
 from mozperftest.environment import MachEnvironment
 from mozperftest.tests.support import get_running_env, requests_content
-from mozperftest.layers import Layer
-from mozperftest.hooks import Hooks
 
 
 HERE = Path(__file__).parent.resolve()
 
 
-def _get_env(hooks_path):
-    return MachEnvironment(mock.MagicMock(), hooks=Hooks(mock.MagicMock(), hooks_path))
-
-
 def test_run_hooks():
-    env = _get_env(Path(HERE, "data", "hook.py"))
-    assert env.hooks.run("doit", env) == "OK"
+    hooks = str(Path(HERE, "data", "hook.py"))
+    env = MachEnvironment(mock.MagicMock(), hooks=hooks)
+    assert env.run_hook("doit") == "OK"
 
 
 def test_bad_hooks():
+    hooks = "Idontexists"
     with pytest.raises(IOError):
-        _get_env("Idontexists")
+        MachEnvironment(mock.MagicMock(), hooks=hooks)
 
 
 doit = [b"def doit(*args, **kw):\n", b"    return 'OK'\n"]
@@ -35,8 +31,9 @@ doit = [b"def doit(*args, **kw):\n", b"    return 'OK'\n"]
 
 @mock.patch("mozperftest.utils.requests.get", requests_content(doit))
 def test_run_hooks_url():
-    env = _get_env("http://somewhere/hooks.py")
-    assert env.hooks.run("doit", env) == "OK"
+    hooks = "http://somewhere/hooks.py"
+    env = MachEnvironment(mock.MagicMock(), hooks=hooks)
+    assert env.run_hook("doit") == "OK"
 
 
 def test_layers():
@@ -55,10 +52,14 @@ class FailureException(Exception):
     pass
 
 
-class Failure(Layer):
-    user_exception = True
+class Failure:
+    def __enter__(self):
+        return self
 
-    def run(self, metadata):
+    def __exit__(self, *args, **kw):
+        pass
+
+    def __call__(self, *args, **kw):
         raise FailureException()
 
 
@@ -84,7 +85,7 @@ def test_exception_return():
     hooks = str(Path(HERE, "data", "hook.py"))
     mach, metadata, env = get_running_env(hooks=hooks)
     last_layer = create_mock()
-    env.layers = [create_mock(), Failure(env, mach), last_layer]
+    env.layers = [create_mock(), Failure(), last_layer]
     with env:
         env.run(metadata)
     last_layer.assert_not_called()
@@ -95,24 +96,10 @@ def test_exception_resume():
     hooks = str(Path(HERE, "data", "hook_resume.py"))
     mach, metadata, env = get_running_env(hooks=hooks)
     last_layer = create_mock()
-    env.layers = [create_mock(), Failure(env, mach), last_layer]
+    env.layers = [create_mock(), Failure(), last_layer]
     with env:
         env.run(metadata)
     last_layer.assert_called()
-
-
-def test_exception_no_user_exception():
-    # the last layer is called, the error is raised
-    # because user_exception = False
-    hooks = str(Path(HERE, "data", "hook_resume.py"))
-    mach, metadata, env = get_running_env(hooks=hooks)
-    last_layer = create_mock()
-    f = Failure(env, mach)
-    f.user_exception = False
-    env.layers = [create_mock(), f, last_layer]
-    with env, pytest.raises(FailureException):
-        env.run(metadata)
-    last_layer._call__.assert_not_called()
 
 
 def test_exception_raised():
@@ -120,7 +107,7 @@ def test_exception_raised():
     hooks = str(Path(HERE, "data", "hook_raises.py"))
     mach, metadata, env = get_running_env(hooks=hooks)
     last_layer = create_mock()
-    env.layers = [create_mock(), Failure(env, mach), last_layer]
+    env.layers = [create_mock(), Failure(), last_layer]
     with env, pytest.raises(FailureException):
         env.run(metadata)
     last_layer.__call__.assert_not_called()
@@ -132,22 +119,18 @@ def test_metrics_last():
     system = create_mock()
     browser = create_mock()
 
-    # Check that the metrics layer is entered after
-    # other have finished and that the other layers
-    # were only called once
+    # check that the metrics layer is called after
+    # other have finished
     class M:
         def __enter__(self):
-            system.setup.assert_called_once()
-            browser.setup.assert_called_once()
-            system.teardown.assert_called_once()
-            browser.teardown.assert_called_once()
             return self
 
         def __exit__(self, *args, **kw):
             return
 
         def __call__(self, metadata):
-            return
+            system.teardown.assert_called()
+            browser.teardown.assert_called()
 
     env.layers = [system, browser, M()]
     with env:

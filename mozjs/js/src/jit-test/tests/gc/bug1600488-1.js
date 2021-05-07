@@ -1,3 +1,5 @@
+// |jit-test| --enable-weak-refs
+
 const token = {};
 let cleanedUpValue;
 const finalizationRegistry = new FinalizationRegistry(value => {

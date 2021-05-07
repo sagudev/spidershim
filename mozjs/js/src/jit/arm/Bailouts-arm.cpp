@@ -6,10 +6,7 @@
 
 #include "jit/arm/Assembler-arm.h"
 #include "jit/Bailouts.h"
-#include "jit/JitFrames.h"
-#include "jit/JitRuntime.h"
-#include "jit/SafepointIndex.h"
-#include "jit/ScriptFromCalleeToken.h"
+#include "jit/JitRealm.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
 

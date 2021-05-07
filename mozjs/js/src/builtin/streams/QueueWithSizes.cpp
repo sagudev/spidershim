@@ -9,20 +9,20 @@
 #include "builtin/streams/QueueWithSizes-inl.h"
 
 #include "mozilla/Assertions.h"     // MOZ_ASSERT
+#include "mozilla/Attributes.h"     // MOZ_MUST_USE
 #include "mozilla/FloatingPoint.h"  // mozilla::Is{Infinite,NaN}
 
 #include "jsapi.h"  // JS_ReportErrorNumberASCII
 
 #include "builtin/streams/StreamController.h"  // js::StreamController
-#include "js/Class.h"                 // JSClass, JSCLASS_HAS_RESERVED_SLOTS
-#include "js/Conversions.h"           // JS::ToNumber
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/RootingAPI.h"            // JS::Rooted
-#include "js/Value.h"                 // JS::Value, JS::{Number,Object}Value
-#include "vm/Compartment.h"           // JSCompartment
-#include "vm/JSContext.h"             // JSContext
-#include "vm/List.h"                  // js::ListObject
-#include "vm/NativeObject.h"          // js::NativeObject
+#include "js/Class.h"         // JSClass, JSCLASS_HAS_RESERVED_SLOTS
+#include "js/Conversions.h"   // JS::ToNumber
+#include "js/RootingAPI.h"    // JS::Rooted
+#include "js/Value.h"         // JS::Value, JS::{Number,Object}Value
+#include "vm/Compartment.h"   // JSCompartment
+#include "vm/JSContext.h"     // JSContext
+#include "vm/List.h"          // js::ListObject
+#include "vm/NativeObject.h"  // js::NativeObject
 
 #include "vm/Compartment-inl.h"  // JSCompartment::wrap
 #include "vm/JSContext-inl.h"    // JSContext::check
@@ -43,9 +43,9 @@ using JS::Value;
 /**
  * Streams spec, 6.2.1. DequeueValue ( container ) nothrow
  */
-[[nodiscard]] bool js::DequeueValue(
-    JSContext* cx, Handle<StreamController*> unwrappedContainer,
-    MutableHandle<Value> chunk) {
+MOZ_MUST_USE bool js::DequeueValue(JSContext* cx,
+                                   Handle<StreamController*> unwrappedContainer,
+                                   MutableHandle<Value> chunk) {
   // Step 1: Assert: container has [[queue]] and [[queueTotalSize]] internal
   //         slots (implicit).
   // Step 2: Assert: queue is not empty.
@@ -107,7 +107,7 @@ void js::DequeueValue(StreamController* unwrappedContainer, JSContext* cx) {
 /**
  * Streams spec, 6.2.2. EnqueueValueWithSize ( container, value, size ) throws
  */
-[[nodiscard]] bool js::EnqueueValueWithSize(
+MOZ_MUST_USE bool js::EnqueueValueWithSize(
     JSContext* cx, Handle<StreamController*> unwrappedContainer,
     Handle<Value> value, Handle<Value> sizeVal) {
   cx->check(value, sizeVal);
@@ -155,8 +155,8 @@ void js::DequeueValue(StreamController* unwrappedContainer, JSContext* cx) {
 /**
  * Streams spec, 6.2.4. ResetQueue ( container ) nothrow
  */
-[[nodiscard]] bool js::ResetQueue(
-    JSContext* cx, Handle<StreamController*> unwrappedContainer) {
+MOZ_MUST_USE bool js::ResetQueue(JSContext* cx,
+                                 Handle<StreamController*> unwrappedContainer) {
   // Step 1: Assert: container has [[queue]] and [[queueTotalSize]] internal
   //         slots (implicit).
   // Step 2: Set container.[[queue]] to a new empty List.

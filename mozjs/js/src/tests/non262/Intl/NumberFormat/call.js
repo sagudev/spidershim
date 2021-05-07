@@ -25,27 +25,19 @@ function thisValues() {
         ...[{}, [], /(?:)/, function(){}, new Proxy({}, {})],
 
         // Intl objects.
-        ...[].concat(...intlConstructors.map(ctor => {
-            let args = [];
-            if (ctor === Intl.DisplayNames) {
-                // Intl.DisplayNames can't be constructed without any arguments.
-                args = [undefined, {type: "language"}];
-            }
+        ...[].concat(...intlConstructors.map(ctor => [
+            // Instance of an Intl constructor.
+            new ctor(),
 
-            return [
-                // Instance of an Intl constructor.
-                new ctor(...args),
+            // Instance of a subclassed Intl constructor.
+            new class extends ctor {},
 
-                // Instance of a subclassed Intl constructor.
-                new class extends ctor {}(...args),
+            // Object inheriting from an Intl constructor prototype.
+            Object.create(ctor.prototype),
 
-                // Object inheriting from an Intl constructor prototype.
-                Object.create(ctor.prototype),
-
-                // Intl object not inheriting from its default prototype.
-                Object.setPrototypeOf(new ctor(...args), Object.prototype),
-            ];
-        })),
+            // Intl object not inheriting from its default prototype.
+            Object.setPrototypeOf(new ctor(), Object.prototype),
+        ])),
     ];
 }
 
@@ -71,7 +63,6 @@ for (let thisValue of thisValues()) {
 // Intl.NumberFormat uses the legacy Intl constructor compromise semantics.
 // - Test when InstanceofOperator(thisValue, %NumberFormat%) returns true.
 for (let thisValue of thisValues().filter(IsObject)) {
-    let isPrototypeOf = Intl.NumberFormat.prototype.isPrototypeOf(thisValue);
     let hasInstanceCalled = false;
     Object.defineProperty(Intl.NumberFormat, Symbol.hasInstance, {
         value() {
@@ -83,13 +74,12 @@ for (let thisValue of thisValues().filter(IsObject)) {
     let obj = Intl.NumberFormat.call(thisValue);
     delete Intl.NumberFormat[Symbol.hasInstance];
 
-    assertEq(Object.is(obj, thisValue), isPrototypeOf);
-    assertEq(hasInstanceCalled, false);
-    assertEqArray(Object.getOwnPropertySymbols(thisValue), isPrototypeOf ? [intlFallbackSymbol] : []);
+    assertEq(Object.is(obj, thisValue), true);
+    assertEq(hasInstanceCalled, true);
+    assertEqArray(Object.getOwnPropertySymbols(thisValue), [intlFallbackSymbol]);
 }
 // - Test when InstanceofOperator(thisValue, %NumberFormat%) returns false.
 for (let thisValue of thisValues().filter(IsObject)) {
-    let isPrototypeOf = Intl.NumberFormat.prototype.isPrototypeOf(thisValue);
     let hasInstanceCalled = false;
     Object.defineProperty(Intl.NumberFormat, Symbol.hasInstance, {
         value() {
@@ -101,10 +91,10 @@ for (let thisValue of thisValues().filter(IsObject)) {
     let obj = Intl.NumberFormat.call(thisValue);
     delete Intl.NumberFormat[Symbol.hasInstance];
 
-    assertEq(Object.is(obj, thisValue), isPrototypeOf);
+    assertEq(Object.is(obj, thisValue), false);
     assertEq(obj instanceof Intl.NumberFormat, true);
-    assertEq(hasInstanceCalled, false);
-    assertEqArray(Object.getOwnPropertySymbols(thisValue), isPrototypeOf ? [intlFallbackSymbol] : []);
+    assertEq(hasInstanceCalled, true);
+    assertEqArray(Object.getOwnPropertySymbols(thisValue), []);
 }
 // - Test with primitive values.
 for (let thisValue of thisValues().filter(IsPrimitive)) {

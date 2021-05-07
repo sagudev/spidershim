@@ -5,21 +5,21 @@
 esid: sec-get-dataview.prototype.bytelength
 description: Throws a TypeError if the instance has a detached buffer
 info: |
-  get DataView.prototype.byteLength
+  24.2.4.2 get DataView.prototype.byteLength
   ...
-  Let buffer be the value of O's [[ViewedArrayBuffer]] internal slot.
-  If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
+  5. Let buffer be the value of O's [[ViewedArrayBuffer]] internal slot.
+  6. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
   ...
 includes: [detachArrayBuffer.js]
 ---*/
 
-let buffer = new ArrayBuffer(1);
-let dv = new DataView(buffer, 0);
+var buffer = new ArrayBuffer(1);
+var sample = new DataView(buffer, 0);
 
 $DETACHBUFFER(buffer);
 
-assert.throws(TypeError, () => {
-  dv.byteLength;
+assert.throws(TypeError, function() {
+  sample.byteLength;
 });
 
 reportCompare(0, 0);

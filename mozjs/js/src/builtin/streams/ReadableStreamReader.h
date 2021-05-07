@@ -9,6 +9,8 @@
 #ifndef builtin_streams_ReadableStreamReader_h
 #define builtin_streams_ReadableStreamReader_h
 
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
 #include "jstypes.h"          // JS_PUBLIC_API
 #include "js/Class.h"         // JSClass, js::ClassSpec
 #include "js/RootingAPI.h"    // JS::Handle
@@ -115,25 +117,25 @@ class ReadableStreamDefaultReader : public ReadableStreamReader {
   static const JSClass protoClass_;
 };
 
-[[nodiscard]] extern ReadableStreamDefaultReader*
+extern MOZ_MUST_USE ReadableStreamDefaultReader*
 CreateReadableStreamDefaultReader(JSContext* cx,
                                   JS::Handle<ReadableStream*> unwrappedStream,
                                   ForAuthorCodeBool forAuthorCode,
                                   JS::Handle<JSObject*> proto = nullptr);
 
-[[nodiscard]] extern JSObject* ReadableStreamReaderGenericCancel(
+extern MOZ_MUST_USE JSObject* ReadableStreamReaderGenericCancel(
     JSContext* cx, JS::Handle<ReadableStreamReader*> unwrappedReader,
     JS::Handle<JS::Value> reason);
 
-[[nodiscard]] extern bool ReadableStreamReaderGenericInitialize(
+extern MOZ_MUST_USE bool ReadableStreamReaderGenericInitialize(
     JSContext* cx, JS::Handle<ReadableStreamReader*> reader,
     JS::Handle<ReadableStream*> unwrappedStream,
     ForAuthorCodeBool forAuthorCode);
 
-[[nodiscard]] extern bool ReadableStreamReaderGenericRelease(
+extern MOZ_MUST_USE bool ReadableStreamReaderGenericRelease(
     JSContext* cx, JS::Handle<ReadableStreamReader*> unwrappedReader);
 
-[[nodiscard]] extern PromiseObject* ReadableStreamDefaultReaderRead(
+extern MOZ_MUST_USE PromiseObject* ReadableStreamDefaultReaderRead(
     JSContext* cx, JS::Handle<ReadableStreamDefaultReader*> unwrappedReader);
 
 }  // namespace js
@@ -145,7 +147,7 @@ inline bool JSObject::is<js::ReadableStreamReader>() const {
 
 namespace js {
 
-[[nodiscard]] extern JSObject* CreateReadableStreamBYOBReader(
+extern MOZ_MUST_USE JSObject* CreateReadableStreamBYOBReader(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedStream,
     ForAuthorCodeBool forAuthorCode, JS::Handle<JSObject*> proto = nullptr);
 

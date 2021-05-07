@@ -8,8 +8,11 @@
 
 #include "builtin/streams/ReadableStream.h"
 
-#include "jsapi.h"    // JS_ReportErrorNumberASCII
-#include "jspubtd.h"  // JSProto_ReadableStream
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
+#include "jsapi.h"        // JS_ReportErrorNumberASCII
+#include "jsfriendapi.h"  // js::GetErrorMessage, JSMSG_*
+#include "jspubtd.h"      // JSProto_ReadableStream
 
 #include "builtin/Array.h"                   // js::NewDenseFullyAllocatedArray
 #include "builtin/streams/ClassSpecMacro.h"  // JS_STREAMS_CLASS_SPEC
@@ -22,8 +25,7 @@
 #include "builtin/streams/WritableStream.h"  // js::WritableStream
 #include "js/CallArgs.h"                     // JS::CallArgs{,FromVp}
 #include "js/Class.h"  // JSCLASS_PRIVATE_IS_NSISUPPORTS, JSCLASS_HAS_PRIVATE, JS_NULL_CLASS_OPS
-#include "js/Conversions.h"           // JS::ToBoolean
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "js/Conversions.h"  // JS::ToBoolean
 #include "js/PropertySpec.h"  // JS{Function,Property}Spec, JS_FN, JS_PSG, JS_{FS,PS}_END
 #include "js/RootingAPI.h"        // JS::Handle, JS::Rooted, js::CanGC
 #include "js/Stream.h"            // JS::ReadableStream{Mode,UnderlyingSource}
@@ -32,10 +34,10 @@
 #include "vm/JSObject.h"          // js::GetPrototypeFromBuiltinConstructor
 #include "vm/ObjectOperations.h"  // js::GetProperty
 #include "vm/PlainObject.h"       // js::PlainObject
-#include "vm/Runtime.h"           // JSAtomState, JSRuntime
+#include "vm/Runtime.h"           // JSAtomState
 #include "vm/StringType.h"        // js::EqualStrings, js::ToString
 
-#include "vm/Compartment-inl.h"   // js::UnwrapAndTypeCheck{Argument,This,Value}
+#include "vm/Compartment-inl.h"   // js::UnwrapAndTypeCheck{Argument,This}
 #include "vm/JSObject-inl.h"      // js::NewBuiltinClassInstance
 #include "vm/NativeObject-inl.h"  // js::ThrowIfNotConstructing
 
@@ -56,7 +58,6 @@ using js::ReturnPromiseRejectedWithPendingError;
 using js::ToString;
 using js::UnwrapAndTypeCheckArgument;
 using js::UnwrapAndTypeCheckThis;
-using js::UnwrapAndTypeCheckValue;
 using js::WritableStream;
 
 using JS::CallArgs;
@@ -217,8 +218,8 @@ bool ReadableStream::constructor(JSContext* cx, unsigned argc, JS::Value* vp) {
 /**
  * Streams spec, 3.2.5.1. get locked
  */
-[[nodiscard]] static bool ReadableStream_locked(JSContext* cx, unsigned argc,
-                                                JS::Value* vp) {
+static MOZ_MUST_USE bool ReadableStream_locked(JSContext* cx, unsigned argc,
+                                               JS::Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Step 1: If ! IsReadableStream(this) is false, throw a TypeError exception.
@@ -236,8 +237,8 @@ bool ReadableStream::constructor(JSContext* cx, unsigned argc, JS::Value* vp) {
 /**
  * Streams spec, 3.2.5.2. cancel ( reason )
  */
-[[nodiscard]] static bool ReadableStream_cancel(JSContext* cx, unsigned argc,
-                                                JS::Value* vp) {
+static MOZ_MUST_USE bool ReadableStream_cancel(JSContext* cx, unsigned argc,
+                                               JS::Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Step 1: If ! IsReadableStream(this) is false, return a promise rejected
@@ -274,8 +275,8 @@ bool ReadableStream::constructor(JSContext* cx, unsigned argc, JS::Value* vp) {
 /**
  * Streams spec, 3.2.5.4. getReader({ mode } = {})
  */
-[[nodiscard]] static bool ReadableStream_getReader(JSContext* cx, unsigned argc,
-                                                   JS::Value* vp) {
+static MOZ_MUST_USE bool ReadableStream_getReader(JSContext* cx, unsigned argc,
+                                                  JS::Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Implicit in the spec: Argument defaults and destructuring.
@@ -413,18 +414,22 @@ static bool ReadableStream_pipeTo(JSContext* cx, unsigned argc, Value* vp) {
   //         AbortSignal interface, return a promise rejected with a TypeError
   //         exception.
   Rooted<JSObject*> signal(cx, nullptr);
-  if (!signalVal.isUndefined()) {
-    if (!UnwrapAndTypeCheckValue(
-            cx, signalVal, cx->runtime()->maybeAbortSignalClass(), [cx] {
-              JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                        JSMSG_READABLESTREAM_PIPETO_BAD_SIGNAL);
-            })) {
-      return ReturnPromiseRejectedWithPendingError(cx, args);
+  do {
+    if (signalVal.isUndefined()) {
+      break;
     }
 
-    // Note: |signal| can be a wrapper.
-    signal = &signalVal.toObject();
-  }
+    if (signalVal.isObject()) {
+      // XXX jwalden need some JSAPI hooks to detect AbortSignal instances, or
+      //             something
+
+      signal = &signalVal.toObject();
+    }
+
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_READABLESTREAM_PIPETO_BAD_SIGNAL);
+    return ReturnPromiseRejectedWithPendingError(cx, args);
+  } while (false);
 
   // Step 5: If ! IsReadableStreamLocked(this) is true, return a promise
   //         rejected with a TypeError exception.
@@ -545,6 +550,5 @@ const JSClass ReadableStream::class_ = {
     JS_NULL_CLASS_OPS, &ReadableStream::classSpec_};
 
 const JSClass ReadableStream::protoClass_ = {
-    "ReadableStream.prototype",
-    JSCLASS_HAS_CACHED_PROTO(JSProto_ReadableStream), JS_NULL_CLASS_OPS,
-    &ReadableStream::classSpec_};
+    "object", JSCLASS_HAS_CACHED_PROTO(JSProto_ReadableStream),
+    JS_NULL_CLASS_OPS, &ReadableStream::classSpec_};

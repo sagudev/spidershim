@@ -1,4 +1,4 @@
-var g = newGlobal({ discardSource: true });
-g.evaluate(`
+setDiscardSource(true)
+evaluate(`
   unescape(class get { static staticMethod() {} });
 `);

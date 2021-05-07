@@ -122,7 +122,8 @@ Result<Span<const char>, size_t> LZ4FrameCompressionContext::BeginCompressing(
     return Err(headerSize);
   }
 
-  return Span{static_cast<const char*>(mWriteBuffer.Elements()), headerSize};
+  return MakeSpan(static_cast<const char*>(mWriteBuffer.Elements()),
+                  headerSize);
 }
 
 Result<Span<const char>, size_t>
@@ -136,7 +137,8 @@ LZ4FrameCompressionContext::ContinueCompressing(Span<const char> aInput) {
     return Err(outputSize);
   }
 
-  return Span{static_cast<const char*>(mWriteBuffer.Elements()), outputSize};
+  return MakeSpan(static_cast<const char*>(mWriteBuffer.Elements()),
+                  outputSize);
 }
 
 Result<Span<const char>, size_t> LZ4FrameCompressionContext::EndCompressing() {
@@ -147,7 +149,8 @@ Result<Span<const char>, size_t> LZ4FrameCompressionContext::EndCompressing() {
     return Err(outputSize);
   }
 
-  return Span{static_cast<const char*>(mWriteBuffer.Elements()), outputSize};
+  return MakeSpan(static_cast<const char*>(mWriteBuffer.Elements()),
+                  outputSize);
 }
 
 LZ4FrameDecompressionContext::LZ4FrameDecompressionContext(bool aStableDest)

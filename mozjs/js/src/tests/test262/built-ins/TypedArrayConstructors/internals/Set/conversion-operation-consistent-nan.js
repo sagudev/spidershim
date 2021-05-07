@@ -15,24 +15,15 @@ info: |
   2. If Type(P) is String, then
     ...
     b. If numericIndex is not undefined, then
-      i. Perform ? IntegerIndexedElementSet(O, numericIndex, V).
-      ii. Return true.
+      i. Return ? IntegerIndexedElementSet(O, numericIndex, V).
   ...
 
+  #sec-integerindexedelementset
   IntegerIndexedElementSet ( O, index, value )
 
-  Assert: O is an Integer-Indexed exotic object.
-  If O.[[ContentType]] is BigInt, let numValue be ? ToBigInt(value).
-  Otherwise, let numValue be ? ToNumber(value).
-  Let buffer be O.[[ViewedArrayBuffer]].
-  If IsDetachedBuffer(buffer) is false and ! IsValidIntegerIndex(O, index) is true, then
-    Let offset be O.[[ByteOffset]].
-    Let arrayTypeName be the String value of O.[[TypedArrayName]].
-    Let elementSize be the Element Size value specified in Table 62 for arrayTypeName.
-    Let indexedPosition be (ℝ(index) × elementSize) + offset.
-    Let elementType be the Element Type value in Table 62 for arrayTypeName.
-    Perform SetValueInBuffer(buffer, indexedPosition, elementType, numValue, true, Unordered).
-  Return NormalCompletion(undefined).
+  ...
+  15. Perform SetValueInBuffer(buffer, indexedPosition, elementType, numValue).
+  ...
 
   #sec-setvalueinbuffer
   SetValueInBuffer ( arrayBuffer, byteIndex, type, value [ ,
@@ -72,7 +63,7 @@ info: |
   an expression of the form  X !== X. The result will be true if and only
   if X is a NaN.
 includes: [nans.js, testTypedArray.js]
-features: [align-detached-buffer-semantics-with-web-reality, TypedArray]
+features: [TypedArray]
 ---*/
 
 testWithTypedArrayConstructors(function(FA) {
@@ -92,12 +83,12 @@ testWithTypedArrayConstructors(function(FA) {
 
       assert(
         samples[i] !== samples[i],
-        'The result of `(samples[i] !== samples[i])` is true'
+        `samples (index=${idx}) produces a valid NaN (${precision} precision)`
       );
 
       assert(
         controls[i] !== controls[i],
-        'The result of `(controls[i] !== controls[i])` is true'
+        `controls (index=${idx}) produces a valid NaN (${precision} precision)`
       );
     }
   }

@@ -18,12 +18,10 @@ use super::module::Module;
 use super::template::{AsTemplateParam, TemplateParameters};
 use super::traversal::{EdgeKind, Trace, Tracer};
 use super::ty::{Type, TypeKind};
-use crate::clang;
-use crate::parse::{
-    ClangItemParser, ClangSubItemParser, ParseError, ParseResult,
-};
+use clang;
 use clang_sys;
 use lazycell::LazyCell;
+use parse::{ClangItemParser, ClangSubItemParser, ParseError, ParseResult};
 use regex;
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -101,23 +99,24 @@ pub trait ItemAncestors {
     fn ancestors<'a>(&self, ctx: &'a BindgenContext) -> ItemAncestorsIter<'a>;
 }
 
-#[cfg(testing_only_extra_assertions)]
-type DebugOnlyItemSet = ItemSet;
+cfg_if! {
+    if #[cfg(testing_only_extra_assertions)] {
+        type DebugOnlyItemSet = ItemSet;
+    } else {
+        struct DebugOnlyItemSet;
 
-#[cfg(not(testing_only_extra_assertions))]
-struct DebugOnlyItemSet;
+        impl DebugOnlyItemSet {
+            fn new() -> Self {
+                DebugOnlyItemSet
+            }
 
-#[cfg(not(testing_only_extra_assertions))]
-impl DebugOnlyItemSet {
-    fn new() -> Self {
-        DebugOnlyItemSet
+            fn contains(&self, _id: &ItemId) -> bool {
+                false
+            }
+
+            fn insert(&mut self, _id: ItemId) {}
+        }
     }
-
-    fn contains(&self, _id: &ItemId) -> bool {
-        false
-    }
-
-    fn insert(&mut self, _id: ItemId) {}
 }
 
 /// An iterator over an item and its ancestors.
@@ -131,7 +130,7 @@ impl<'a> ItemAncestorsIter<'a> {
     fn new<Id: Into<ItemId>>(ctx: &'a BindgenContext, id: Id) -> Self {
         ItemAncestorsIter {
             item: id.into(),
-            ctx,
+            ctx: ctx,
             seen: DebugOnlyItemSet::new(),
         }
     }
@@ -1296,8 +1295,8 @@ impl ClangItemParser for Item {
         parent_id: Option<ItemId>,
         ctx: &mut BindgenContext,
     ) -> Result<ItemId, ParseError> {
-        use crate::ir::var::Var;
         use clang_sys::*;
+        use ir::var::Var;
 
         if !cursor.is_valid() {
             return Err(ParseError::Continue);
@@ -1331,7 +1330,9 @@ impl ClangItemParser for Item {
                     Ok(ParseResult::AlreadyResolved(id)) => {
                         return Ok(id);
                     }
-                    Err(ParseError::Recurse) => return Err(ParseError::Recurse),
+                    Err(ParseError::Recurse) => {
+                        return Err(ParseError::Recurse)
+                    }
                     Err(ParseError::Continue) => {}
                 }
             };
@@ -1425,7 +1426,7 @@ impl ClangItemParser for Item {
                     // ignore toplevel operator overloads
                     let spelling = cursor.spelling();
                     if !spelling.starts_with("operator") {
-                        warn!(
+                        error!(
                             "Unhandled cursor kind {:?}: {:?}",
                             cursor.kind(),
                             cursor

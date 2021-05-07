@@ -8,7 +8,6 @@
 #define vm_ProxyObject_h
 
 #include "js/Proxy.h"
-#include "js/shadow/Object.h"  // JS::shadow::Object
 #include "vm/JSObject.h"
 
 namespace js {
@@ -34,7 +33,7 @@ class ProxyObject : public JSObject {
     static_assert(offsetof(ProxyObject, data) == detail::ProxyDataOffset,
                   "proxy object layout must match shadow interface");
     static_assert(offsetof(ProxyObject, data.reservedSlots) ==
-                      offsetof(JS::shadow::Object, slots),
+                      offsetof(shadow::Object, slots),
                   "Proxy reservedSlots must overlay native object slots field");
   }
 
@@ -42,6 +41,11 @@ class ProxyObject : public JSObject {
   static ProxyObject* New(JSContext* cx, const BaseProxyHandler* handler,
                           HandleValue priv, TaggedProto proto_,
                           const JSClass* clasp);
+
+  static ProxyObject* NewSingleton(JSContext* cx,
+                                   const BaseProxyHandler* handler,
+                                   HandleValue priv, TaggedProto proto_,
+                                   const JSClass* clasp);
 
   void init(const BaseProxyHandler* handler, HandleValue priv, JSContext* cx);
 
@@ -60,13 +64,10 @@ class ProxyObject : public JSObject {
              ->reservedSlots;
   }
 
-  [[nodiscard]] bool initExternalValueArrayAfterSwap(JSContext* cx,
-                                                     HandleValueVector values);
+  MOZ_MUST_USE bool initExternalValueArrayAfterSwap(JSContext* cx,
+                                                    HandleValueVector values);
 
   const Value& private_() const { return GetProxyPrivate(this); }
-  const Value& expando() const { return GetProxyExpando(this); }
-
-  void setExpando(JSObject* expando);
 
   void setCrossCompartmentPrivate(const Value& priv);
   void setSameCompartmentPrivate(const Value& priv);
@@ -108,11 +109,6 @@ class ProxyObject : public JSObject {
         &detail::GetProxyDataLayout(this)->values()->privateSlot);
   }
 
-  GCPtrValue* slotOfExpando() {
-    return reinterpret_cast<GCPtrValue*>(
-        &detail::GetProxyDataLayout(this)->values()->expandoSlot);
-  }
-
   void setPrivate(const Value& priv);
 
   static bool isValidProxyClass(const JSClass* clasp) {
@@ -122,7 +118,7 @@ class ProxyObject : public JSObject {
 
     // Proxy classes are not allowed to have call or construct hooks directly.
     // Their callability is instead decided by handler()->isCallable().
-    return clasp->isProxyObject() && clasp->isTrace(ProxyObject::trace) &&
+    return clasp->isProxy() && clasp->isTrace(ProxyObject::trace) &&
            !clasp->getCall() && !clasp->getConstruct();
   }
 
@@ -137,6 +133,8 @@ class ProxyObject : public JSObject {
 
   void nuke();
 };
+
+inline bool IsProxyClass(const JSClass* clasp) { return clasp->isProxy(); }
 
 bool IsDerivedProxyObject(const JSObject* obj,
                           const js::BaseProxyHandler* handler);

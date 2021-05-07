@@ -18,11 +18,6 @@ namespace mozilla {
 // Range<T> is a tuple containing a pointer and a length.
 template <typename T>
 class Range {
-  template <typename U>
-  friend class Range;
-
-  // Reassignment of RangedPtrs is so (subtly) restrictive that we just make
-  // Range immutable.
   const RangedPtr<T> mStart;
   const RangedPtr<T> mEnd;
 
@@ -30,14 +25,7 @@ class Range {
   Range() : mStart(nullptr, 0), mEnd(nullptr, 0) {}
   Range(T* aPtr, size_t aLength)
       : mStart(aPtr, aPtr, aPtr + aLength),
-        mEnd(aPtr + aLength, aPtr, aPtr + aLength) {
-    if (!aPtr) {
-      MOZ_ASSERT(!aLength,
-                 "Range does not support nullptr with non-zero length.");
-      // ...because merely having a pointer to `nullptr + 1` is undefined
-      // behavior. UBSAN catches this as of clang-10.
-    }
-  }
+        mEnd(aPtr + aLength, aPtr, aPtr + aLength) {}
   Range(const RangedPtr<T>& aStart, const RangedPtr<T>& aEnd)
       : mStart(aStart.get(), aStart.get(), aEnd.get()),
         mEnd(aEnd.get(), aStart.get(), aEnd.get()) {
@@ -71,11 +59,15 @@ class Range {
   operator Span<const T>() const { return Span<T>(mStart.get(), length()); }
 };
 
-template <typename T>
-Span(Range<T>&) -> Span<T>;
+template <class T>
+Span<T> MakeSpan(Range<T>& aRange) {
+  return aRange;
+}
 
-template <typename T>
-Span(const Range<T>&) -> Span<const T>;
+template <class T>
+Span<const T> MakeSpan(const Range<T>& aRange) {
+  return aRange;
+}
 
 }  // namespace mozilla
 

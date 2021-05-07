@@ -72,15 +72,15 @@ namespace JS {
  *
  * Users don't have to call `result.report()`; another possible ending is:
  *
- *     argv.rval().setBoolean(result.ok());
+ *     argv.rval().setBoolean(result.reallyOk());
  *     return true;
  */
 class ObjectOpResult {
  private:
   /**
-   * code_ is either one of the special codes OkCode or Uninitialized, or an
-   * error code. For now the error codes are JS friend API and are defined in
-   * js/public/friend/ErrorNumbers.msg.
+   * code_ is either one of the special codes OkCode or Uninitialized, or
+   * an error code. For now the error codes are private to the JS engine;
+   * they're defined in js/src/js.msg.
    *
    * code_ is uintptr_t (rather than uint32_t) for the convenience of the
    * JITs, which would otherwise have to deal with either padding or stack
@@ -91,15 +91,24 @@ class ObjectOpResult {
  public:
   enum SpecialCodes : uintptr_t { OkCode = 0, Uninitialized = uintptr_t(-1) };
 
+  static const uintptr_t SoftFailBit = uintptr_t(1)
+                                       << (sizeof(uintptr_t) * 8 - 1);
+
   ObjectOpResult() : code_(Uninitialized) {}
 
-  /* Return true if succeed() was called. */
+  /* Return true if succeed() or failSoft() was called. */
   bool ok() const {
     MOZ_ASSERT(code_ != Uninitialized);
-    return code_ == OkCode;
+    return code_ == OkCode || (code_ & SoftFailBit);
   }
 
   explicit operator bool() const { return ok(); }
+
+  /* Return true if succeed() was called. */
+  bool reallyOk() const {
+    MOZ_ASSERT(code_ != Uninitialized);
+    return code_ == OkCode;
+  }
 
   /* Set this ObjectOpResult to true and return true. */
   bool succeed() {
@@ -121,7 +130,23 @@ class ObjectOpResult {
    */
   bool fail(uint32_t msg) {
     MOZ_ASSERT(msg != OkCode);
+    MOZ_ASSERT((msg & SoftFailBit) == 0);
     code_ = msg;
+    return true;
+  }
+
+  /*
+   * DEPRECATED: This is a non-standard compatibility hack.
+   *
+   * Set this ObjectOpResult to true, but remembers an error code.
+   * This is used for situations where we really want to fail,
+   * but can't for legacy reasons.
+   *
+   * Always returns true, as a convenience.
+   */
+  bool failSoft(uint32_t msg) {
+    // The msg code is currently never extracted again.
+    code_ = msg | SoftFailBit;
     return true;
   }
 
@@ -202,86 +227,54 @@ class ObjectOpResult {
 };
 
 class PropertyResult {
-  enum class Kind : uint8_t {
-    NotFound,
-    NativeProperty,
-    NonNativeProperty,
-    DenseElement,
-    TypedArrayElement,
-  };
   union {
-    // Set if kind is NativeProperty.
     js::Shape* shape_;
-    // Set if kind is DenseElement.
-    uint32_t denseIndex_;
-    // Set if kind is TypedArrayElement.
-    size_t typedArrayIndex_;
+    uintptr_t bits_;
   };
-  Kind kind_ = Kind::NotFound;
-  bool ignoreProtoChain_ = false;
+
+  static const uintptr_t NotFound = 0;
+  static const uintptr_t NonNativeProperty = 1;
+  static const uintptr_t DenseOrTypedArrayElement = 1;
 
  public:
-  PropertyResult() = default;
+  PropertyResult() : bits_(NotFound) {}
 
-  // When a property is not found, we may additionally indicate that the
-  // prototype chain should be ignored. This occurs for:
-  //  - An out-of-range numeric property on a TypedArrayObject.
-  //  - A resolve hook recursively calling itself as it sets the property.
-  bool isNotFound() const { return kind_ == Kind::NotFound; }
-  bool shouldIgnoreProtoChain() const {
-    MOZ_ASSERT(isNotFound());
-    return ignoreProtoChain_;
+  explicit PropertyResult(js::Shape* propertyShape) : shape_(propertyShape) {
+    MOZ_ASSERT(!isFound() || isNativeProperty());
   }
 
-  bool isFound() const { return kind_ != Kind::NotFound; }
-  bool isNonNativeProperty() const { return kind_ == Kind::NonNativeProperty; }
-  bool isDenseElement() const { return kind_ == Kind::DenseElement; }
-  bool isTypedArrayElement() const { return kind_ == Kind::TypedArrayElement; }
-  bool isNativeProperty() const { return kind_ == Kind::NativeProperty; }
+  explicit operator bool() const { return isFound(); }
+
+  bool isFound() const { return bits_ != NotFound; }
+
+  bool isNonNativeProperty() const { return bits_ == NonNativeProperty; }
+
+  bool isDenseOrTypedArrayElement() const {
+    return bits_ == DenseOrTypedArrayElement;
+  }
+
+  bool isNativeProperty() const { return isFound() && !isNonNativeProperty(); }
+
+  js::Shape* maybeShape() const {
+    MOZ_ASSERT(!isNonNativeProperty());
+    return isFound() ? shape_ : nullptr;
+  }
 
   js::Shape* shape() const {
     MOZ_ASSERT(isNativeProperty());
     return shape_;
   }
 
-  uint32_t denseElementIndex() const {
-    MOZ_ASSERT(isDenseElement());
-    return denseIndex_;
-  }
-
-  size_t typedArrayElementIndex() const {
-    MOZ_ASSERT(isTypedArrayElement());
-    return typedArrayIndex_;
-  }
-
-  void setNotFound() { kind_ = Kind::NotFound; }
+  void setNotFound() { bits_ = NotFound; }
 
   void setNativeProperty(js::Shape* propertyShape) {
-    kind_ = Kind::NativeProperty;
     shape_ = propertyShape;
+    MOZ_ASSERT(isNativeProperty());
   }
 
-  void setTypedObjectProperty() { kind_ = Kind::NonNativeProperty; }
-  void setProxyProperty() { kind_ = Kind::NonNativeProperty; }
+  void setNonNativeProperty() { bits_ = NonNativeProperty; }
 
-  void setDenseElement(uint32_t index) {
-    kind_ = Kind::DenseElement;
-    denseIndex_ = index;
-  }
-
-  void setTypedArrayElement(size_t index) {
-    kind_ = Kind::TypedArrayElement;
-    typedArrayIndex_ = index;
-  }
-
-  void setTypedArrayOutOfRange() {
-    kind_ = Kind::NotFound;
-    ignoreProtoChain_ = true;
-  }
-  void setRecursiveResolve() {
-    kind_ = Kind::NotFound;
-    ignoreProtoChain_ = true;
-  }
+  void setDenseOrTypedArrayElement() { bits_ = DenseOrTypedArrayElement; }
 
   void trace(JSTracer* trc);
 };
@@ -297,21 +290,16 @@ class WrappedPtrOperations<JS::PropertyResult, Wrapper> {
   }
 
  public:
-  bool isNotFound() const { return value().isNotFound(); }
   bool isFound() const { return value().isFound(); }
+  explicit operator bool() const { return bool(value()); }
+  js::Shape* maybeShape() const { return value().maybeShape(); }
   js::Shape* shape() const { return value().shape(); }
-  uint32_t denseElementIndex() const { return value().denseElementIndex(); }
-  size_t typedArrayElementIndex() const {
-    return value().typedArrayElementIndex();
-  }
   bool isNativeProperty() const { return value().isNativeProperty(); }
   bool isNonNativeProperty() const { return value().isNonNativeProperty(); }
-  bool isDenseElement() const { return value().isDenseElement(); }
-  bool isTypedArrayElement() const { return value().isTypedArrayElement(); }
-
-  bool shouldIgnoreProtoChain() const {
-    return value().shouldIgnoreProtoChain();
+  bool isDenseOrTypedArrayElement() const {
+    return value().isDenseOrTypedArrayElement();
   }
+  js::Shape* asTaggedShape() const { return value().asTaggedShape(); }
 };
 
 template <class Wrapper>
@@ -322,14 +310,8 @@ class MutableWrappedPtrOperations<JS::PropertyResult, Wrapper>
  public:
   void setNotFound() { value().setNotFound(); }
   void setNativeProperty(js::Shape* shape) { value().setNativeProperty(shape); }
-  void setTypedObjectProperty() { value().setTypedObjectProperty(); }
-  void setProxyProperty() { value().setProxyProperty(); }
-  void setDenseElement(uint32_t index) { value().setDenseElement(index); }
-  void setTypedArrayElement(size_t index) {
-    value().setTypedArrayElement(index);
-  }
-  void setTypedArrayOutOfRange() { value().setTypedArrayOutOfRange(); }
-  void setRecursiveResolve() { value().setRecursiveResolve(); }
+  void setNonNativeProperty() { value().setNonNativeProperty(); }
+  void setDenseOrTypedArrayElement() { value().setDenseOrTypedArrayElement(); }
 };
 
 }  // namespace js
@@ -718,7 +700,7 @@ static const uint32_t JSCLASS_FOREGROUND_FINALIZE =
 // application.
 static const uint32_t JSCLASS_GLOBAL_APPLICATION_SLOTS = 5;
 static const uint32_t JSCLASS_GLOBAL_SLOT_COUNT =
-    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 29;
+    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 25;
 
 static constexpr uint32_t JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(uint32_t n) {
   return JSCLASS_IS_GLOBAL |
@@ -816,19 +798,7 @@ struct alignas(js::gc::JSClassAlignBytes) JSClass {
    */
   static const uint32_t NON_NATIVE = JSCLASS_INTERNAL_FLAG2;
 
-  // A JSObject created from a JSClass extends from one of:
-  //  - js::NativeObject
-  //  - js::ProxyObject
-  //
-  // While it is possible to introduce new families of objects, it is strongly
-  // discouraged. The JITs would be entirely unable to optimize them and testing
-  // coverage is low. The existing NativeObject and ProxyObject are extremely
-  // flexible and are able to represent the entire Gecko embedding requirements.
-  //
-  // NOTE: Internal to SpiderMonkey, there is an experimental js::TypedObject
-  //       object family for future WASM features.
-  bool isNativeObject() const { return !(flags & NON_NATIVE); }
-  bool isProxyObject() const { return flags & JSCLASS_IS_PROXY; }
+  bool isNative() const { return !(flags & NON_NATIVE); }
 
   bool hasPrivate() const { return !!(flags & JSCLASS_HAS_PRIVATE); }
 
@@ -837,11 +807,13 @@ struct alignas(js::gc::JSClassAlignBytes) JSClass {
   bool isJSFunction() const { return this == js::FunctionClassPtr; }
 
   bool nonProxyCallable() const {
-    MOZ_ASSERT(!isProxyObject());
+    MOZ_ASSERT(!isProxy());
     return isJSFunction() || getCall();
   }
 
   bool isGlobal() const { return flags & JSCLASS_IS_GLOBAL; }
+
+  bool isProxy() const { return flags & JSCLASS_IS_PROXY; }
 
   bool isDOMClass() const { return flags & JSCLASS_IS_DOMJSCLASS; }
 

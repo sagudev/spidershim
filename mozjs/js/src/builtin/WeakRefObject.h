@@ -16,8 +16,7 @@ class WeakRefObject : public NativeObject {
   static const JSClass class_;
   static const JSClass protoClass_;
 
-  JSObject* target() { return static_cast<JSObject*>(getPrivate()); }
-
+  JSObject* target();
   void setTarget(JSObject* target);
 
  private:
@@ -26,14 +25,11 @@ class WeakRefObject : public NativeObject {
   static const JSPropertySpec properties[];
   static const JSFunctionSpec methods[];
 
-  [[nodiscard]] static bool construct(JSContext* cx, unsigned argc, Value* vp);
+  static MOZ_MUST_USE bool construct(JSContext* cx, unsigned argc, Value* vp);
   static void trace(JSTracer* trc, JSObject* obj);
   static void finalize(JSFreeOp* op, JSObject* obj);
 
-  static bool preserveDOMWrapper(JSContext* cx, HandleObject obj);
-
   static bool deref(JSContext* cx, unsigned argc, Value* vp);
-  static void readBarrier(JSContext* cx, Handle<WeakRefObject*> self);
 };
 
 }  // namespace js

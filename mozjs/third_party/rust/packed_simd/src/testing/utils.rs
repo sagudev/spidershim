@@ -1,8 +1,6 @@
 //! Testing utilities
 
 #![allow(dead_code)]
-// FIXME: Or don't. But it's true this is a problematic comparison.
-#![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 use crate::{cmp::PartialOrd, fmt::Debug, LexicographicallyOrdered};
 
@@ -21,19 +19,14 @@ pub fn test_lt<T>(
     assert!(a <= b, "{:?}, {:?}", a, b);
     assert!(b >= a, "{:?}, {:?}", a, b);
 
-    // The elegance of the mathematical expression of irreflexivity is more
-    // than clippy can handle.
-    #[allow(clippy::eq_op)]
-    {
-        // Irreflexivity
-        assert!(!(a < a), "{:?}, {:?}", a, b);
-        assert!(!(b < b), "{:?}, {:?}", a, b);
-        assert!(!(a > a), "{:?}, {:?}", a, b);
-        assert!(!(b > b), "{:?}, {:?}", a, b);
+    // Irreflexivity
+    assert!(!(a < a), "{:?}, {:?}", a, b);
+    assert!(!(b < b), "{:?}, {:?}", a, b);
+    assert!(!(a > a), "{:?}, {:?}", a, b);
+    assert!(!(b > b), "{:?}, {:?}", a, b);
 
-        assert!(a <= a, "{:?}, {:?}", a, b);
-        assert!(b <= b, "{:?}, {:?}", a, b);
-    }
+    assert!(a <= a, "{:?}, {:?}", a, b);
+    assert!(b <= b, "{:?}, {:?}", a, b);
 }
 
 /// Tests PartialOrd for `a` and `b` where `a <= b` is true.
@@ -45,8 +38,8 @@ pub fn test_le<T>(
     assert!(a <= b, "{:?}, {:?}", a, b);
     assert!(b >= a, "{:?}, {:?}", a, b);
 
-    assert!(a <= b, "{:?}, {:?}", a, b);
-    assert!(b >= a, "{:?}, {:?}", a, b);
+    assert!(a == b || a < b, "{:?}, {:?}", a, b);
+    assert!(a == b || b > a, "{:?}, {:?}", a, b);
 
     if a == b {
         assert!(!(a < b), "{:?}, {:?}", a, b);

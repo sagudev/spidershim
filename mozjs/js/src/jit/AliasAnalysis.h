@@ -28,7 +28,10 @@ class AliasAnalysis {
   AliasAnalysis(MIRGenerator* mir, MIRGraph& graph)
       : mir(mir), graph_(graph), loop_(nullptr) {}
 
-  [[nodiscard]] bool analyze();
+  MOZ_MUST_USE bool analyze();
+
+  static MDefinition::AliasType genericMightAlias(const MDefinition* load,
+                                                  const MDefinition* store);
 };
 
 // Iterates over the flags in an AliasSet.

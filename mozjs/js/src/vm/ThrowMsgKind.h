@@ -9,24 +9,17 @@
 
 #include <stdint.h>  // uint8_t
 
-#include "js/friend/ErrorMessages.h"  // JSErrNum
+#include "jsfriendapi.h"  // JSErrNum
 
 namespace js {
 
 enum class ThrowMsgKind : uint8_t {
   AssignToCall,
   IteratorNoThrow,
-  CantDeleteSuper,
-  // Private Fields:
-  PrivateDoubleInit,
-  MissingPrivateOnGet,
-  MissingPrivateOnSet,
+  CantDeleteSuper
 };
 
 JSErrNum ThrowMsgKindToErrNum(ThrowMsgKind kind);
-
-// Used for CheckPrivateField
-enum class ThrowCondition : uint8_t { ThrowHas, ThrowHasNot, NoThrow };
 
 }  // namespace js
 

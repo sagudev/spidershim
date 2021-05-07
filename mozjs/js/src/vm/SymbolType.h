@@ -7,6 +7,8 @@
 #ifndef vm_SymbolType_h
 #define vm_SymbolType_h
 
+#include "mozilla/Attributes.h"
+
 #include <stdio.h>
 
 #include "jsapi.h"
@@ -17,7 +19,6 @@
 #include "js/GCHashTable.h"
 #include "js/HeapAPI.h"
 #include "js/RootingAPI.h"
-#include "js/shadow/Symbol.h"  // JS::shadow::Symbol
 #include "js/Symbol.h"
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
@@ -30,13 +31,12 @@ class AutoAccessAtomsZone;
 
 namespace JS {
 
-class Symbol
-    : public js::gc::CellWithTenuredGCPointer<js::gc::TenuredCell, JSAtom> {
- public:
-  // User description of symbol, stored in the cell header.
-  JSAtom* description() const { return headerPtr(); }
-
+class Symbol : public js::gc::TenuredCell {
  private:
+  // User description of symbol. Also meets gc::Cell requirements.
+  using HeaderWithAtom = js::gc::CellHeaderWithTenuredGCPointer<JSAtom>;
+  HeaderWithAtom headerAndDescription_;
+
   SymbolCode code_;
 
   // Each Symbol gets its own hash code so that we don't have to use
@@ -44,7 +44,7 @@ class Symbol
   js::HashNumber hash_;
 
   Symbol(SymbolCode code, js::HashNumber hash, JSAtom* desc)
-      : CellWithTenuredGCPointer(desc), code_(code), hash_(hash) {}
+      : headerAndDescription_(desc), code_(code), hash_(hash) {}
 
   Symbol(const Symbol&) = delete;
   void operator=(const Symbol&) = delete;
@@ -67,6 +67,7 @@ class Symbol
                       js::HandleString description);
   static Symbol* for_(JSContext* cx, js::HandleString description);
 
+  JSAtom* description() const { return headerAndDescription_.ptr(); }
   SymbolCode code() const { return code_; }
   js::HashNumber hash() const { return hash_; }
 
@@ -83,18 +84,19 @@ class Symbol
     return code_ == SymbolCode::toStringTag || code_ == SymbolCode::toPrimitive;
   }
 
-  // Symbol created for the #PrivateName syntax.
-  bool isPrivateName() const { return code_ == SymbolCode::PrivateNameSymbol; }
-
   static const JS::TraceKind TraceKind = JS::TraceKind::Symbol;
+  const js::gc::CellHeader& cellHeader() const { return headerAndDescription_; }
 
   inline void traceChildren(JSTracer* trc) {
-    js::TraceNullableCellHeaderEdge(trc, this, "symbol description");
+    js::TraceNullableEdge(trc, &headerAndDescription_, "symbol description");
   }
   inline void finalize(JSFreeOp*) {}
 
-  // Override base class implementation to tell GC about well-known symbols.
-  bool isPermanentAndMayBeShared() const { return isWellKnownSymbol(); }
+  static MOZ_ALWAYS_INLINE void writeBarrierPre(Symbol* thing) {
+    if (thing && !thing->isWellKnownSymbol()) {
+      thing->asTenured().writeBarrierPre(thing);
+    }
+  }
 
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
     return mallocSizeOf(this);

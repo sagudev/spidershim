@@ -1,10 +1,7 @@
-// |jit-test| --ion-limit-script-size=off
-
-setJitCompilerOption("baseline.warmup.trigger", 9);
+setJitCompilerOption("baseline.warmup.trigger", 10);
 setJitCompilerOption("ion.warmup.trigger", 20);
+setJitCompilerOption("ion.full.warmup.trigger", 20);
 var i;
-
-var warp = true;
 
 // Prevent GC from cancelling/discarding Ion compilations.
 gczeal(0);
@@ -273,7 +270,7 @@ var uceFault_mul_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_mul
 function rmul_number(i) {
     var x = 2 * i;
     if (uceFault_mul_number(i) || uceFault_mul_number(i))
-        assertEq(x, 198  /* = 2 * 99 */);
+        assertEq(x, 198  /* = 1 * 99 */);
     assertRecoveredOnBailout(x, true);
     return i;
 }
@@ -315,7 +312,7 @@ var uceFault_imul_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_im
 function rimul_number(i) {
     var x = Math.imul(2, i);
     if (uceFault_imul_number(i) || uceFault_imul_number(i))
-        assertEq(x, 198  /* = 2 * 99 */);
+        assertEq(x, 198  /* = 1 * 99 */);
     assertRecoveredOnBailout(x, true);
     return i;
 }
@@ -1163,9 +1160,12 @@ function rstring_replace_g(i) {
 
 var uceFault_typeof = eval(`(${uceFault})`.replace('uceFault', 'uceFault_typeof'))
 function rtypeof(i) {
-    var inputs = [ {}, [], 1, true, undefined, function(){}, null, Symbol() ];
-    var types = [ "object", "object", "number", "boolean", "undefined", "function", "object", "symbol"];
-
+    var inputs = [ {}, [], 1, true, undefined, function(){}, null ];
+    var types = [ "object", "object", "number", "boolean", "undefined", "function", "object"];
+    if (typeof Symbol === "function") {
+      inputs.push(Symbol());
+      types.push("symbol");
+    }
     var x = typeof (inputs[i % inputs.length]);
     var y = types[i % types.length];
 
@@ -1334,15 +1334,8 @@ function rrandom(i) {
     if(config.debug) setRNGState(2, 1+i);
 
     var x = Math.random();
-    if (uceFault_random(i) || uceFault_random(i)) {
-      // TODO(Warp): Conditional operator ?: prevents recovering operands.
-      // assertEq(x, config.debug ? setRNGState(2, 1+i) || Math.random() : x);
-      if (config.debug) {
-        assertEq(x, setRNGState(2, 1+i) || Math.random());
-      } else {
-        assertEq(x, x);
-      }
-    }
+    if (uceFault_random(i) || uceFault_random(i))
+        assertEq(x, config.debug ? setRNGState(2, 1+i) || Math.random() : x);
     assertRecoveredOnBailout(x, true);
     return i;
 }
@@ -1403,161 +1396,6 @@ function rsign_double(i) {
     const x = Math.sign(i + (-1 >>> 0));
     if (uceFault_sign_double(i) || uceFault_sign_double(i))
         assertEq(x, Math.sign(10));
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_add_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_add_bigint'));
-function rbigintadd(i) {
-    var x = 1n + i;
-    if (uceFault_add_bigint(i) || uceFault_add_bigint(i))
-        assertEq(x, 100n  /* = 1 + 99 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_sub_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_sub_bigint'));
-function rbigintsub(i) {
-    var x = 1n - i;
-    if (uceFault_sub_bigint(i) || uceFault_sub_bigint(i))
-        assertEq(x, -98n  /* = 1 - 99 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_mul_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_mul_bigint'));
-function rbigintmul(i) {
-    var x = 2n * i;
-    if (uceFault_mul_bigint(i) || uceFault_mul_bigint(i))
-        assertEq(x, 198n  /* = 2 * 99 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_div_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_div_bigint'));
-function rbigintdiv(i) {
-    var x = i / 3n;
-    if (uceFault_div_bigint(i) || uceFault_div_bigint(i))
-        assertEq(x, 33n  /* = 99 / 3 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_mod_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_mod_bigint'));
-function rbigintmod(i) {
-    var x = i % 2n;
-    if (uceFault_mod_bigint(i) || uceFault_mod_bigint(i))
-        assertEq(x, 1n  /* = 99 % 2 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_pow_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_pow_bigint'));
-function rbigintpow(i) {
-    var x = i ** 2n;
-    if (uceFault_pow_bigint(i) || uceFault_pow_bigint(i))
-        assertEq(x, 9801n  /* = 99 ** 2 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_inc_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_inc_bigint'));
-function rbigintinc(i) {
-    var x = i;
-    x++;
-    if (uceFault_inc_bigint(i) || uceFault_inc_bigint(i))
-        assertEq(x, 100n  /* = 99 + 1 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_dec_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_dec_bigint'));
-function rbigintdec(i) {
-    var x = i;
-    x--;
-    if (uceFault_dec_bigint(i) || uceFault_dec_bigint(i))
-        assertEq(x, 98n  /* = 99 - 1 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_neg_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_neg_bigint'));
-function rbigintneg(i) {
-    var x = -i;
-    if (uceFault_neg_bigint(i) || uceFault_neg_bigint(i))
-        assertEq(x, -99n);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_bitand_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_bitand_bigint'));
-function rbigintbitand(i) {
-    var x = 1n & i;
-    if (uceFault_bitand_bigint(i) || uceFault_bitand_bigint(i))
-        assertEq(x, 1n  /* = 1 & 99 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_bitor_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_bitor_bigint'));
-function rbigintbitor(i) {
-    var x = i | -100n; /* -100 == ~99 */
-    if (uceFault_bitor_bigint(i) || uceFault_bitor_bigint(i))
-        assertEq(x, -1n) /* ~99 | 99 = -1 */
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_bitxor_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_bitxor_bigint'));
-function rbigintbitxor(i) {
-    var x = 1n ^ i;
-    if (uceFault_bitxor_bigint(i) || uceFault_bitxor_bigint(i))
-        assertEq(x, 98n  /* = 1 XOR 99 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_bitnot_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_bitnot_bigint'));
-function rbigintbitnot(i) {
-    var x = ~i;
-    if (uceFault_bitnot_bigint(i) || uceFault_bitnot_bigint(i))
-        assertEq(x, -100n  /* = ~99 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_lsh_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_lsh_bigint'));
-function rbigintlsh(i) {
-    var x = i << 1n;
-    if (uceFault_lsh_bigint(i) || uceFault_lsh_bigint(i))
-        assertEq(x, 198n); /* 99 << 1 == 198 */
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_rsh_bigint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_rsh_bigint'));
-function rbigintrsh(i) {
-    var x = i >> 1n;
-    if (uceFault_rsh_bigint(i) || uceFault_rsh_bigint(i))
-        assertEq(x, 49n  /* = 99 >> 1 */);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_bigintasint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_bigintasint'));
-function rbigintasint(i) {
-    var x = BigInt.asIntN(6, i);
-    if (uceFault_bigintasint(i) || uceFault_bigintasint(i))
-        assertEq(x, -29n);
-    assertRecoveredOnBailout(x, true);
-    return i;
-}
-
-let uceFault_bigintasuint = eval(`(${uceFault})`.replace('uceFault', 'uceFault_bigintasuint'));
-function rbigintasuint(i) {
-    var x = BigInt.asUintN(6, i);
-    if (uceFault_bigintasuint(i) || uceFault_bigintasuint(i))
-        assertEq(x, 35n);
     assertRecoveredOnBailout(x, true);
     return i;
 }
@@ -1639,13 +1477,7 @@ for (j = 100 - max; j < 100; j++) {
     rsqrt_object(i);
     ratan2_number(i);
     ratan2_object(i);
-    if (!warp) {
-      // TODO(Warp): Warp doesn't currently support a compiler constraints like
-      // system to elide checks for modified built-ins. Additionally this test
-      // requires to inline the self-hosted function and to elide all type
-      // checks before the StringSplitString intrinsic is called.
-      rstr_split(i);
-    }
+    rstr_split(i);
     rregexp_exec(i);
     rregexp_y_exec(i);
     rregexp_y_literal_exec(i);
@@ -1683,10 +1515,7 @@ for (j = 100 - max; j < 100; j++) {
     rtofloat32_object(i);
     rtrunc_to_int32_number(i);
     rtrunc_to_int32_object(i);
-    if (!warp) {
-      // TODO(Warp): Bitwise operations on strings not optimised in Warp.
-      rtrunc_to_int32_string(i);
-    }
+    rtrunc_to_int32_string(i);
     rhypot_number_2args(i);
     rhypot_number_3args(i);
     rhypot_number_4args(i);
@@ -1700,23 +1529,6 @@ for (j = 100 - max; j < 100; j++) {
     rlog_object(i);
     rsign_number(i);
     rsign_double(i);
-    rbigintadd(BigInt(i));
-    rbigintsub(BigInt(i));
-    rbigintmul(BigInt(i));
-    rbigintdiv(BigInt(i));
-    rbigintmod(BigInt(i));
-    rbigintpow(BigInt(i));
-    rbigintinc(BigInt(i));
-    rbigintdec(BigInt(i));
-    rbigintneg(BigInt(i));
-    rbigintbitand(BigInt(i));
-    rbigintbitor(BigInt(i));
-    rbigintbitxor(BigInt(i));
-    rbigintbitnot(BigInt(i));
-    rbigintlsh(BigInt(i));
-    rbigintrsh(BigInt(i));
-    rbigintasint(BigInt(i));
-    rbigintasuint(BigInt(i));
 }
 
 // Test that we can refer multiple time to the same recover instruction, as well

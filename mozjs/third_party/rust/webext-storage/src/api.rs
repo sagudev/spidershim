@@ -23,12 +23,6 @@ pub const SYNC_MAX_ITEMS: usize = 512;
 
 type JsonMap = Map<String, JsonValue>;
 
-enum StorageChangeOp {
-    Clear,
-    Set(JsonValue),
-    SetWithoutQuota(JsonValue),
-}
-
 fn get_from_db(conn: &Connection, ext_id: &str) -> Result<Option<JsonMap>> {
     Ok(
         match conn.try_query_one::<String>(
@@ -48,14 +42,13 @@ fn get_from_db(conn: &Connection, ext_id: &str) -> Result<Option<JsonMap>> {
     )
 }
 
-fn save_to_db(tx: &Transaction<'_>, ext_id: &str, val: &StorageChangeOp) -> Result<()> {
+fn save_to_db(tx: &Transaction<'_>, ext_id: &str, val: &JsonValue) -> Result<()> {
     // This function also handles removals. Either an empty map or explicit null
     // is a removal. If there's a mirror record for this extension ID, then we
     // must leave a tombstone behind for syncing.
     let is_delete = match val {
-        StorageChangeOp::Clear => true,
-        StorageChangeOp::Set(JsonValue::Object(v)) => v.is_empty(),
-        StorageChangeOp::SetWithoutQuota(JsonValue::Object(v)) => v.is_empty(),
+        JsonValue::Null => true,
+        JsonValue::Object(m) => m.is_empty(),
         _ => false,
     };
     if is_delete {
@@ -91,19 +84,11 @@ fn save_to_db(tx: &Transaction<'_>, ext_id: &str, val: &StorageChangeOp) -> Resu
             )?;
         }
     } else {
-        // Convert to bytes so we can enforce the quota if necessary.
-        let sval = match val {
-            StorageChangeOp::Set(v) => {
-                let sv = v.to_string();
-                if sv.len() > SYNC_QUOTA_BYTES {
-                    return Err(ErrorKind::QuotaError(QuotaReason::TotalBytes).into());
-                }
-                sv
-            }
-            StorageChangeOp::SetWithoutQuota(v) => v.to_string(),
-            StorageChangeOp::Clear => unreachable!(),
-        };
-
+        // Convert to bytes so we can enforce the quota.
+        let sval = val.to_string();
+        if sval.len() > SYNC_QUOTA_BYTES {
+            return Err(ErrorKind::QuotaError(QuotaReason::TotalBytes).into());
+        }
         log::trace!("saving data for '{}': writing", ext_id);
         tx.execute_named_cached(
             "INSERT INTO storage_sync_data(ext_id, data, sync_change_counter)
@@ -120,7 +105,7 @@ fn save_to_db(tx: &Transaction<'_>, ext_id: &str, val: &StorageChangeOp) -> Resu
 }
 
 fn remove_from_db(tx: &Transaction<'_>, ext_id: &str) -> Result<()> {
-    save_to_db(tx, ext_id, &StorageChangeOp::Clear)
+    save_to_db(tx, ext_id, &JsonValue::Null)
 }
 
 // This is a "helper struct" for the callback part of the chrome.storage spec,
@@ -221,11 +206,7 @@ pub fn set(tx: &Transaction<'_>, ext_id: &str, val: JsonValue) -> Result<Storage
         current.insert(k, v);
     }
 
-    save_to_db(
-        tx,
-        ext_id,
-        &StorageChangeOp::Set(JsonValue::Object(current)),
-    )?;
+    save_to_db(tx, ext_id, &JsonValue::Object(current))?;
     Ok(changes)
 }
 
@@ -300,11 +281,7 @@ pub fn remove(tx: &Transaction<'_>, ext_id: &str, keys: JsonValue) -> Result<Sto
         }
     }
     if !result.is_empty() {
-        save_to_db(
-            tx,
-            ext_id,
-            &StorageChangeOp::SetWithoutQuota(JsonValue::Object(existing)),
-        )?;
+        save_to_db(tx, ext_id, &JsonValue::Object(existing))?;
     }
     Ok(result)
 }
@@ -352,45 +329,6 @@ pub fn get_bytes_in_use(conn: &Connection, ext_id: &str, keys: JsonValue) -> Res
         }
     }
     Ok(size)
-}
-
-/// Information about the usage of a single extension.
-#[derive(Debug, Clone, PartialEq)]
-pub struct UsageInfo {
-    /// The extension id.
-    pub ext_id: String,
-    /// The number of keys the extension uses.
-    pub num_keys: usize,
-    /// The number of bytes used by the extension. This result is somewhat rough
-    /// -- it doesn't bother counting the size of the extension ID, or data in
-    /// the mirror, and favors returning the exact number of bytes used by the
-    /// column (that is, the size of the JSON object) rather than replicating
-    /// the `get_bytes_in_use` return value for all keys.
-    pub num_bytes: usize,
-}
-
-/// Exposes information about per-collection usage for the purpose of telemetry.
-/// (Doesn't map to an actual `chrome.storage.sync` API).
-pub fn usage(db: &Connection) -> Result<Vec<UsageInfo>> {
-    type JsonObject = Map<String, JsonValue>;
-    let sql = "
-        SELECT ext_id, data
-        FROM storage_sync_data
-        WHERE data IS NOT NULL
-        -- for tests and determinism
-        ORDER BY ext_id
-    ";
-    db.query_rows_into(sql, &[], |row| {
-        let ext_id: String = row.get("ext_id")?;
-        let data: String = row.get("data")?;
-        let num_bytes = data.len();
-        let num_keys = serde_json::from_str::<JsonObject>(&data)?.len();
-        Ok(UsageInfo {
-            ext_id,
-            num_bytes,
-            num_keys,
-        })
-    })
 }
 
 #[cfg(test)]
@@ -644,43 +582,6 @@ mod tests {
     }
 
     #[test]
-    fn test_quota_bytes() -> Result<()> {
-        let mut db = new_mem_db();
-        let tx = db.transaction()?;
-        let ext_id = "xyz";
-        let val = "x".repeat(SYNC_QUOTA_BYTES + 1);
-
-        // Init an over quota db with a single key.
-        save_to_db(
-            &tx,
-            ext_id,
-            &StorageChangeOp::SetWithoutQuota(json!({ "x": val })),
-        )?;
-
-        // Adding more data fails.
-        let e = set(&tx, &ext_id, json!({ "y": "newvalue" })).unwrap_err();
-        match e.kind() {
-            ErrorKind::QuotaError(QuotaReason::TotalBytes) => {}
-            _ => panic!("unexpected error type"),
-        };
-
-        // Remove data does not fails.
-        remove(&tx, &ext_id, json!["x"])?;
-
-        // Restore the over quota data.
-        save_to_db(
-            &tx,
-            ext_id,
-            &StorageChangeOp::SetWithoutQuota(json!({ "y": val })),
-        )?;
-
-        // Overwrite with less data does not fail.
-        set(&tx, &ext_id, json!({ "y": "lessdata" }))?;
-
-        Ok(())
-    }
-
-    #[test]
     fn test_get_bytes_in_use() -> Result<()> {
         let mut db = new_mem_db();
         let tx = db.transaction()?;
@@ -710,36 +611,5 @@ mod tests {
         );
         assert_eq!(get_bytes_in_use(&tx, &ext_id, json!(null))?, 22);
         Ok(())
-    }
-
-    #[test]
-    fn test_usage() {
-        let mut db = new_mem_db();
-        let tx = db.transaction().unwrap();
-        // '{"a":"a","b":"bb","c":"ccc","n":999999}': 39 bytes
-        set(&tx, "xyz", json!({ "a": "a" })).unwrap();
-        set(&tx, "xyz", json!({ "b": "bb" })).unwrap();
-        set(&tx, "xyz", json!({ "c": "ccc" })).unwrap();
-        set(&tx, "xyz", json!({ "n": 999_999 })).unwrap();
-
-        // '{"a":"a"}': 9 bytes
-        set(&tx, "abc", json!({ "a": "a" })).unwrap();
-
-        tx.commit().unwrap();
-
-        let usage = usage(&db).unwrap();
-        let expect = [
-            UsageInfo {
-                ext_id: "abc".to_string(),
-                num_keys: 1,
-                num_bytes: 9,
-            },
-            UsageInfo {
-                ext_id: "xyz".to_string(),
-                num_keys: 4,
-                num_bytes: 39,
-            },
-        ];
-        assert_eq!(&usage, &expect);
     }
 }

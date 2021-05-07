@@ -1,10 +1,15 @@
 use auxil::FastHashMap;
-use std::{ffi::CStr, mem, ptr, sync::Arc};
+use std::{
+    ffi::CStr,
+    mem,
+    ptr,
+    sync::{Arc, Mutex},
+};
 
-use parking_lot::Mutex;
 use winapi::{
     shared::{
-        dxgiformat, dxgitype,
+        dxgiformat,
+        dxgitype,
         minwindef::{FALSE, TRUE},
         winerror,
     },
@@ -57,14 +62,14 @@ impl ServicePipes {
     }
 
     pub unsafe fn destroy(&self) {
-        let blits = self.blits_2d_color.lock();
+        let blits = self.blits_2d_color.lock().unwrap();
         for (_, pipe) in &*blits {
             pipe.destroy();
         }
     }
 
     pub fn get_blit_2d_color(&self, key: BlitKey) -> BlitPipe {
-        let mut blits = self.blits_2d_color.lock();
+        let mut blits = self.blits_2d_color.lock().unwrap();
         blits
             .entry(key)
             .or_insert_with(|| self.create_blit_2d_color(key))
@@ -113,7 +118,7 @@ impl ServicePipes {
             0,
             d3d12::D3D12_COMPARISON_FUNC_ALWAYS,
             native::StaticBorderColor::TransparentBlack,
-            0.0..d3d12::D3D12_FLOAT32_MAX,
+            0.0 .. d3d12::D3D12_FLOAT32_MAX,
         )];
 
         let (signature_raw, error) = match self.library.serialize_root_signature(

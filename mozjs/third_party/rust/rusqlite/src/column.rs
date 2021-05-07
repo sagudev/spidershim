@@ -39,7 +39,7 @@ impl Statement<'_> {
         self.stmt.column_count()
     }
 
-    pub(super) fn column_name_unwrap(&self, col: usize) -> &str {
+    pub(crate) fn column_name_unwrap(&self, col: usize) -> &str {
         // Just panic if the bounds are wrong for now, we never call this
         // without checking first.
         self.column_name(col).expect("Column out of bounds")
@@ -86,7 +86,6 @@ impl Statement<'_> {
     }
 
     /// Returns a slice describing the columns of the result of the query.
-    #[cfg(feature = "column_decltype")]
     pub fn columns(&self) -> Vec<Column> {
         let n = self.column_count();
         let mut cols = Vec::with_capacity(n as usize);
@@ -124,7 +123,6 @@ impl<'stmt> Rows<'stmt> {
     }
 
     /// Returns a slice describing the columns of the Rows.
-    #[cfg(feature = "column_decltype")]
     pub fn columns(&self) -> Option<Vec<Column>> {
         self.stmt.map(Statement::columns)
     }
@@ -152,7 +150,6 @@ impl<'stmt> Row<'stmt> {
     }
 
     /// Returns a slice describing the columns of the Row.
-    #[cfg(feature = "column_decltype")]
     pub fn columns(&self) -> Vec<Column> {
         self.stmt.columns()
     }
@@ -160,13 +157,11 @@ impl<'stmt> Row<'stmt> {
 
 #[cfg(test)]
 mod test {
+    use super::Column;
     use crate::Connection;
 
     #[test]
-    #[cfg(feature = "column_decltype")]
     fn test_columns() {
-        use super::Column;
-
         let db = Connection::open_in_memory().unwrap();
         let query = db.prepare("SELECT * FROM sqlite_master").unwrap();
         let columns = query.columns();

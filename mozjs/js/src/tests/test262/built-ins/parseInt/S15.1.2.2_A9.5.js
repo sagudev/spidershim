@@ -7,11 +7,10 @@ esid: sec-parseint-string-radix
 description: Checking use propertyIsEnumerable, for-in
 ---*/
 
-assert.sameValue(
-  this.propertyIsEnumerable('parseInt'),
-  false,
-  'this.propertyIsEnumerable(\'parseInt\') must return false'
-);
+//CHECK#1
+if (this.propertyIsEnumerable('parseInt') !== false) {
+  $ERROR('#1: this.propertyIsEnumerable(\'parseInt\') === false. Actual: ' + (this.propertyIsEnumerable('parseInt')));
+}
 
 //CHECK#2
 var result = true;
@@ -21,6 +20,8 @@ for (var p in this) {
   }
 }
 
-assert.sameValue(result, true, 'The value of `result` is true');
+if (result !== true) {
+  $ERROR('#2: result = true; for (p in this) { if (p === "parseInt") result = false; }  result === true;');
+}
 
 reportCompare(0, 0);

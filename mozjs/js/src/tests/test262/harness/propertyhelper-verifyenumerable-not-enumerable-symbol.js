@@ -28,7 +28,7 @@ try {
 }
 
 if (threw === false) {
-  throw new Error('Expected a Test262Error, but no error was thrown.');
+  $ERROR('Expected a Test262Error, but no error was thrown.');
 }
 
 reportCompare(0, 0);

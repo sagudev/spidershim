@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) async -- requires shell-options
+// |reftest| skip async -- class-static-methods-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/rs-static-async-generator-method-privatename-identifier-alt.case
 // - src/class-elements/productions/cls-expr-new-sc-line-generator.template
@@ -129,4 +129,4 @@ Promise.all([
   assert.sameValue(results[4].value, 1);
   assert.sameValue(results[5].value, 1);
 
-}).then($DONE, $DONE);
+}, $DONE).then($DONE, $DONE);

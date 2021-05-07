@@ -74,9 +74,8 @@ class CacheIRSpewer {
 
     ~Guard() {
       if (sp_.enabled()) {
-        const CacheIRWriter& writer = gen_.writerRef();
-        if (!writer.failed() && writer.codeLength() > 0) {
-          CacheIRReader reader(writer);
+        if (gen_.writerRef().codeLength() > 0) {
+          CacheIRReader reader(gen_.writerRef());
           sp_.cacheIRSequence(reader);
         }
         if (name_ != nullptr) {

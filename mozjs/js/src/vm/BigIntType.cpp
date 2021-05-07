@@ -102,7 +102,6 @@
 #include "gc/Allocator.h"
 #include "js/BigInt.h"
 #include "js/Conversions.h"
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/Initialization.h"
 #include "js/StableStringChars.h"
 #include "js/Utility.h"
@@ -265,7 +264,7 @@ BigInt* BigInt::neg(JSContext* cx, HandleBigInt x) {
   if (!result) {
     return nullptr;
   }
-  result->toggleHeaderFlagBit(SignBit);
+  result->header_.toggleFlagBit(SignBit);
   return result;
 }
 
@@ -325,7 +324,7 @@ BigInt::Digit BigInt::digitDiv(Digit high, Digit low, Digit divisor,
           : "=a"(quotient), "=d"(rem)
           // Inputs: put `high` into rdx, `low` into rax, and `divisor` into
           // any register or stack slot.
-          : "d"(high), "a"(low), [divisor] "rm"(divisor));
+          : "d"(high), "a"(low), [ divisor ] "rm"(divisor));
   *remainder = rem;
   return quotient;
 #elif defined(__i386__)
@@ -336,7 +335,7 @@ BigInt::Digit BigInt::digitDiv(Digit high, Digit low, Digit divisor,
           : "=a"(quotient), "=d"(rem)
           // Inputs: put `high` into edx, `low` into eax, and `divisor` into
           // any register or stack slot.
-          : "d"(high), "a"(low), [divisor] "rm"(divisor));
+          : "d"(high), "a"(low), [ divisor ] "rm"(divisor));
   *remainder = rem;
   return quotient;
 #else
@@ -1007,9 +1006,8 @@ inline BigInt* BigInt::absoluteBitwiseOp(JSContext* cx, HandleBigInt x,
   }
 
   if (kind != BitwiseOpKind::SymmetricTrim) {
-    BigInt* source = kind == BitwiseOpKind::AsymmetricFill ? x
-                     : xLength == i                        ? y
-                                                           : x;
+    BigInt* source =
+        kind == BitwiseOpKind::AsymmetricFill ? x : xLength == i ? y : x;
     for (; i < resultLength; i++) {
       result->setDigit(i, source->digit(i));
     }
@@ -1799,7 +1797,7 @@ BigInt* BigInt::createFromInt64(JSContext* cx, int64_t n) {
   }
 
   if (n < 0) {
-    res->setHeaderFlagBit(SignBit);
+    res->header_.setFlagBit(SignBit);
   }
   MOZ_ASSERT(res->isNegative() == (n < 0));
 
@@ -2588,11 +2586,7 @@ BigInt* BigInt::asUintN(JSContext* cx, HandleBigInt x, uint64_t bits) {
   if (bits <= 64) {
     uint64_t u64 = toUint64(x);
     uint64_t mask = uint64_t(-1) >> (64 - bits);
-    uint64_t n = u64 & mask;
-    if (u64 == n && x->absFitsInUint64()) {
-      return x;
-    }
-    return createFromUint64(cx, n);
+    return createFromUint64(cx, u64 & mask);
   }
 
   if (bits >= MaxBitLength) {
@@ -2649,11 +2643,7 @@ BigInt* BigInt::asIntN(JSContext* cx, HandleBigInt x, uint64_t bits) {
   }
 
   if (bits == 64) {
-    int64_t n = toInt64(x);
-    if (((n < 0) == x->isNegative()) && x->absFitsInUint64()) {
-      return x;
-    }
-    return createFromInt64(cx, n);
+    return createFromInt64(cx, toInt64(x));
   }
 
   if (bits > MaxBitLength) {
@@ -3581,8 +3571,8 @@ static inline BigInt* ParseStringBigIntLiteral(JSContext* cx,
 }
 
 // Called from BigInt constructor.
-JS::Result<BigInt*, JS::OOM> js::StringToBigInt(JSContext* cx,
-                                                HandleString str) {
+JS::Result<BigInt*, JS::OOM&> js::StringToBigInt(JSContext* cx,
+                                                 HandleString str) {
   JSLinearString* linear = str->ensureLinear(cx);
   if (!linear) {
     return cx->alreadyReportedOOM();
@@ -3712,7 +3702,7 @@ XDRResult js::XDRBigInt(XDRState<mode>* xdr, MutableHandleBigInt bi) {
   uint32_t digitLength = length / sizeof(BigInt::Digit);
   auto buf = cx->make_pod_array<BigInt::Digit>(digitLength);
   if (!buf) {
-    return xdr->fail(JS::TranscodeResult::Throw);
+    return xdr->fail(JS::TranscodeResult_Throw);
   }
 
   if (mode == XDR_ENCODE) {
@@ -3725,7 +3715,7 @@ XDRResult js::XDRBigInt(XDRState<mode>* xdr, MutableHandleBigInt bi) {
     BigInt* res =
         BigInt::createUninitialized(cx, digitLength, sign, gc::TenuredHeap);
     if (!res) {
-      return xdr->fail(JS::TranscodeResult::Throw);
+      return xdr->fail(JS::TranscodeResult_Throw);
     }
     std::uninitialized_copy_n(buf.get(), digitLength, res->digits().Elements());
     bi.set(res);

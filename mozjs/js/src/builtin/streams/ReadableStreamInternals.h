@@ -9,6 +9,8 @@
 #ifndef builtin_streams_ReadableStreamInternals_h
 #define builtin_streams_ReadableStreamInternals_h
 
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
 #include "jstypes.h"                               // JS_PUBLIC_API
 #include "builtin/streams/ReadableStreamReader.h"  // js::ForAuthorCodeBool
 #include "js/RootingAPI.h"                         // JS::Handle
@@ -23,31 +25,31 @@ class PlainObject;
 class PromiseObject;
 class ReadableStream;
 
-[[nodiscard]] extern PromiseObject* ReadableStreamAddReadOrReadIntoRequest(
+extern MOZ_MUST_USE PromiseObject* ReadableStreamAddReadOrReadIntoRequest(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedStream);
 
-[[nodiscard]] extern JSObject* ReadableStreamCancel(
+extern MOZ_MUST_USE JSObject* ReadableStreamCancel(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedStream,
     JS::Handle<JS::Value> reason);
 
-[[nodiscard]] extern bool ReadableStreamCloseInternal(
+extern MOZ_MUST_USE bool ReadableStreamCloseInternal(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedStream);
 
-[[nodiscard]] extern PlainObject* ReadableStreamCreateReadResult(
+extern MOZ_MUST_USE PlainObject* ReadableStreamCreateReadResult(
     JSContext* cx, JS::Handle<JS::Value> value, bool done,
     ForAuthorCodeBool forAuthorCode);
 
-[[nodiscard]] extern bool ReadableStreamErrorInternal(
+extern MOZ_MUST_USE bool ReadableStreamErrorInternal(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedStream,
     JS::Handle<JS::Value> e);
 
-[[nodiscard]] extern bool ReadableStreamFulfillReadOrReadIntoRequest(
+extern MOZ_MUST_USE bool ReadableStreamFulfillReadOrReadIntoRequest(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedStream,
     JS::Handle<JS::Value> chunk, bool done);
 
 extern uint32_t ReadableStreamGetNumReadRequests(ReadableStream* stream);
 
-[[nodiscard]] extern bool ReadableStreamHasDefaultReader(
+extern MOZ_MUST_USE bool ReadableStreamHasDefaultReader(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedStream, bool* result);
 
 }  // namespace js

@@ -12,30 +12,31 @@ info: |
   2. If Type(P) is String, then
     a. Let numericIndex be ! CanonicalNumericIndexString(P).
     b. If numericIndex is not undefined, then
-      i. Perform ? IntegerIndexedElementSet(O, numericIndex, V).
-      ii. Return true.
+      i. Return ? IntegerIndexedElementSet(O, numericIndex, V).
   ...
 
-  IntegerIndexedElementSet ( O, index, value )
+  9.4.5.9 IntegerIndexedElementSet ( O, index, value )
 
-  Assert: O is an Integer-Indexed exotic object.
-  Assert: Type(index) is Number.
-  If O.[[ContentType]] is BigInt, let numValue be ? ToBigInt(value).
-  Otherwise, let numValue be ? ToNumber(value).
-  Let buffer be O.[[ViewedArrayBuffer]].
-  If IsDetachedBuffer(buffer) is true, return false.
+  ...
+  3. Let numValue be ? ToNumber(value).
+  4. Let buffer be the value of O's [[ViewedArrayBuffer]] internal slot.
+  5. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
   ...
 includes: [testTypedArray.js, detachArrayBuffer.js]
-features: [align-detached-buffer-semantics-with-web-reality, cross-realm, TypedArray]
+features: [cross-realm, TypedArray]
 ---*/
 
-let other = $262.createRealm().global;
+var other = $262.createRealm().global;
+
 testWithTypedArrayConstructors(function(TA) {
-  let OtherTA = other[TA.name];
-  let sample = new OtherTA(1);
+  var OtherTA = other[TA.name];
+  var sample = new OtherTA(1);
+
   $DETACHBUFFER(sample.buffer);
-  sample[0] = 1;
-  assert.sameValue(sample[0], undefined, '`sample[0]` is undefined');
+
+  assert.throws(TypeError, function() {
+    sample[0] = 0;
+  });
 });
 
 reportCompare(0, 0);

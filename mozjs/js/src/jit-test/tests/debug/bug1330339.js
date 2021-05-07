@@ -1,6 +1,6 @@
-// |jit-test| test-also=--wasm-compiler=optimizing; error: TestComplete
+// |jit-test| test-also=--wasm-compiler=ion; error: TestComplete
 
-if (!wasmDebuggingEnabled())
+if (!wasmDebuggingIsSupported())
      throw "TestComplete";
 
 let module = new WebAssembly.Module(wasmTextToBinary(`

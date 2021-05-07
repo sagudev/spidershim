@@ -7,14 +7,13 @@
 // except according to those terms.
 
 //! Implementation for Fuchsia Zircon
+use core::num::NonZeroU32;
 use crate::Error;
 
-#[link(name = "zircon")]
-extern "C" {
-    fn zx_cprng_draw(buffer: *mut u8, length: usize);
-}
-
 pub fn getrandom_inner(dest: &mut [u8]) -> Result<(), Error> {
-    unsafe { zx_cprng_draw(dest.as_mut_ptr(), dest.len()) }
+    fuchsia_cprng::cprng_draw(dest);
     Ok(())
 }
+
+#[inline(always)]
+pub fn error_msg_inner(_: NonZeroU32) -> Option<&'static str> { None }

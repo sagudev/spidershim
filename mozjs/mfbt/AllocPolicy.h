@@ -118,7 +118,7 @@ class MallocAllocPolicy {
 
   void reportAllocOverflow() const {}
 
-  [[nodiscard]] bool checkSimulatedOOM() const { return true; }
+  MOZ_MUST_USE bool checkSimulatedOOM() const { return true; }
 };
 
 /*
@@ -167,7 +167,7 @@ class NeverAllocPolicy {
 
   void reportAllocOverflow() const {}
 
-  [[nodiscard]] bool checkSimulatedOOM() const { return true; }
+  MOZ_MUST_USE bool checkSimulatedOOM() const { return true; }
 };
 
 }  // namespace mozilla

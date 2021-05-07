@@ -11,7 +11,6 @@
 #include <type_traits>
 
 #include "vm/Realm.h"
-#include "vm/SymbolType.h"
 
 #include "gc/Heap-inl.h"
 
@@ -24,6 +23,12 @@ inline size_t GetAtomBit(TenuredCell* thing) {
   size_t arenaBit = (reinterpret_cast<uintptr_t>(thing) - arena->address()) /
                     CellBytesPerMarkBit;
   return arena->atomBitmapStart() * JS_BITS_PER_WORD + arenaBit;
+}
+
+inline bool ThingIsPermanent(JSAtom* atom) { return atom->isPinned(); }
+
+inline bool ThingIsPermanent(JS::Symbol* symbol) {
+  return symbol->isWellKnownSymbol();
 }
 
 template <typename T, bool Fallible>
@@ -42,9 +47,7 @@ MOZ_ALWAYS_INLINE bool AtomMarkingRuntime::inlinedMarkAtomInternal(
   }
   MOZ_ASSERT(!cx->zone()->isAtomsZone());
 
-  // This doesn't check for pinned atoms since that might require taking a
-  // lock. This is not required for correctness.
-  if (thing->isPermanentAndMayBeShared()) {
+  if (ThingIsPermanent(thing)) {
     return true;
   }
 
@@ -64,7 +67,7 @@ MOZ_ALWAYS_INLINE bool AtomMarkingRuntime::inlinedMarkAtomInternal(
     // GC in progress. This is necessary if the atom is being marked
     // because a reference to it was obtained from another zone which is
     // not being collected by the incremental GC.
-    ReadBarrier(thing);
+    T::readBarrier(thing);
   }
 
   // Children of the thing also need to be marked in the context's zone.
@@ -73,14 +76,6 @@ MOZ_ALWAYS_INLINE bool AtomMarkingRuntime::inlinedMarkAtomInternal(
   markChildren(cx, thing);
 
   return true;
-}
-
-void AtomMarkingRuntime::markChildren(JSContext* cx, JSAtom*) {}
-
-void AtomMarkingRuntime::markChildren(JSContext* cx, JS::Symbol* symbol) {
-  if (JSAtom* description = symbol->description()) {
-    markAtom(cx, description);
-  }
 }
 
 template <typename T>

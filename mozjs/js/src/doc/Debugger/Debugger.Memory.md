@@ -176,7 +176,7 @@ triggered. Known values include the following:
 * `"DOM_WINDOW_UTILS"`
 * `"COMPONENT_UTILS"`
 * `"MEM_PRESSURE"`
-* `"CC_FINISHED"`
+* `"CC_WAITING"`
 * `"CC_FORCED"`
 * `"LOAD_END"`
 * `"PAGE_HIDE"`
@@ -225,6 +225,7 @@ Objects in the array are of the form:
   "timestamp": timestamp,
   "frame": allocationSite,
   "class": className,
+  "constructor": constructorName,
   "size": byteSize,
   "inNursery": inNursery,
 }
@@ -241,6 +242,10 @@ Where
 * `className` is the string name of the allocated object's internal
 `[[Class]]` property, for example "Array", "Date", "RegExp", or (most
 commonly) "Object".
+
+* `constructorName` is the constructor function's display name for objects
+  created by `new Ctor`. If that data is not available, or the object was
+  not created with a `new` expression, this property is `null`.
 
 * `byteSize` is the size of the object in bytes.
 

@@ -34,8 +34,7 @@ class NumberFormatObject : public NativeObject {
                 "INTERNALS_SLOT must match self-hosting define for internals "
                 "object slot");
 
-  // Estimated memory use for UNumberFormatter and UFormattedNumber
-  // (see IcuMemoryUsage).
+  // Estimated memory use for UNumberFormatter and UFormattedNumber.
   static constexpr size_t EstimatedMemoryUse = 750;
 
   UNumberFormatter* getNumberFormatter() const {
@@ -76,8 +75,8 @@ class NumberFormatObject : public NativeObject {
  *
  * Usage: numberFormat = intl_NumberFormat(locales, options)
  */
-[[nodiscard]] extern bool intl_NumberFormat(JSContext* cx, unsigned argc,
-                                            Value* vp);
+extern MOZ_MUST_USE bool intl_NumberFormat(JSContext* cx, unsigned argc,
+                                           Value* vp);
 
 /**
  * Returns the numbering system type identifier per Unicode
@@ -86,8 +85,8 @@ class NumberFormatObject : public NativeObject {
  *
  * Usage: defaultNumberingSystem = intl_numberingSystem(locale)
  */
-[[nodiscard]] extern bool intl_numberingSystem(JSContext* cx, unsigned argc,
-                                               Value* vp);
+extern MOZ_MUST_USE bool intl_numberingSystem(JSContext* cx, unsigned argc,
+                                              Value* vp);
 
 /**
  * Returns a string representing the number x according to the effective
@@ -98,8 +97,8 @@ class NumberFormatObject : public NativeObject {
  * Usage: formatted = intl_FormatNumber(numberFormat, x, formatToParts,
  *                                      unitStyle)
  */
-[[nodiscard]] extern bool intl_FormatNumber(JSContext* cx, unsigned argc,
-                                            Value* vp);
+extern MOZ_MUST_USE bool intl_FormatNumber(JSContext* cx, unsigned argc,
+                                           Value* vp);
 
 #if DEBUG || MOZ_SYSTEM_ICU
 /**
@@ -107,9 +106,9 @@ class NumberFormatObject : public NativeObject {
  *
  * Usage: units = intl_availableMeasurementUnits()
  */
-[[nodiscard]] extern bool intl_availableMeasurementUnits(JSContext* cx,
-                                                         unsigned argc,
-                                                         Value* vp);
+extern MOZ_MUST_USE bool intl_availableMeasurementUnits(JSContext* cx,
+                                                        unsigned argc,
+                                                        Value* vp);
 #endif
 
 namespace intl {
@@ -164,7 +163,7 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit
    */
-  [[nodiscard]] bool currency(JSLinearString* currency);
+  MOZ_MUST_USE bool currency(JSLinearString* currency);
 
   enum class CurrencyDisplay { Code, Name, Symbol, NarrowSymbol };
 
@@ -173,7 +172,7 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit-width
    */
-  [[nodiscard]] bool currencyDisplay(CurrencyDisplay display);
+  MOZ_MUST_USE bool currencyDisplay(CurrencyDisplay display);
 
   /**
    * Set this skeleton to display a unit amount. |unit| must be a well-formed
@@ -182,7 +181,7 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#per-unit
    */
-  [[nodiscard]] bool unit(JSLinearString* unit);
+  MOZ_MUST_USE bool unit(JSLinearString* unit);
 
   enum class UnitDisplay { Short, Narrow, Long };
 
@@ -191,7 +190,7 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit-width
    */
-  [[nodiscard]] bool unitDisplay(UnitDisplay display);
+  MOZ_MUST_USE bool unitDisplay(UnitDisplay display);
 
   /**
    * Set this skeleton to display a percent number.
@@ -199,7 +198,7 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#scale
    */
-  [[nodiscard]] bool percent();
+  MOZ_MUST_USE bool percent();
 
   /**
    * Set the fraction digits settings for this skeleton. |min| can be zero,
@@ -207,7 +206,7 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#fraction-precision
    */
-  [[nodiscard]] bool fractionDigits(uint32_t min, uint32_t max);
+  MOZ_MUST_USE bool fractionDigits(uint32_t min, uint32_t max);
 
   /**
    * Set the integer-width settings for this skeleton. |min| must be a non-zero
@@ -215,7 +214,7 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#integer-width
    */
-  [[nodiscard]] bool integerWidth(uint32_t min);
+  MOZ_MUST_USE bool integerWidth(uint32_t min);
 
   /**
    * Set the significant digits settings for this skeleton. |min| must be a
@@ -223,14 +222,14 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#significant-digits-precision
    */
-  [[nodiscard]] bool significantDigits(uint32_t min, uint32_t max);
+  MOZ_MUST_USE bool significantDigits(uint32_t min, uint32_t max);
 
   /**
    * Enable or disable grouping for this skeleton.
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#grouping
    */
-  [[nodiscard]] bool useGrouping(bool on);
+  MOZ_MUST_USE bool useGrouping(bool on);
 
   enum class Notation {
     Standard,
@@ -245,7 +244,7 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#notation
    */
-  [[nodiscard]] bool notation(Notation style);
+  MOZ_MUST_USE bool notation(Notation style);
 
   enum class SignDisplay {
     Auto,
@@ -262,14 +261,14 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#sign-display
    */
-  [[nodiscard]] bool signDisplay(SignDisplay display);
+  MOZ_MUST_USE bool signDisplay(SignDisplay display);
 
   /**
    * Set the rounding mode to 'half-up' for this skeleton.
    *
    * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#rounding-mode
    */
-  [[nodiscard]] bool roundingModeHalfUp();
+  MOZ_MUST_USE bool roundingModeHalfUp();
 };
 
 }  // namespace intl

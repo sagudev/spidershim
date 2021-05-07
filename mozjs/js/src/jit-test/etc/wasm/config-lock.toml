@@ -8,7 +8,7 @@ commit = '66d90a7d'
 
 [[repos]]
 name = 'reference-types'
-commit = '9df8a3e3'
+commit = 'c90e289a'
 
 [[repos]]
 name = 'spec'

@@ -13,7 +13,8 @@ using namespace js;
 using mozilla::PodZero;
 
 void NewObjectCache::clearNurseryObjects(JSRuntime* rt) {
-  for (auto& e : entries) {
+  for (unsigned i = 0; i < mozilla::ArrayLength(entries); ++i) {
+    Entry& e = entries[i];
     NativeObject* obj = reinterpret_cast<NativeObject*>(&e.templateObject);
     if (IsInsideNursery(e.key) || rt->gc.nursery().isInside(obj->slots_) ||
         rt->gc.nursery().isInside(obj->elements_)) {

@@ -12,24 +12,27 @@
 #define js_StableStringChars_h
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
-#include "mozilla/Attributes.h"  // MOZ_INIT_OUTSIDE_CTOR, MOZ_STACK_CLASS
-#include "mozilla/Maybe.h"       // mozilla::Maybe
-#include "mozilla/Range.h"       // mozilla::Range
+#include "mozilla/Attributes.h"  // MOZ_INIT_OUTSIDE_CTOR, MOZ_STACK_CLASS, MOZ_MUST_USE
+#include "mozilla/Maybe.h"  // mozilla::Maybe
+#include "mozilla/Range.h"  // mozilla::Range
 
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t
 
 #include "jstypes.h"  // JS_FRIEND_API
 
-#include "js/AllocPolicy.h"
+#include "js/HeapAPI.h"     // JS::shadow::String
 #include "js/RootingAPI.h"  // JS::Handle, JS::Rooted
-#include "js/String.h"      // JS::GetStringLength
 #include "js/TypeDecls.h"   // JSContext, JS::Latin1Char, JSString
 #include "js/Vector.h"      // js::Vector
 
 class JSLinearString;
 
 namespace JS {
+
+MOZ_ALWAYS_INLINE size_t GetStringLength(JSString* s) {
+  return reinterpret_cast<shadow::String*>(s)->length();
+}
 
 /**
  * This class provides safe access to a string's chars across a GC. If we ever
@@ -61,10 +64,10 @@ class MOZ_STACK_CLASS JS_FRIEND_API AutoStableStringChars final {
   explicit AutoStableStringChars(JSContext* cx)
       : s_(cx), state_(Uninitialized) {}
 
-  [[nodiscard]] bool init(JSContext* cx, JSString* s);
+  MOZ_MUST_USE bool init(JSContext* cx, JSString* s);
 
   /* Like init(), but Latin1 chars are inflated to TwoByte. */
-  [[nodiscard]] bool initTwoByte(JSContext* cx, JSString* s);
+  MOZ_MUST_USE bool initTwoByte(JSContext* cx, JSString* s);
 
   bool isLatin1() const { return state_ == Latin1; }
   bool isTwoByte() const { return state_ == TwoByte; }

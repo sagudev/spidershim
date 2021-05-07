@@ -8,19 +8,18 @@
 #ifndef js_BigInt_h
 #define js_BigInt_h
 
-#include "mozilla/Span.h"  // mozilla::Span
+#include "mozilla/Range.h"  // mozilla::Range
 
 #include <limits>       // std::numeric_limits
 #include <stdint.h>     // int64_t, uint64_t
 #include <type_traits>  // std::enable_if_t, std::{true,false}_type, std::is_{integral,signed,unsigned}_v
+#include <utility>      // std::declval
 
-#include "jstypes.h"  // JS_PUBLIC_API
-#include "js/TypeDecls.h"
+#include "jstypes.h"        // JS_PUBLIC_API
+#include "js/RootingAPI.h"  // JS::Handle
+#include "js/Value.h"       // JS::Value
 
-namespace mozilla {
-template <typename T>
-class Range;
-}
+struct JS_PUBLIC_API JSContext;
 
 namespace JS {
 

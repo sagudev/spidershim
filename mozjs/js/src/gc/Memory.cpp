@@ -166,7 +166,11 @@ void* TestMapAlignedPagesLastDitch(size_t length, size_t alignment) {
   return MapAlignedPagesLastDitch(length, alignment);
 }
 
-bool DecommitEnabled() { return SystemPageSize() <= ArenaSize; }
+/*
+ * We can only decommit unused pages if the hardcoded Arena
+ * size matches the page size for the running process.
+ */
+static inline bool DecommitEnabled() { return pageSize == ArenaSize; }
 
 /* Returns the offset from the nearest aligned address at or below |region|. */
 static inline size_t OffsetFromAligned(void* region, size_t alignment) {
@@ -693,9 +697,9 @@ static bool TryToAlignChunk(void** aRegion, void** aRetainedRegion,
         break;
       }
     } else {
-      auto* lowerStart =
+      void* lowerStart =
           reinterpret_cast<void*>(uintptr_t(regionStart) - offsetLower);
-      auto* lowerEnd = reinterpret_cast<void*>(uintptr_t(lowerStart) + length);
+      void* lowerEnd = reinterpret_cast<void*>(uintptr_t(lowerStart) + length);
       if (MapMemoryAt(lowerStart, offsetLower)) {
         UnmapInternal(lowerEnd, offsetLower);
         if (directionUncertain) {
@@ -754,31 +758,31 @@ static void CheckDecommit(void* region, size_t length) {
   MOZ_ASSERT(OffsetFromAligned(region, ArenaSize) == 0);
   MOZ_ASSERT(length % ArenaSize == 0);
 
-  MOZ_RELEASE_ASSERT(OffsetFromAligned(region, pageSize) == 0);
-  MOZ_RELEASE_ASSERT(length % pageSize == 0);
+  if (DecommitEnabled()) {
+    // We can't decommit part of a page.
+    MOZ_RELEASE_ASSERT(OffsetFromAligned(region, pageSize) == 0);
+    MOZ_RELEASE_ASSERT(length % pageSize == 0);
+  }
 }
 
 bool MarkPagesUnusedSoft(void* region, size_t length) {
-  MOZ_ASSERT(DecommitEnabled());
   CheckDecommit(region, length);
 
   MOZ_MAKE_MEM_NOACCESS(region, length);
 
+  if (!DecommitEnabled()) {
+    return true;
+  }
+
 #if defined(XP_WIN)
   return VirtualAlloc(region, length, MEM_RESET,
                       DWORD(PageAccess::ReadWrite)) == region;
+#elif defined(XP_DARWIN)
+  return madvise(region, length, MADV_FREE_REUSABLE) == 0;
+#elif defined(XP_SOLARIS)
+  return posix_madvise(region, length, POSIX_MADV_DONTNEED) == 0;
 #else
-  int status;
-  do {
-#  if defined(XP_DARWIN)
-    status = madvise(region, length, MADV_FREE_REUSABLE);
-#  elif defined(XP_SOLARIS)
-    status = posix_madvise(region, length, POSIX_MADV_DONTNEED);
-#  else
-    status = madvise(region, length, MADV_DONTNEED);
-#  endif
-  } while (status == -1 && errno == EAGAIN);
-  return status == 0;
+  return madvise(region, length, MADV_DONTNEED) == 0;
 #endif
 }
 
@@ -799,13 +803,7 @@ bool MarkPagesUnusedHard(void* region, size_t length) {
 }
 
 void MarkPagesInUseSoft(void* region, size_t length) {
-  MOZ_ASSERT(DecommitEnabled());
   CheckDecommit(region, length);
-
-#if defined(XP_DARWIN)
-  while (madvise(region, length, MADV_FREE_REUSE) == -1 && errno == EAGAIN) {
-  }
-#endif
 
   MOZ_MAKE_MEM_UNDEFINED(region, length);
 }

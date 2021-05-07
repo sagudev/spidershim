@@ -18,7 +18,6 @@
 
 #include "js/AllocPolicy.h"
 #include "js/HashTable.h"
-#include "js/HeapAPI.h"
 #include "js/Vector.h"
 
 // This file provides two classes for representing bitmaps.
@@ -51,18 +50,15 @@ class DenseBitmap {
   uintptr_t word(size_t i) const { return data[i]; }
   uintptr_t& word(size_t i) { return data[i]; }
 
-  template <typename T>
-  typename std::enable_if_t<std::is_convertible_v<T, uintptr_t>, void>
-  copyBitsFrom(size_t wordStart, size_t numWords, T* source) {
+  void copyBitsFrom(size_t wordStart, size_t numWords, uintptr_t* source) {
     MOZ_ASSERT(wordStart + numWords <= data.length());
-    for (size_t i = 0; i < numWords; i++) {
-      data[wordStart + i] = source[i];
-    }
+    // Use std::copy and not std::copy_n because the former requires no
+    // overlap and so provides extra opportunity to optimize.
+    std::copy(source, source + numWords, &data[wordStart]);
   }
 
-  template <typename T>
-  typename std::enable_if_t<std::is_convertible_v<T, uintptr_t>, void>
-  bitwiseOrRangeInto(size_t wordStart, size_t numWords, T* target) const {
+  void bitwiseOrRangeInto(size_t wordStart, size_t numWords,
+                          uintptr_t* target) const {
     for (size_t i = 0; i < numWords; i++) {
       target[i] |= data[wordStart + i];
     }
@@ -153,22 +149,8 @@ class SparseBitmap {
 
   // Currently, this API only supports a range of words that is in a single bit
   // block.
-  template <typename T>
-  typename std::enable_if_t<std::is_convertible_v<T, uintptr_t>, void>
-  bitwiseOrRangeInto(size_t wordStart, size_t numWords, T* target) const {
-    size_t blockWord = blockStartWord(wordStart);
-
-    // We only support using a single bit block in this API.
-    MOZ_ASSERT(numWords &&
-               (blockWord == blockStartWord(wordStart + numWords - 1)));
-
-    BitBlock* block = getBlock(blockWord / WordsInBlock);
-    if (block) {
-      for (size_t i = 0; i < numWords; i++) {
-        target[i] |= (*block)[wordStart - blockWord + i];
-      }
-    }
-  }
+  void bitwiseOrRangeInto(size_t wordStart, size_t numWords,
+                          uintptr_t* target) const;
 };
 
 }  // namespace js

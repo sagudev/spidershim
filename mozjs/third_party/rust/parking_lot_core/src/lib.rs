@@ -51,6 +51,10 @@
     ),
     feature(stdsimd)
 )]
+#![cfg_attr(
+    all(feature = "nightly", target_os = "cloudabi",),
+    feature(thread_local)
+)]
 
 mod parking_lot;
 mod spinwait;

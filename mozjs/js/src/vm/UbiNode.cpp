@@ -7,6 +7,7 @@
 #include "js/UbiNode.h"
 
 #include "mozilla/Assertions.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/Range.h"
 
 #include <algorithm>
@@ -195,32 +196,32 @@ class EdgeVectorTracer final : public JS::CallbackTracer {
   // True if we should populate the edge's names.
   bool wantNames;
 
-  void onChild(const JS::GCCellPtr& thing) override {
+  bool onChild(const JS::GCCellPtr& thing) override {
     if (!okay) {
-      return;
+      return true;
     }
 
     // Don't trace permanent atoms and well-known symbols that are owned by
     // a parent JSRuntime.
     if (thing.is<JSString>() && thing.as<JSString>().isPermanentAtom()) {
-      return;
+      return true;
     }
     if (thing.is<JS::Symbol>() && thing.as<JS::Symbol>().isWellKnownSymbol()) {
-      return;
+      return true;
     }
 
     char16_t* name16 = nullptr;
     if (wantNames) {
       // Ask the tracer to compute an edge name for us.
       char buffer[1024];
-      context().getEdgeName(buffer, sizeof(buffer));
+      getTracingEdgeName(buffer, sizeof(buffer));
       const char* name = buffer;
 
       // Convert the name to char16_t characters.
       name16 = js_pod_malloc<char16_t>(strlen(name) + 1);
       if (!name16) {
         okay = false;
-        return;
+        return true;
       }
 
       size_t i;
@@ -236,8 +237,10 @@ class EdgeVectorTracer final : public JS::CallbackTracer {
     // retains it, and its destructor will free it.
     if (!vec->append(Edge(name16, Node(thing)))) {
       okay = false;
-      return;
+      return true;
     }
+
+    return true;
   }
 
  public:
@@ -256,6 +259,7 @@ JS::Zone* TracerConcrete<Referent>::zone() const {
 template JS::Zone* TracerConcrete<js::BaseScript>::zone() const;
 template JS::Zone* TracerConcrete<js::Shape>::zone() const;
 template JS::Zone* TracerConcrete<js::BaseShape>::zone() const;
+template JS::Zone* TracerConcrete<js::ObjectGroup>::zone() const;
 template JS::Zone* TracerConcrete<js::RegExpShared>::zone() const;
 template JS::Zone* TracerConcrete<js::Scope>::zone() const;
 template JS::Zone* TracerConcrete<JS::Symbol>::zone() const;
@@ -287,6 +291,8 @@ template UniquePtr<EdgeRange> TracerConcrete<js::BaseScript>::edges(
 template UniquePtr<EdgeRange> TracerConcrete<js::Shape>::edges(
     JSContext* cx, bool wantNames) const;
 template UniquePtr<EdgeRange> TracerConcrete<js::BaseShape>::edges(
+    JSContext* cx, bool wantNames) const;
+template UniquePtr<EdgeRange> TracerConcrete<js::ObjectGroup>::edges(
     JSContext* cx, bool wantNames) const;
 template UniquePtr<EdgeRange> TracerConcrete<js::RegExpShared>::edges(
     JSContext* cx, bool wantNames) const;
@@ -326,6 +332,31 @@ const char* Concrete<JSObject>::jsObjectClassName() const {
   return Concrete::get().getClass()->name;
 }
 
+bool Concrete<JSObject>::jsObjectConstructorName(
+    JSContext* cx, UniqueTwoByteChars& outName) const {
+  JSAtom* name = Concrete::get().maybeConstructorDisplayAtom();
+  if (!name) {
+    outName.reset(nullptr);
+    return true;
+  }
+
+  auto len = JS_GetStringLength(name);
+  auto size = len + 1;
+
+  outName.reset(cx->pod_malloc<char16_t>(size * sizeof(char16_t)));
+  if (!outName) {
+    return false;
+  }
+
+  mozilla::Range<char16_t> chars(outName.get(), size);
+  if (!JS_CopyStringChars(cx, chars, name)) {
+    return false;
+  }
+
+  outName[len] = '\0';
+  return true;
+}
+
 JS::Compartment* Concrete<JSObject>::compartment() const {
   return Concrete::get().compartment();
 }
@@ -343,6 +374,8 @@ const char16_t Concrete<js::jit::JitCode>::concreteTypeName[] =
     u"js::jit::JitCode";
 const char16_t Concrete<js::Shape>::concreteTypeName[] = u"js::Shape";
 const char16_t Concrete<js::BaseShape>::concreteTypeName[] = u"js::BaseShape";
+const char16_t Concrete<js::ObjectGroup>::concreteTypeName[] =
+    u"js::ObjectGroup";
 const char16_t Concrete<js::Scope>::concreteTypeName[] = u"js::Scope";
 const char16_t Concrete<js::RegExpShared>::concreteTypeName[] =
     u"js::RegExpShared";
@@ -379,7 +412,7 @@ bool RootList::init(CompartmentSet& debuggees) {
   if (!tracer.okay) {
     return false;
   }
-  js::gc::TraceIncomingCCWs(&tracer, debuggees);
+  TraceIncomingCCWs(&tracer, debuggees);
   if (!tracer.okay) {
     return false;
   }
@@ -461,7 +494,7 @@ UniquePtr<EdgeRange> Concrete<RootList>::edges(JSContext* cx,
 bool SimpleEdgeRange::addTracerEdges(JSRuntime* rt, void* thing,
                                      JS::TraceKind kind, bool wantNames) {
   EdgeVectorTracer tracer(rt, &edges, wantNames);
-  JS::TraceChildren(&tracer, JS::GCCellPtr(thing, kind));
+  js::TraceChildren(&tracer, thing, kind);
   settle();
   return tracer.okay;
 }

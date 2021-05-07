@@ -5,17 +5,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use super::fallible::TryRead as _;
 use super::read_mp4;
 use super::Error;
-use fallible_collections::TryRead as _;
+use super::MediaContext;
 
+#[cfg(feature = "mp4parse_fallible")]
 use std::convert::TryInto as _;
 use std::io::Cursor;
 use std::io::Read as _;
 extern crate test_assembler;
 use self::test_assembler::*;
 
-use boxes::BoxType;
+use boxes::{BoxType, FourCC};
 
 enum BoxSize {
     Short(u32),
@@ -179,11 +181,11 @@ fn read_ftyp() {
     assert_eq!(stream.head.name, BoxType::FileTypeBox);
     assert_eq!(stream.head.size, 24);
     let parsed = super::read_ftyp(&mut stream).unwrap();
-    assert_eq!(parsed.major_brand, b"mp42"); // mp42
+    assert_eq!(parsed.major_brand, FourCC::from(*b"mp42")); // mp42
     assert_eq!(parsed.minor_version, 0);
     assert_eq!(parsed.compatible_brands.len(), 2);
-    assert_eq!(parsed.compatible_brands[0], b"isom"); // isom
-    assert_eq!(parsed.compatible_brands[1], b"mp42"); // mp42
+    assert_eq!(parsed.compatible_brands[0], FourCC::from(*b"isom")); // isom
+    assert_eq!(parsed.compatible_brands[1], FourCC::from(*b"mp42")); // mp42
 }
 
 #[test]
@@ -194,7 +196,8 @@ fn read_truncated_ftyp() {
             .B32(0) // minor version
             .append_bytes(b"isom")
     });
-    match read_mp4(&mut stream) {
+    let mut context = MediaContext::new();
+    match read_mp4(&mut stream, &mut context) {
         Err(Error::UnexpectedEOF) => (),
         Ok(_) => panic!("expected an error result"),
         _ => panic!("expected a different error result"),
@@ -220,11 +223,11 @@ fn read_ftyp_case() {
     assert_eq!(stream.head.name, BoxType::FileTypeBox);
     assert_eq!(stream.head.size, 24);
     let parsed = super::read_ftyp(&mut stream).unwrap();
-    assert_eq!(parsed.major_brand, b"MP42");
+    assert_eq!(parsed.major_brand, FourCC::from(*b"MP42"));
     assert_eq!(parsed.minor_version, 0);
     assert_eq!(parsed.compatible_brands.len(), 2);
-    assert_eq!(parsed.compatible_brands[0], b"ISOM"); // ISOM
-    assert_eq!(parsed.compatible_brands[1], b"MP42"); // MP42
+    assert_eq!(parsed.compatible_brands[0], FourCC::from(*b"ISOM")); // ISOM
+    assert_eq!(parsed.compatible_brands[1], FourCC::from(*b"MP42")); // MP42
 }
 
 #[test]
@@ -344,7 +347,7 @@ fn read_mdhd_invalid_timescale() {
     assert_eq!(stream.head.name, BoxType::MediaHeaderBox);
     assert_eq!(stream.head.size, 44);
     let r = super::parse_mdhd(&mut stream, &mut super::Track::new(0));
-    assert!(r.is_err());
+    assert_eq!(r.is_err(), true);
 }
 
 #[test]
@@ -385,7 +388,7 @@ fn read_mvhd_invalid_timescale() {
     assert_eq!(stream.head.name, BoxType::MovieHeaderBox);
     assert_eq!(stream.head.size, 120);
     let r = super::parse_mvhd(&mut stream);
-    assert!(r.is_err());
+    assert_eq!(r.is_err(), true);
 }
 
 #[test]
@@ -471,7 +474,7 @@ fn read_hdlr() {
     assert_eq!(stream.head.name, BoxType::HandlerBox);
     assert_eq!(stream.head.size, 45);
     let parsed = super::read_hdlr(&mut stream).unwrap();
-    assert_eq!(parsed.handler_type, b"vide");
+    assert_eq!(parsed.handler_type, FourCC::from(*b"vide"));
 }
 
 #[test]
@@ -484,7 +487,7 @@ fn read_hdlr_short_name() {
     assert_eq!(stream.head.name, BoxType::HandlerBox);
     assert_eq!(stream.head.size, 33);
     let parsed = super::read_hdlr(&mut stream).unwrap();
-    assert_eq!(parsed.handler_type, b"vide");
+    assert_eq!(parsed.handler_type, FourCC::from(*b"vide"));
 }
 
 #[test]
@@ -497,7 +500,7 @@ fn read_hdlr_zero_length_name() {
     assert_eq!(stream.head.name, BoxType::HandlerBox);
     assert_eq!(stream.head.size, 32);
     let parsed = super::read_hdlr(&mut stream).unwrap();
-    assert_eq!(parsed.handler_type, b"vide");
+    assert_eq!(parsed.handler_type, FourCC::from(*b"vide"));
 }
 
 fn flac_streaminfo() -> Vec<u8> {
@@ -1247,8 +1250,9 @@ fn read_invalid_pssh() {
     let mut stream = make_box(BoxSize::Auto, b"moov", |s| s.append_bytes(pssh.as_slice()));
     let mut iter = super::BoxIter::new(&mut stream);
     let mut stream = iter.next_box().unwrap().unwrap();
+    let mut context = super::MediaContext::new();
 
-    match super::read_moov(&mut stream, None) {
+    match super::read_moov(&mut stream, &mut context) {
         Err(Error::InvalidData(s)) => assert_eq!(s, "read_buf size exceeds BUF_SIZE_LIMIT"),
         _ => panic!("unexpected result with invalid descriptor"),
     }
@@ -1293,10 +1297,11 @@ fn read_to_end_() {
     let mut src = b"1234567890".take(5);
     let buf = src.read_into_try_vec().unwrap();
     assert_eq!(buf.len(), 5);
-    assert_eq!(buf, b"12345".as_ref());
+    assert_eq!(buf.into_inner(), b"12345");
 }
 
 #[test]
+#[cfg(feature = "mp4parse_fallible")]
 fn read_to_end_oom() {
     let mut src = b"1234567890".take(std::usize::MAX.try_into().expect("usize < u64"));
     assert!(src.read_into_try_vec().is_err());

@@ -66,7 +66,6 @@ use crate::settings::SetResult;
 use crate::timing;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
-use core::any::Any;
 use core::fmt;
 use core::fmt::{Debug, Formatter};
 use target_lexicon::{triple, Architecture, PointerWidth, Triple};
@@ -78,15 +77,13 @@ mod riscv;
 #[cfg(feature = "x86")]
 mod x86;
 
-#[cfg(feature = "x64")]
-mod x64;
-
 #[cfg(feature = "arm32")]
 mod arm32;
 
 #[cfg(feature = "arm64")]
-pub(crate) mod aarch64;
+mod aarch64;
 
+#[cfg(feature = "unwind")]
 pub mod unwind;
 
 mod call_conv;
@@ -118,15 +115,9 @@ macro_rules! isa_builder {
 /// Return a builder that can create a corresponding `TargetIsa`.
 pub fn lookup(triple: Triple) -> Result<Builder, LookupError> {
     match triple.architecture {
-        Architecture::Riscv32 { .. } | Architecture::Riscv64 { .. } => {
-            isa_builder!(riscv, "riscv", triple)
-        }
-        Architecture::X86_32 { .. } | Architecture::X86_64 => {
-            if cfg!(feature = "x64") {
-                isa_builder!(x64, "x64", triple)
-            } else {
-                isa_builder!(x86, "x86", triple)
-            }
+        Architecture::Riscv32 | Architecture::Riscv64 => isa_builder!(riscv, "riscv", triple),
+        Architecture::I386 | Architecture::I586 | Architecture::I686 | Architecture::X86_64 => {
+            isa_builder!(x86, "x86", triple)
         }
         Architecture::Arm { .. } => isa_builder!(arm32, "arm32", triple),
         Architecture::Aarch64 { .. } => isa_builder!(aarch64, "arm64", triple),
@@ -155,7 +146,6 @@ pub enum LookupError {
 
 /// Builder for a `TargetIsa`.
 /// Modify the ISA-specific settings before creating the `TargetIsa` trait object with `finish`.
-#[derive(Clone)]
 pub struct Builder {
     triple: Triple,
     setup: settings::Builder,
@@ -429,10 +419,6 @@ pub trait TargetIsa: fmt::Display + Send + Sync {
     fn get_mach_backend(&self) -> Option<&dyn MachBackend> {
         None
     }
-
-    /// Return an [Any] reference for downcasting to the ISA-specific implementation of this trait
-    /// with `isa.as_any().downcast_ref::<isa::foo::Isa>()`.
-    fn as_any(&self) -> &dyn Any;
 }
 
 impl Debug for &dyn TargetIsa {

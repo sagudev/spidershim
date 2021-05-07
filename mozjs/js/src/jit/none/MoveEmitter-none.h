@@ -7,14 +7,11 @@
 #ifndef jit_none_MoveEmitter_none_h
 #define jit_none_MoveEmitter_none_h
 
-#include "mozilla/Assertions.h"
+#include "jit/MacroAssembler.h"
+#include "jit/MoveResolver.h"
 
 namespace js {
 namespace jit {
-
-class MacroAssemblerNone;
-class MoveResolver;
-struct Register;
 
 class MoveEmitterNone {
  public:

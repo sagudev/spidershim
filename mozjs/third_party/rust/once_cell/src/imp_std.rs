@@ -18,6 +18,10 @@ pub(crate) struct OnceCell<T> {
     // `Waiter`, so we add the `PhantomData` appropriately.
     state_and_queue: AtomicUsize,
     _marker: PhantomData<*mut Waiter>,
+    // FIXME: switch to `std::mem::MaybeUninit` once we are ready to bump MSRV
+    // that far. It was stabilized in 1.36.0, so, if you are reading this and
+    // it's higher than 1.46.0 outside, please send a PR! ;) (and do the same
+    // for `Lazy`, while we are at it).
     value: UnsafeCell<Option<T>>,
 }
 
@@ -253,6 +257,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // miri doesn't support threads
     fn stampede_once() {
         static O: OnceCell<()> = OnceCell::new();
         static mut RUN: bool = false;
@@ -310,6 +315,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // miri doesn't support threads
     fn wait_for_force_to_finish() {
         static O: OnceCell<()> = OnceCell::new();
 

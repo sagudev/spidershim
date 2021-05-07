@@ -1,8 +1,12 @@
-use ash::{version::DeviceV1_0, vk};
+use ash::version::DeviceV1_0;
+use ash::vk;
 use smallvec::SmallVec;
+use std::ptr;
 use std::sync::Arc;
 
-use crate::{command::CommandBuffer, conv, Backend, RawDevice};
+use crate::command::CommandBuffer;
+use crate::conv;
+use crate::{Backend, RawDevice};
 use hal::{command, pool};
 
 #[derive(Debug)]
@@ -26,10 +30,13 @@ impl pool::CommandPool<Backend> for RawCommandPool {
     where
         E: Extend<CommandBuffer>,
     {
-        let info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(self.raw)
-            .level(conv::map_command_buffer_level(level))
-            .command_buffer_count(num as u32);
+        let info = vk::CommandBufferAllocateInfo {
+            s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+            p_next: ptr::null(),
+            command_pool: self.raw,
+            level: conv::map_command_buffer_level(level),
+            command_buffer_count: num as u32,
+        };
 
         let device = &self.device;
 
@@ -48,9 +55,10 @@ impl pool::CommandPool<Backend> for RawCommandPool {
 
     unsafe fn free<I>(&mut self, cbufs: I)
     where
-        I: Iterator<Item = CommandBuffer>,
+        I: IntoIterator<Item = CommandBuffer>,
     {
-        let buffers: SmallVec<[vk::CommandBuffer; 16]> = cbufs.map(|buffer| buffer.raw).collect();
+        let buffers: SmallVec<[vk::CommandBuffer; 16]> =
+            cbufs.into_iter().map(|buffer| buffer.raw).collect();
         self.device.raw.free_command_buffers(self.raw, &buffers);
     }
 }

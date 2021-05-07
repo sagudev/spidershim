@@ -7,6 +7,8 @@
 #ifndef builtin_Stream_h
 #define builtin_Stream_h
 
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
 #include "jstypes.h"        // JS_PUBLIC_API
 #include "js/RootingAPI.h"  // JS::Handle
 
@@ -18,15 +20,15 @@ class PromiseObject;
 class ReadableByteStreamController;
 class ReadableStreamController;
 
-[[nodiscard]] extern bool ReadableByteStreamControllerClearPendingPullIntos(
+extern MOZ_MUST_USE bool ReadableByteStreamControllerClearPendingPullIntos(
     JSContext* cx,
     JS::Handle<ReadableByteStreamController*> unwrappedController);
 
-[[nodiscard]] extern bool ReadableByteStreamControllerClose(
+extern MOZ_MUST_USE bool ReadableByteStreamControllerClose(
     JSContext* cx,
     JS::Handle<ReadableByteStreamController*> unwrappedController);
 
-[[nodiscard]] extern PromiseObject* ReadableStreamControllerPullSteps(
+extern MOZ_MUST_USE PromiseObject* ReadableStreamControllerPullSteps(
     JSContext* cx, JS::Handle<ReadableStreamController*> unwrappedController);
 
 }  // namespace js

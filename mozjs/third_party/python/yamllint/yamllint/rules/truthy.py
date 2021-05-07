@@ -30,9 +30,6 @@ This can be useful to prevent surprises from YAML parsers transforming
   ``'False'``, ``'false'``, ``'YES'``, ``'Yes'``, ``'yes'``, ``'NO'``,
   ``'No'``, ``'no'``, ``'ON'``, ``'On'``, ``'on'``, ``'OFF'``, ``'Off'``,
   ``'off'``.
-* ``check-keys`` disables verification for keys in mappings. By default,
-  ``truthy`` rule applies to both keys and values. Set this option to ``false``
-  to prevent this.
 
 .. rubric:: Examples
 
@@ -95,22 +92,6 @@ This can be useful to prevent surprises from YAML parsers transforming
     - false
     - on
     - off
-
-#. With ``truthy: {check-keys: false}``
-
-   the following code snippet would **PASS**:
-   ::
-
-    yes:  1
-    on:   2
-    true: 3
-
-   the following code snippet would **FAIL**:
-   ::
-
-    yes:  Yes
-    on:   On
-    true: True
 """
 
 import yaml
@@ -128,16 +109,12 @@ TRUTHY = ['YES', 'Yes', 'yes',
 
 ID = 'truthy'
 TYPE = 'token'
-CONF = {'allowed-values': list(TRUTHY), 'check-keys': bool}
-DEFAULT = {'allowed-values': ['true', 'false'], 'check-keys': True}
+CONF = {'allowed-values': list(TRUTHY)}
+DEFAULT = {'allowed-values': ['true', 'false']}
 
 
 def check(conf, token, prev, next, nextnext, context):
     if prev and isinstance(prev, yaml.tokens.TagToken):
-        return
-
-    if (not conf['check-keys'] and isinstance(prev, yaml.tokens.KeyToken) and
-            isinstance(token, yaml.tokens.ScalarToken)):
         return
 
     if isinstance(token, yaml.tokens.ScalarToken):

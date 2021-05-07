@@ -12,7 +12,7 @@ where
     pi.drive_unindexed(consumer)
 }
 
-struct FindConsumer<'p, P> {
+struct FindConsumer<'p, P: 'p> {
     find_op: &'p P,
     found: &'p AtomicBool,
 }
@@ -63,7 +63,7 @@ where
     }
 }
 
-struct FindFolder<'p, T, P> {
+struct FindFolder<'p, T, P: 'p> {
     find_op: &'p P,
     found: &'p AtomicBool,
     item: Option<T>,

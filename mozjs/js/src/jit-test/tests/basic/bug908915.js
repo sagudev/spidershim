@@ -5,18 +5,17 @@ load(libdir + "immutable-prototype.js");
 // dumpHeap()).
 os.file.redirect(null);
 
-var ignorelist = {
+var blacklist = {
     'quit': true,
     'crash': true,
     'readline': true,
     'terminate': true,
     'nukeAllCCWs': true,
-    'rateMyCacheIR': true,
 };
 
 function f(y) {}
 for (let e of Object.values(newGlobal())) {
-    if (e.name in ignorelist)
+    if (e.name in blacklist)
 	continue;
     print(e.name);
     try {
@@ -33,7 +32,7 @@ for (let e of Object.values(newGlobal())) {
     var arr = [];
     arr.__proto__ = newGlobal();
     for (b of Object.values(arr)) {
-        if (b.name in ignorelist)
+        if (b.name in blacklist)
             continue;
         try {
             f(b)

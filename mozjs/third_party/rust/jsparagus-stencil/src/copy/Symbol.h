@@ -8,14 +8,15 @@
 #ifndef js_Symbol_h
 #define js_Symbol_h
 
-#include "js/shadow/Symbol.h"  // JS::shadow::Symbol::WellKnownAPILimit
-
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uintptr_t, uint32_t
 
 #include "jstypes.h"  // JS_PUBLIC_API
 
-#include "js/TypeDecls.h"
+#include "js/RootingAPI.h"  // JS::Handle
+
+struct JS_PUBLIC_API JSContext;
+class JS_PUBLIC_API JSString;
 
 namespace JS {
 
@@ -71,8 +72,9 @@ enum class SymbolCode : uint32_t {
       JS_DEFINE_SYMBOL_ENUM)  // SymbolCode::iterator, etc.
 #undef JS_DEFINE_SYMBOL_ENUM
   Limit,
-  WellKnownAPILimit = JS::shadow::Symbol::WellKnownAPILimit,
-  PrivateNameSymbol = 0xfffffffd,  // created by the #PrivateName syntax.
+  WellKnownAPILimit =
+      0x80000000,  // matches JS::shadow::Symbol::WellKnownAPILimit for inline
+                   // use
   InSymbolRegistry =
       0xfffffffe,            // created by Symbol.for() or JS::GetSymbolFor()
   UniqueSymbol = 0xffffffff  // created by Symbol() or JS::NewSymbol()

@@ -10,10 +10,9 @@
 #include "PlatformMacros.h"
 #include "LulMain.h"  // for TaggedUWord
 
-#include "mozilla/Assertions.h"
-
-#include <string>
 #include <vector>
+
+#include "mozilla/Assertions.h"
 
 // This file is provides internal interface inside LUL.  If you are an
 // end-user of LUL, do not include it in your code.  The end-user

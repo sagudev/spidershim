@@ -166,8 +166,8 @@ bool AllocationIntegrityState::check() {
 
       size_t inputIndex = 0;
       for (LInstruction::InputIterator alloc(*ins); alloc.more();
-           inputIndex++, alloc.next()) {
-        LAllocation oldInput = info.inputs[inputIndex];
+           alloc.next()) {
+        LAllocation oldInput = info.inputs[inputIndex++];
         if (!oldInput.isUse()) {
           continue;
         }
@@ -176,28 +176,6 @@ bool AllocationIntegrityState::check() {
 
         if (safepoint && !oldInput.toUse()->usedAtStart()) {
           checkSafepointAllocation(ins, vreg, **alloc);
-        }
-
-        // Temps must never alias inputs (even at-start uses) unless explicitly
-        // requested.
-        for (size_t i = 0; i < ins->numTemps(); i++) {
-          if (ins->getTemp(i)->isBogusTemp()) {
-            continue;
-          }
-          LAllocation* tempAlloc = ins->getTemp(i)->output();
-
-          // Fixed uses and fixed temps are allowed to alias.
-          if (oldInput.toUse()->isFixedRegister() && info.temps[i].isFixed()) {
-            continue;
-          }
-
-          // MUST_REUSE_INPUT temps will alias their input.
-          if (info.temps[i].policy() == LDefinition::MUST_REUSE_INPUT &&
-              info.temps[i].getReusedInput() == inputIndex) {
-            continue;
-          }
-
-          MOZ_ASSERT(!tempAlloc->aliases(**alloc));
         }
 
         // Start checking at the previous instruction, in case this
@@ -384,21 +362,17 @@ bool AllocationIntegrityState::addPredecessor(LBlock* block, uint32_t vreg,
 
 void AllocationIntegrityState::dump() {
 #  ifdef JS_JITSPEW
-  JitSpewCont(JitSpew_RegAlloc, "\n");
-  JitSpew(JitSpew_RegAlloc, "Register Allocation Integrity State:");
+  fprintf(stderr, "Register Allocation Integrity State:\n");
 
   for (size_t blockIndex = 0; blockIndex < graph.numBlocks(); blockIndex++) {
     LBlock* block = graph.getBlock(blockIndex);
     MBasicBlock* mir = block->mir();
 
-    JitSpewHeader(JitSpew_RegAlloc);
-    JitSpewCont(JitSpew_RegAlloc, "  Block %lu",
-                static_cast<unsigned long>(blockIndex));
+    fprintf(stderr, "\nBlock %lu", static_cast<unsigned long>(blockIndex));
     for (size_t i = 0; i < mir->numSuccessors(); i++) {
-      JitSpewCont(JitSpew_RegAlloc, " [successor %u]",
-                  mir->getSuccessor(i)->id());
+      fprintf(stderr, " [successor %u]", mir->getSuccessor(i)->id());
     }
-    JitSpewCont(JitSpew_RegAlloc, "\n");
+    fprintf(stderr, "\n");
 
     for (size_t i = 0; i < block->numPhis(); i++) {
       const InstructionInfo& info = blocks[blockIndex].phis[i];
@@ -407,14 +381,12 @@ void AllocationIntegrityState::dump() {
       CodePosition output(block->getPhi(block->numPhis() - 1)->id(),
                           CodePosition::OUTPUT);
 
-      JitSpewHeader(JitSpew_RegAlloc);
-      JitSpewCont(JitSpew_RegAlloc, "    [%u,%u Phi] [def %s] ", input.bits(),
-                  output.bits(), phi->getDef(0)->toString().get());
+      fprintf(stderr, "[%u,%u Phi] [def %s] ", input.bits(), output.bits(),
+              phi->getDef(0)->toString().get());
       for (size_t j = 0; j < phi->numOperands(); j++) {
-        JitSpewCont(JitSpew_RegAlloc, " [use %s]",
-                    info.inputs[j].toString().get());
+        fprintf(stderr, " [use %s]", info.inputs[j].toString().get());
       }
-      JitSpewCont(JitSpew_RegAlloc, "\n");
+      fprintf(stderr, "\n");
     }
 
     for (LInstructionIterator iter = block->begin(); iter != block->end();
@@ -425,49 +397,46 @@ void AllocationIntegrityState::dump() {
       CodePosition input(ins->id(), CodePosition::INPUT);
       CodePosition output(ins->id(), CodePosition::OUTPUT);
 
-      JitSpewHeader(JitSpew_RegAlloc);
-      JitSpewCont(JitSpew_RegAlloc, "    [");
+      fprintf(stderr, "[");
       if (input != CodePosition::MIN) {
-        JitSpewCont(JitSpew_RegAlloc, "%u,%u ", input.bits(), output.bits());
+        fprintf(stderr, "%u,%u ", input.bits(), output.bits());
       }
-      JitSpewCont(JitSpew_RegAlloc, "%s]", ins->opName());
+      fprintf(stderr, "%s]", ins->opName());
 
       if (ins->isMoveGroup()) {
         LMoveGroup* group = ins->toMoveGroup();
         for (int i = group->numMoves() - 1; i >= 0; i--) {
-          JitSpewCont(JitSpew_RegAlloc, " [%s -> %s]",
-                      group->getMove(i).from().toString().get(),
-                      group->getMove(i).to().toString().get());
+          fprintf(stderr, " [%s -> %s]",
+                  group->getMove(i).from().toString().get(),
+                  group->getMove(i).to().toString().get());
         }
-        JitSpewCont(JitSpew_RegAlloc, "\n");
+        fprintf(stderr, "\n");
         continue;
       }
 
       for (size_t i = 0; i < ins->numDefs(); i++) {
-        JitSpewCont(JitSpew_RegAlloc, " [def %s]",
-                    ins->getDef(i)->toString().get());
+        fprintf(stderr, " [def %s]", ins->getDef(i)->toString().get());
       }
 
       for (size_t i = 0; i < ins->numTemps(); i++) {
         LDefinition* temp = ins->getTemp(i);
         if (!temp->isBogusTemp()) {
-          JitSpewCont(JitSpew_RegAlloc, " [temp v%u %s]",
-                      info.temps[i].virtualRegister(), temp->toString().get());
+          fprintf(stderr, " [temp v%u %s]", info.temps[i].virtualRegister(),
+                  temp->toString().get());
         }
       }
 
       size_t index = 0;
       for (LInstruction::InputIterator alloc(*ins); alloc.more();
            alloc.next()) {
-        JitSpewCont(JitSpew_RegAlloc, " [use %s",
-                    info.inputs[index++].toString().get());
+        fprintf(stderr, " [use %s", info.inputs[index++].toString().get());
         if (!alloc->isConstant()) {
-          JitSpewCont(JitSpew_RegAlloc, " %s", alloc->toString().get());
+          fprintf(stderr, " %s", alloc->toString().get());
         }
-        JitSpewCont(JitSpew_RegAlloc, "]");
+        fprintf(stderr, "]");
       }
 
-      JitSpewCont(JitSpew_RegAlloc, "\n");
+      fprintf(stderr, "\n");
     }
   }
 
@@ -575,83 +544,71 @@ LMoveGroup* RegisterAllocator::getMoveGroupAfter(LInstruction* ins) {
 
 void RegisterAllocator::dumpInstructions() {
 #ifdef JS_JITSPEW
-  JitSpewCont(JitSpew_RegAlloc, "\n");
-  JitSpew(JitSpew_RegAlloc, "Instructions:");
+  fprintf(stderr, "Instructions:\n");
 
   for (size_t blockIndex = 0; blockIndex < graph.numBlocks(); blockIndex++) {
     LBlock* block = graph.getBlock(blockIndex);
     MBasicBlock* mir = block->mir();
 
-    JitSpewHeader(JitSpew_RegAlloc);
-    JitSpewCont(JitSpew_RegAlloc, "  Block %lu",
-                static_cast<unsigned long>(blockIndex));
+    fprintf(stderr, "\nBlock %lu", static_cast<unsigned long>(blockIndex));
     for (size_t i = 0; i < mir->numSuccessors(); i++) {
-      JitSpewCont(JitSpew_RegAlloc, " [successor %u]",
-                  mir->getSuccessor(i)->id());
+      fprintf(stderr, " [successor %u]", mir->getSuccessor(i)->id());
     }
-    JitSpewCont(JitSpew_RegAlloc, "\n");
+    fprintf(stderr, "\n");
 
     for (size_t i = 0; i < block->numPhis(); i++) {
       LPhi* phi = block->getPhi(i);
 
-      JitSpewHeader(JitSpew_RegAlloc);
-      JitSpewCont(JitSpew_RegAlloc, "    [%u,%u Phi] [def %s]",
-                  inputOf(phi).bits(), outputOf(phi).bits(),
-                  phi->getDef(0)->toString().get());
+      fprintf(stderr, "[%u,%u Phi] [def %s]", inputOf(phi).bits(),
+              outputOf(phi).bits(), phi->getDef(0)->toString().get());
       for (size_t j = 0; j < phi->numOperands(); j++) {
-        JitSpewCont(JitSpew_RegAlloc, " [use %s]",
-                    phi->getOperand(j)->toString().get());
+        fprintf(stderr, " [use %s]", phi->getOperand(j)->toString().get());
       }
-      JitSpewCont(JitSpew_RegAlloc, "\n");
+      fprintf(stderr, "\n");
     }
 
     for (LInstructionIterator iter = block->begin(); iter != block->end();
          iter++) {
       LInstruction* ins = *iter;
 
-      JitSpewHeader(JitSpew_RegAlloc);
-      JitSpewCont(JitSpew_RegAlloc, "    [");
+      fprintf(stderr, "[");
       if (ins->id() != 0) {
-        JitSpewCont(JitSpew_RegAlloc, "%u,%u ", inputOf(ins).bits(),
-                    outputOf(ins).bits());
+        fprintf(stderr, "%u,%u ", inputOf(ins).bits(), outputOf(ins).bits());
       }
-      JitSpewCont(JitSpew_RegAlloc, "%s]", ins->opName());
+      fprintf(stderr, "%s]", ins->opName());
 
       if (ins->isMoveGroup()) {
         LMoveGroup* group = ins->toMoveGroup();
         for (int i = group->numMoves() - 1; i >= 0; i--) {
           // Use two printfs, as LAllocation::toString is not reentant.
-          JitSpewCont(JitSpew_RegAlloc, " [%s",
-                      group->getMove(i).from().toString().get());
-          JitSpewCont(JitSpew_RegAlloc, " -> %s]",
-                      group->getMove(i).to().toString().get());
+          fprintf(stderr, " [%s", group->getMove(i).from().toString().get());
+          fprintf(stderr, " -> %s]", group->getMove(i).to().toString().get());
         }
-        JitSpewCont(JitSpew_RegAlloc, "\n");
+        fprintf(stderr, "\n");
         continue;
       }
 
       for (size_t i = 0; i < ins->numDefs(); i++) {
-        JitSpewCont(JitSpew_RegAlloc, " [def %s]",
-                    ins->getDef(i)->toString().get());
+        fprintf(stderr, " [def %s]", ins->getDef(i)->toString().get());
       }
 
       for (size_t i = 0; i < ins->numTemps(); i++) {
         LDefinition* temp = ins->getTemp(i);
         if (!temp->isBogusTemp()) {
-          JitSpewCont(JitSpew_RegAlloc, " [temp %s]", temp->toString().get());
+          fprintf(stderr, " [temp %s]", temp->toString().get());
         }
       }
 
       for (LInstruction::InputIterator alloc(*ins); alloc.more();
            alloc.next()) {
         if (!alloc->isBogus()) {
-          JitSpewCont(JitSpew_RegAlloc, " [use %s]", alloc->toString().get());
+          fprintf(stderr, " [use %s]", alloc->toString().get());
         }
       }
 
-      JitSpewCont(JitSpew_RegAlloc, "\n");
+      fprintf(stderr, "\n");
     }
   }
-  JitSpewCont(JitSpew_RegAlloc, "\n");
+  fprintf(stderr, "\n");
 #endif  // JS_JITSPEW
 }

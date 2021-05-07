@@ -13,9 +13,7 @@
 
 #include <stdint.h>
 
-#include "jstypes.h"
-
-#include "js/TypeDecls.h"
+#include "jspubtd.h"
 
 struct JSStructuredCloneReader;
 struct JSStructuredCloneWriter;

@@ -2,27 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::errors;
-use crate::statecallback::StateCallback;
+use util::OnceCallback;
 
 pub struct Transaction {}
 
 impl Transaction {
     pub fn new<F, T>(
         timeout: u64,
-        callback: StateCallback<crate::Result<T>>,
+        callback: OnceCallback<T>,
         new_device_cb: F,
-    ) -> crate::Result<Self>
+    ) -> Result<Self, ::Error>
     where
-        F: Fn(String, &dyn Fn() -> bool),
+        F: Fn(String, &Fn() -> bool),
     {
-        callback.call(Err(errors::AuthenticatorError::U2FToken(
-            errors::U2FTokenError::NotSupported,
-        )));
-
-        Err(errors::AuthenticatorError::U2FToken(
-            errors::U2FTokenError::NotSupported,
-        ))
+        callback.call(Err(::Error::NotSupported));
+        Err(::Error::NotSupported)
     }
 
     pub fn cancel(&mut self) {

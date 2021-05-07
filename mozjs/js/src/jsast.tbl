@@ -33,7 +33,6 @@ ASTDEF(AST_OPT_MEMBER_EXPR,       "OptionalMemberExpression",       "optionalMem
 ASTDEF(AST_FUNC_EXPR,             "FunctionExpression",             "functionExpression")
 ASTDEF(AST_ARROW_EXPR,            "ArrowFunctionExpression",        "arrowFunctionExpression")
 ASTDEF(AST_ARRAY_EXPR,            "ArrayExpression",                "arrayExpression")
-ASTDEF(AST_DELETE_OPTIONAL_EXPR,  "DeleteOptionalExpression",       "deleteOptionalExpression")
 ASTDEF(AST_OPTIONAL_EXPR,         "OptionalExpression",             "optionalExpression")
 ASTDEF(AST_SPREAD_EXPR,           "SpreadExpression",               "spreadExpression")
 ASTDEF(AST_OBJECT_EXPR,           "ObjectExpression",               "objectExpression")
@@ -65,10 +64,8 @@ ASTDEF(AST_DEBUGGER_STMT,         "DebuggerStatement",              "debuggerSta
 ASTDEF(AST_LET_STMT,              "LetStatement",                   "letStatement")
 ASTDEF(AST_IMPORT_DECL,           "ImportDeclaration",              "importDeclaration")
 ASTDEF(AST_IMPORT_SPEC,           "ImportSpecifier",                "importSpecifier")
-ASTDEF(AST_IMPORT_NAMESPACE_SPEC, "ImportNamespaceSpecifier",       "importNamespaceSpecifier")
 ASTDEF(AST_EXPORT_DECL,           "ExportDeclaration",              "exportDeclaration")
 ASTDEF(AST_EXPORT_SPEC,           "ExportSpecifier",                "exportSpecifier")
-ASTDEF(AST_EXPORT_NAMESPACE_SPEC, "ExportNamespaceSpecifier",       "exportNamespaceSpecifier")
 ASTDEF(AST_EXPORT_BATCH_SPEC,     "ExportBatchSpecifier",           "exportBatchSpecifier")
 
 ASTDEF(AST_CASE,                  "SwitchCase",                     "switchCase")

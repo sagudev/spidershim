@@ -11,53 +11,50 @@ info: |
   2. If Type(P) is String, then
     a. Let numericIndex be ! CanonicalNumericIndexString(P).
     b. If numericIndex is not undefined, then
-      i. Perform ? IntegerIndexedElementSet(O, numericIndex, V).
-      ii. Return true.
+      i. Return ? IntegerIndexedElementSet(O, numericIndex, V).
   ...
 
-  IntegerIndexedElementSet ( O, index, value )
+  9.4.5.9 IntegerIndexedElementSet ( O, index, value )
 
-  Assert: O is an Integer-Indexed exotic object.
-  Assert: Type(index) is Number.
-  If O.[[ContentType]] is BigInt, let numValue be ? ToBigInt(value).
-  Otherwise, let numValue be ? ToNumber(value).
+  ...
+  3. Let numValue be ? ToNumber(value).
   ...
 includes: [testTypedArray.js]
-features: [align-detached-buffer-semantics-with-web-reality, TypedArray]
+features: [TypedArray]
 ---*/
 
 testWithTypedArrayConstructors(function(TA) {
-  let sample = new TA([42]);
+  var sample = new TA([42]);
 
-  let obj = {
-    valueOf() {
+  var obj = {
+    valueOf: function() {
       throw new Test262Error();
     }
   };
 
   assert.throws(Test262Error, function() {
     sample["0"] = obj;
-  }, '`sample["0"] = obj` throws Test262Error');
+  }, "ToNumber check with a valid index");
 
   assert.throws(Test262Error, function() {
     sample["1.1"] = obj;
-  }, '`sample["1.1"] = obj` throws Test262Error');
+  }, "ToNumber runs before ToInteger(index)");
 
   assert.throws(Test262Error, function() {
     sample["-0"] = obj;
-  }, '`sample["-0"] = obj` throws Test262Error');
+  }, "ToNumber runs before -0 check");
 
   assert.throws(Test262Error, function() {
     sample["-1"] = obj;
-  }, '`sample["-1"] = obj` throws Test262Error');
+  }, "ToNumber runs before < 0 check");
 
   assert.throws(Test262Error, function() {
     sample["1"] = obj;
-  }, '`sample["1"] = obj` throws Test262Error');
+  }, "ToNumber runs before index == length check");
 
   assert.throws(Test262Error, function() {
     sample["2"] = obj;
-  }, '`sample["2"] = obj` throws Test262Error');
+  }, "ToNumber runs before index > length check");
 });
 
 reportCompare(0, 0);

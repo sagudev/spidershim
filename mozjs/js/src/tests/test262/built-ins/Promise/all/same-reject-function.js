@@ -16,7 +16,7 @@ info: |
 function rejectFunction() {}
 
 function Constructor(executor) {
-  executor(Test262Error.thrower, rejectFunction);
+  executor($ERROR, rejectFunction);
 }
 Constructor.resolve = function(v) {
   return v;

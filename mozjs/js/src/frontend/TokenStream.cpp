@@ -21,7 +21,6 @@
 #include "mozilla/Utf8.h"
 
 #include <algorithm>
-#include <iterator>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -34,23 +33,19 @@
 
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/Parser.h"
-#include "frontend/ParserAtom.h"
 #include "frontend/ReservedWords.h"
 #include "js/CharacterEncoding.h"
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/Printf.h"                // JS_smprintf
-#include "js/RegExpFlags.h"           // JS::RegExpFlags
+#include "js/RegExpFlags.h"  // JS::RegExpFlags
 #include "js/UniquePtr.h"
 #include "util/StringBuffer.h"
-#include "util/Text.h"
 #include "util/Unicode.h"
 #include "vm/FrameIter.h"  // js::{,NonBuiltin}FrameIter
 #include "vm/HelperThreads.h"
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
-#include "vm/WellKnownAtom.h"  // js_*_str
 
+using mozilla::ArrayLength;
 using mozilla::AsciiAlphanumericToNumber;
 using mozilla::AssertedCast;
 using mozilla::DecodeOneUtf8CodePoint;
@@ -60,14 +55,18 @@ using mozilla::IsAsciiDigit;
 using mozilla::IsAsciiHexDigit;
 using mozilla::IsTrailingUnit;
 using mozilla::MakeScopeExit;
+using mozilla::MakeSpan;
 using mozilla::Maybe;
 using mozilla::PointerRangeSize;
-using mozilla::Span;
 using mozilla::Utf8Unit;
 
 using JS::ReadOnlyCompileOptions;
 using JS::RegExpFlag;
 using JS::RegExpFlags;
+
+// There's some very preliminary support for private fields in this file. It's
+// disabled in all builds, for now.
+//#define JS_PRIVATE_FIELDS 1
 
 struct ReservedWordInfo {
   const char* chars;  // C string with reserved word text
@@ -79,12 +78,6 @@ static const ReservedWordInfo reservedWords[] = {
   {js_##word##_str, js::frontend::type},
     FOR_EACH_JAVASCRIPT_RESERVED_WORD(RESERVED_WORD_INFO)
 #undef RESERVED_WORD_INFO
-};
-
-enum class ReservedWordsIndex : size_t {
-#define ENTRY_(_1, NAME, _3) NAME,
-  FOR_EACH_JAVASCRIPT_RESERVED_WORD(ENTRY_)
-#undef ENTRY_
 };
 
 // Returns a ReservedWordInfo for the specified characters, or nullptr if the
@@ -137,16 +130,35 @@ MOZ_ALWAYS_INLINE const ReservedWordInfo* FindReservedWord<Utf8Unit>(
 }
 
 static const ReservedWordInfo* FindReservedWord(
-    const js::frontend::TaggedParserAtomIndex atom) {
-  switch (atom.rawData()) {
-#define CASE_(_1, NAME, _3)                                           \
-  case js::frontend::TaggedParserAtomIndex::WellKnownRawData::NAME(): \
-    return &reservedWords[size_t(ReservedWordsIndex::NAME)];
-    FOR_EACH_JAVASCRIPT_RESERVED_WORD(CASE_)
-#undef CASE_
+    JSLinearString* str, js::frontend::NameVisibility* visibility) {
+  JS::AutoCheckCannotGC nogc;
+  if (str->hasLatin1Chars()) {
+    const JS::Latin1Char* chars = str->latin1Chars(nogc);
+    size_t length = str->length();
+#ifdef JS_PRIVATE_FIELDS
+    if (length > 0 && chars[0] == '#') {
+      *visibility = js::frontend::NameVisibility::Private;
+      return nullptr;
+    }
+#else
+    MOZ_ASSERT_IF(length > 0, chars[0] != '#');
+#endif
+    *visibility = js::frontend::NameVisibility::Public;
+    return FindReservedWord(chars, length);
   }
 
-  return nullptr;
+  const char16_t* chars = str->twoByteChars(nogc);
+  size_t length = str->length();
+#ifdef JS_PRIVATE_FIELDS
+  if (length > 0 && chars[0] == '#') {
+    *visibility = js::frontend::NameVisibility::Private;
+    return nullptr;
+  }
+#else
+  MOZ_ASSERT_IF(length > 0, chars[0] != '#');
+#endif
+  *visibility = js::frontend::NameVisibility::Public;
+  return FindReservedWord(chars, length);
 }
 
 static uint32_t GetSingleCodePoint(const char16_t** p, const char16_t* end) {
@@ -229,22 +241,18 @@ bool IsIdentifier(const Latin1Char* chars, size_t length) {
   return true;
 }
 
-bool IsIdentifierASCII(char c) { return unicode::IsIdentifierStartASCII(c); }
-
-bool IsIdentifierASCII(char c1, char c2) {
-  return unicode::IsIdentifierStartASCII(c1) &&
-         unicode::IsIdentifierPartASCII(c2);
-}
-
 bool IsIdentifierNameOrPrivateName(const Latin1Char* chars, size_t length) {
   if (length == 0) {
     return false;
   }
 
-  // Skip over any private name marker.
-  if (*chars == '#') {
+  if (char16_t(*chars) == '#') {
+#ifdef JS_PRIVATE_FIELDS
     ++chars;
     --length;
+#else
+    return false;
+#endif
   }
 
   return IsIdentifier(chars, length);
@@ -284,15 +292,16 @@ bool IsIdentifierNameOrPrivateName(const char16_t* chars, size_t length) {
   uint32_t codePoint;
 
   codePoint = GetSingleCodePoint(&p, end);
-
-  // Skip over any private name marker.
   if (codePoint == '#') {
-    // The identifier part of a private name mustn't be empty.
+#ifdef JS_PRIVATE_FIELDS
     if (length == 1) {
       return false;
     }
 
     codePoint = GetSingleCodePoint(&p, end);
+#else
+    return false;
+#endif
   }
 
   if (!unicode::IsIdentifierStart(codePoint)) {
@@ -309,24 +318,28 @@ bool IsIdentifierNameOrPrivateName(const char16_t* chars, size_t length) {
   return true;
 }
 
-bool IsKeyword(TaggedParserAtomIndex atom) {
-  if (const ReservedWordInfo* rw = FindReservedWord(atom)) {
+bool IsKeyword(JSLinearString* str) {
+  NameVisibility visibility;
+  if (const ReservedWordInfo* rw = FindReservedWord(str, &visibility)) {
     return TokenKindIsKeyword(rw->tokentype);
   }
 
   return false;
 }
 
-TokenKind ReservedWordTokenKind(TaggedParserAtomIndex name) {
-  if (const ReservedWordInfo* rw = FindReservedWord(name)) {
+TokenKind ReservedWordTokenKind(PropertyName* str) {
+  NameVisibility visibility;
+  if (const ReservedWordInfo* rw = FindReservedWord(str, &visibility)) {
     return rw->tokentype;
   }
 
-  return TokenKind::Limit;
+  return visibility == NameVisibility::Private ? TokenKind::PrivateName
+                                               : TokenKind::Name;
 }
 
-const char* ReservedWordToCharZ(TaggedParserAtomIndex name) {
-  if (const ReservedWordInfo* rw = FindReservedWord(name)) {
+const char* ReservedWordToCharZ(PropertyName* str) {
+  NameVisibility visibility;
+  if (const ReservedWordInfo* rw = FindReservedWord(str, &visibility)) {
     return ReservedWordToCharZ(rw->tokentype);
   }
 
@@ -347,19 +360,19 @@ const char* ReservedWordToCharZ(TokenKind tt) {
   return nullptr;
 }
 
-TaggedParserAtomIndex TokenStreamAnyChars::reservedWordToPropertyName(
+PropertyName* TokenStreamAnyChars::reservedWordToPropertyName(
     TokenKind tt) const {
   MOZ_ASSERT(tt != TokenKind::Name);
   switch (tt) {
 #define EMIT_CASE(word, name, type) \
   case type:                        \
-    return TaggedParserAtomIndex::WellKnown::name();
+    return cx->names().name;
     FOR_EACH_JAVASCRIPT_RESERVED_WORD(EMIT_CASE)
 #undef EMIT_CASE
     default:
       MOZ_ASSERT_UNREACHABLE("Not a reserved word TokenKind.");
   }
-  return TaggedParserAtomIndex::null();
+  return nullptr;
 }
 
 SourceCoords::SourceCoords(JSContext* cx, uint32_t initialLineNumber,
@@ -518,18 +531,17 @@ TokenStreamAnyChars::TokenStreamAnyChars(JSContext* cx,
 }
 
 template <typename Unit>
-TokenStreamCharsBase<Unit>::TokenStreamCharsBase(JSContext* cx,
-                                                 ParserAtomsTable* pasrerAtoms,
-                                                 const Unit* units,
-                                                 size_t length,
-                                                 size_t startOffset)
-    : TokenStreamCharsShared(cx, pasrerAtoms),
+TokenStreamCharsBase<Unit>::TokenStreamCharsBase(
+    JSContext* cx, CompilationInfo* compilationInfo, const Unit* units,
+    size_t length, size_t startOffset)
+    : TokenStreamCharsShared(cx, compilationInfo),
       sourceUnits(units, length, startOffset) {}
 
-bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
-                                                        const char16_t* cur,
-                                                        const char16_t* end) {
-  MOZ_ASSERT(charBuffer.length() == 0);
+template <>
+MOZ_MUST_USE bool TokenStreamCharsBase<char16_t>::
+    fillCharBufferFromSourceNormalizingAsciiLineBreaks(const char16_t* cur,
+                                                       const char16_t* end) {
+  MOZ_ASSERT(this->charBuffer.length() == 0);
 
   while (cur < end) {
     char16_t ch = *cur++;
@@ -540,7 +552,7 @@ bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
       }
     }
 
-    if (!charBuffer.append(ch)) {
+    if (!this->charBuffer.append(ch)) {
       return false;
     }
   }
@@ -549,10 +561,11 @@ bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
   return true;
 }
 
-bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
-                                                        const Utf8Unit* cur,
-                                                        const Utf8Unit* end) {
-  MOZ_ASSERT(charBuffer.length() == 0);
+template <>
+MOZ_MUST_USE bool TokenStreamCharsBase<Utf8Unit>::
+    fillCharBufferFromSourceNormalizingAsciiLineBreaks(const Utf8Unit* cur,
+                                                       const Utf8Unit* end) {
+  MOZ_ASSERT(this->charBuffer.length() == 0);
 
   while (cur < end) {
     Utf8Unit unit = *cur++;
@@ -565,7 +578,7 @@ bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
         }
       }
 
-      if (!charBuffer.append(ch)) {
+      if (!this->charBuffer.append(ch)) {
         return false;
       }
 
@@ -576,7 +589,7 @@ bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
     MOZ_ASSERT(ch.isSome(),
                "provided source text should already have been validated");
 
-    if (!AppendCodePointToCharBuffer(charBuffer, ch.value())) {
+    if (!appendCodePointToCharBuffer(ch.value())) {
       return false;
     }
   }
@@ -587,14 +600,15 @@ bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
 
 template <typename Unit, class AnyCharsAccess>
 TokenStreamSpecific<Unit, AnyCharsAccess>::TokenStreamSpecific(
-    JSContext* cx, ParserAtomsTable* pasrerAtoms,
+    JSContext* cx, CompilationInfo* compilationInfo,
     const ReadOnlyCompileOptions& options, const Unit* units, size_t length)
-    : TokenStreamChars<Unit, AnyCharsAccess>(cx, pasrerAtoms, units, length,
+    : TokenStreamChars<Unit, AnyCharsAccess>(cx, compilationInfo, units, length,
                                              options.scriptSourceOffset) {}
 
 bool TokenStreamAnyChars::checkOptions() {
-  // Constrain starting columns to where they will saturate.
-  if (options().column > ColumnLimit) {
+  // Constrain starting columns to half of the range of a signed 32-bit value,
+  // to avoid overflow.
+  if (options().column >= std::numeric_limits<int32_t>::max() / 2 + 1) {
     reportErrorNoOffset(JSMSG_BAD_COLUMN_NUMBER);
     return false;
   }
@@ -619,18 +633,20 @@ void TokenStreamAnyChars::reportErrorNoOffsetVA(unsigned errorNumber,
   ReportCompileErrorLatin1(cx, std::move(metadata), nullptr, errorNumber, args);
 }
 
-[[nodiscard]] MOZ_ALWAYS_INLINE bool
+// Use the fastest available getc.
+#if defined(HAVE_GETC_UNLOCKED)
+#  define fast_getc getc_unlocked
+#elif defined(HAVE__GETC_NOLOCK)
+#  define fast_getc _getc_nolock
+#else
+#  define fast_getc getc
+#endif
+
+MOZ_MUST_USE MOZ_ALWAYS_INLINE bool
 TokenStreamAnyChars::internalUpdateLineInfoForEOL(uint32_t lineStartOffset) {
   prevLinebase = linebase;
   linebase = lineStartOffset;
   lineno++;
-
-  // On overflow, report error.
-  if (MOZ_UNLIKELY(!lineno)) {
-    reportErrorNoOffset(JSMSG_BAD_LINE_NUMBER);
-    return false;
-  }
-
   return srcCoords.add(lineno, linebase);
 }
 
@@ -954,26 +970,10 @@ uint32_t GeneralTokenStreamChars<Unit, AnyCharsAccess>::computeColumn(
 
   const TokenStreamAnyChars& anyChars = anyCharsAccess();
 
-  uint32_t column =
+  uint32_t partialCols =
       anyChars.computePartialColumn(lineToken, offset, this->sourceUnits);
 
-  if (lineToken.isFirstLine()) {
-    if (column > ColumnLimit) {
-      return ColumnLimit;
-    }
-
-    static_assert(uint32_t(ColumnLimit + ColumnLimit) > ColumnLimit,
-                  "Adding ColumnLimit should not overflow");
-
-    uint32_t firstLineOffset = anyChars.options_.column;
-    column += firstLineOffset;
-  }
-
-  if (column > ColumnLimit) {
-    return ColumnLimit;
-  }
-
-  return column;
+  return (lineToken.isFirstLine() ? anyChars.options_.column : 0) + partialCols;
 }
 
 template <typename Unit, class AnyCharsAccess>
@@ -1116,7 +1116,7 @@ TokenStreamChars<Utf8Unit, AnyCharsAccess>::badStructurallyValidCodePoint(
       "FFFF");  // including '\0'
   char codePointCharsArray[MaxHexSize];
 
-  char* codePointStr = std::end(codePointCharsArray);
+  char* codePointStr = codePointCharsArray + ArrayLength(codePointCharsArray);
   *--codePointStr = '\0';
 
   // Note that by do-while looping here rather than while-looping, this
@@ -1136,7 +1136,7 @@ TokenStreamChars<Utf8Unit, AnyCharsAccess>::badStructurallyValidCodePoint(
 }
 
 template <class AnyCharsAccess>
-[[nodiscard]] bool
+MOZ_MUST_USE bool
 TokenStreamChars<Utf8Unit, AnyCharsAccess>::getNonAsciiCodePointDontNormalize(
     Utf8Unit lead, char32_t* codePoint) {
   auto onBadLeadUnit = [this, &lead]() { this->badLeadUnit(lead); };
@@ -1699,22 +1699,26 @@ bool TokenStreamCharsBase<Unit>::addLineOfContext(ErrorMetadata* err,
     return true;
   }
 
-  CharBuffer lineOfContext(cx);
+  // We might have hit an error while processing some source code feature
+  // that's accumulating text into |this->charBuffer| -- e.g. we could be
+  // halfway into a regular expression literal, then encounter invalid UTF-8.
+  // Thus we must clear |this->charBuffer| of prior work.
+  this->charBuffer.clear();
 
   const Unit* encodedWindow = sourceUnits.codeUnitPtrAt(encodedWindowStart);
-  if (!FillCharBufferFromSourceNormalizingAsciiLineBreaks(
-          lineOfContext, encodedWindow, encodedWindow + encodedWindowLength)) {
+  if (!fillCharBufferFromSourceNormalizingAsciiLineBreaks(
+          encodedWindow, encodedWindow + encodedWindowLength)) {
     return false;
   }
 
-  size_t utf16WindowLength = lineOfContext.length();
+  size_t utf16WindowLength = this->charBuffer.length();
 
   // The windowed string is null-terminated.
-  if (!lineOfContext.append('\0')) {
+  if (!this->charBuffer.append('\0')) {
     return false;
   }
 
-  err->lineOfContext.reset(lineOfContext.extractOrCopyRawBuffer());
+  err->lineOfContext.reset(this->charBuffer.extractOrCopyRawBuffer());
   if (!err->lineOfContext) {
     return false;
   }
@@ -1788,17 +1792,6 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::computeErrorMetadata(
 
   // We can't fill in any more here.
   return true;
-}
-
-template <typename Unit, class AnyCharsAccess>
-void TokenStreamSpecific<Unit, AnyCharsAccess>::reportIllegalCharacter(
-    int32_t cp) {
-  UniqueChars display = JS_smprintf("U+%04X", cp);
-  if (!display) {
-    ReportOutOfMemory(anyCharsAccess().cx);
-    return;
-  }
-  error(JSMSG_ILLEGAL_CHARACTER, display.get());
 }
 
 // We have encountered a '\': check for a Unicode escape sequence after it.
@@ -1909,12 +1902,11 @@ bool GeneralTokenStreamChars<Unit, AnyCharsAccess>::matchUnicodeEscapeIdent(
 }
 
 template <typename Unit, class AnyCharsAccess>
-[[nodiscard]] bool
+MOZ_MUST_USE bool
 TokenStreamSpecific<Unit, AnyCharsAccess>::matchIdentifierStart(
     IdentifierEscapes* sawEscape) {
   int32_t unit = getCodeUnit();
   if (unicode::IsIdentifierStart(char16_t(unit))) {
-    ungetCodeUnit(unit);
     *sawEscape = IdentifierEscapes::None;
     return true;
   }
@@ -1965,7 +1957,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getDirectives(
   return res;
 }
 
-[[nodiscard]] bool TokenStreamCharsShared::copyCharBufferTo(
+MOZ_MUST_USE bool TokenStreamCharsShared::copyCharBufferTo(
     JSContext* cx, UniquePtr<char16_t[], JS::FreePolicy>* destination) {
   size_t length = charBuffer.length();
 
@@ -1980,7 +1972,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getDirectives(
 }
 
 template <typename Unit, class AnyCharsAccess>
-[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::getDirective(
+MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getDirective(
     bool isMultiline, bool shouldWarnDeprecated, const char* directive,
     uint8_t directiveLength, const char* errorMsgPragma,
     UniquePtr<char16_t[], JS::FreePolicy>* destination) {
@@ -2039,7 +2031,7 @@ template <typename Unit, class AnyCharsAccess>
                "maintain line-info/flags for EOL");
     this->sourceUnits.consumeKnownCodePoint(peeked);
 
-    if (!AppendCodePointToCharBuffer(this->charBuffer, peeked.codePoint())) {
+    if (!appendCodePointToCharBuffer(peeked.codePoint())) {
       return false;
     }
   } while (true);
@@ -2064,8 +2056,9 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getDisplayURL(
   // developer would like to refer to the source as from the source's actual
   // URL.
 
-  static constexpr char sourceURLDirective[] = " sourceURL=";
-  constexpr uint8_t sourceURLDirectiveLength = js_strlen(sourceURLDirective);
+  static const char sourceURLDirective[] = " sourceURL=";
+  constexpr uint8_t sourceURLDirectiveLength =
+      ArrayLength(sourceURLDirective) - 1;
   return getDirective(isMultiline, shouldWarnDeprecated, sourceURLDirective,
                       sourceURLDirectiveLength, "sourceURL",
                       &anyCharsAccess().displayURL_);
@@ -2077,9 +2070,9 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getSourceMappingURL(
   // Match comments of the form "//# sourceMappingURL=<url>" or
   // "/\* //# sourceMappingURL=<url> *\/"
 
-  static constexpr char sourceMappingURLDirective[] = " sourceMappingURL=";
+  static const char sourceMappingURLDirective[] = " sourceMappingURL=";
   constexpr uint8_t sourceMappingURLDirectiveLength =
-      js_strlen(sourceMappingURLDirective);
+      ArrayLength(sourceMappingURLDirective) - 1;
   return getDirective(isMultiline, shouldWarnDeprecated,
                       sourceMappingURLDirective,
                       sourceMappingURLDirectiveLength, "sourceMappingURL",
@@ -2125,11 +2118,8 @@ MOZ_COLD bool GeneralTokenStreamChars<Unit, AnyCharsAccess>::badToken() {
   return false;
 };
 
-bool AppendCodePointToCharBuffer(CharBuffer& charBuffer, uint32_t codePoint) {
-  MOZ_ASSERT(codePoint <= unicode::NonBMPMax,
-             "should only be processing code points validly decoded from UTF-8 "
-             "or WTF-16 source text (surrogate code points permitted)");
-
+MOZ_MUST_USE bool TokenStreamCharsShared::appendCodePointToCharBuffer(
+    uint32_t codePoint) {
   char16_t units[2];
   unsigned numUnits = 0;
   unicode::UTF16Encode(codePoint, units, &numUnits);
@@ -2167,7 +2157,11 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::putIdentInCharBuffer(
 
     uint32_t codePoint;
     if (MOZ_LIKELY(isAsciiCodePoint(unit))) {
-      if (unicode::IsIdentifierPart(char16_t(unit)) || unit == '#') {
+      if (unicode::IsIdentifierPart(char16_t(unit))
+#ifdef JS_PRIVATE_FIELDS
+          || char16_t(unit) == '#'
+#endif
+      ) {
         if (!this->charBuffer.append(unit)) {
           return false;
         }
@@ -2192,7 +2186,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::putIdentInCharBuffer(
       }
     }
 
-    if (!AppendCodePointToCharBuffer(this->charBuffer, codePoint)) {
+    if (!appendCodePointToCharBuffer(codePoint)) {
       return false;
     }
   } while (true);
@@ -2201,7 +2195,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::putIdentInCharBuffer(
 }
 
 template <typename Unit, class AnyCharsAccess>
-[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::identifierName(
+MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::identifierName(
     TokenStart start, const Unit* identStart, IdentifierEscapes escaping,
     Modifier modifier, NameVisibility visibility, TokenKind* out) {
   // Run the bad-token code for every path out of this function except the
@@ -2249,7 +2243,7 @@ template <typename Unit, class AnyCharsAccess>
     }
   }
 
-  TaggedParserAtomIndex atom;
+  JSAtom* atom;
   if (MOZ_UNLIKELY(escaping == IdentifierEscapes::SawUnicodeEscape)) {
     // Identifiers containing Unicode escapes have to be converted into
     // tokenbuf before atomizing.
@@ -2257,7 +2251,7 @@ template <typename Unit, class AnyCharsAccess>
       return false;
     }
 
-    atom = drainCharBufferIntoAtom();
+    atom = drainCharBufferIntoAtom(anyCharsAccess().cx);
   } else {
     // Escape-free identifiers can be created directly from sourceUnits.
     const Unit* chars = identStart;
@@ -2273,7 +2267,7 @@ template <typename Unit, class AnyCharsAccess>
       }
     }
 
-    atom = atomizeSourceChars(Span(chars, length));
+    atom = atomizeSourceChars(anyCharsAccess().cx, MakeSpan(chars, length));
   }
   if (!atom) {
     return false;
@@ -2281,10 +2275,10 @@ template <typename Unit, class AnyCharsAccess>
 
   noteBadToken.release();
   if (visibility == NameVisibility::Private) {
-    newPrivateNameToken(atom, start, modifier, out);
-    return true;
+    errorAt(start.offset(), JSMSG_PRIVATE_FIELDS_NOT_SUPPORTED);
+    return false;
   }
-  newNameToken(atom, start, modifier, out);
+  newNameToken(atom->asPropertyName(), start, modifier, out);
   return true;
 }
 
@@ -2413,7 +2407,7 @@ void SourceUnits<Utf8Unit>::consumeRestOfSingleLineComment() {
 }
 
 template <typename Unit, class AnyCharsAccess>
-[[nodiscard]] MOZ_ALWAYS_INLINE bool
+MOZ_MUST_USE MOZ_ALWAYS_INLINE bool
 TokenStreamSpecific<Unit, AnyCharsAccess>::matchInteger(
     IsIntegerUnit isIntegerUnit, int32_t* nextUnit) {
   int32_t unit = getCodeUnit();
@@ -2425,7 +2419,7 @@ TokenStreamSpecific<Unit, AnyCharsAccess>::matchInteger(
 }
 
 template <typename Unit, class AnyCharsAccess>
-[[nodiscard]] MOZ_ALWAYS_INLINE bool
+MOZ_MUST_USE MOZ_ALWAYS_INLINE bool
 TokenStreamSpecific<Unit, AnyCharsAccess>::matchIntegerAfterFirstDigit(
     IsIntegerUnit isIntegerUnit, int32_t* nextUnit) {
   int32_t unit;
@@ -2453,7 +2447,7 @@ TokenStreamSpecific<Unit, AnyCharsAccess>::matchIntegerAfterFirstDigit(
 }
 
 template <typename Unit, class AnyCharsAccess>
-[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::decimalNumber(
+MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::decimalNumber(
     int32_t unit, TokenStart start, const Unit* numStart, Modifier modifier,
     TokenKind* out) {
   // Run the bad-token code for every path out of this function except the
@@ -2556,7 +2550,7 @@ template <typename Unit, class AnyCharsAccess>
 }
 
 template <typename Unit, class AnyCharsAccess>
-[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::regexpLiteral(
+MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::regexpLiteral(
     TokenStart start, TokenKind* out) {
   MOZ_ASSERT(this->sourceUnits.previousCodeUnit() == Unit('/'));
   this->charBuffer.clear();
@@ -2578,7 +2572,7 @@ template <typename Unit, class AnyCharsAccess>
       return false;
     }
 
-    return AppendCodePointToCharBuffer(this->charBuffer, codePoint);
+    return this->appendCodePointToCharBuffer(codePoint);
   };
 
   auto ReportUnterminatedRegExp = [this](int32_t unit) {
@@ -2649,17 +2643,19 @@ template <typename Unit, class AnyCharsAccess>
   while (true) {
     uint8_t flag;
     unit = getCodeUnit();
-    if (unit == 'd') {
-      flag = RegExpFlag::HasIndices;
-    } else if (unit == 'g') {
+    if (unit == 'g') {
       flag = RegExpFlag::Global;
     } else if (unit == 'i') {
       flag = RegExpFlag::IgnoreCase;
     } else if (unit == 'm') {
       flag = RegExpFlag::Multiline;
-    } else if (unit == 's') {
+    }
+#ifdef ENABLE_NEW_REGEXP
+    else if (unit == 's') {
       flag = RegExpFlag::DotAll;
-    } else if (unit == 'u') {
+    }
+#endif
+    else if (unit == 'u') {
       flag = RegExpFlag::Unicode;
     } else if (unit == 'y') {
       flag = RegExpFlag::Sticky;
@@ -2685,7 +2681,7 @@ template <typename Unit, class AnyCharsAccess>
 }
 
 template <typename Unit, class AnyCharsAccess>
-[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::bigIntLiteral(
+MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::bigIntLiteral(
     TokenStart start, Modifier modifier, TokenKind* out) {
   MOZ_ASSERT(this->sourceUnits.previousCodeUnit() == toUnit('n'));
   MOZ_ASSERT(this->sourceUnits.offset() > start.offset());
@@ -2704,7 +2700,7 @@ template <typename Unit, class AnyCharsAccess>
     if (unit == '_') {
       continue;
     }
-    if (!AppendCodePointToCharBuffer(this->charBuffer, unit)) {
+    if (!this->appendCodePointToCharBuffer(unit)) {
       return false;
     }
   }
@@ -2741,7 +2737,7 @@ void GeneralTokenStreamChars<Unit,
 }
 
 template <typename Unit, class AnyCharsAccess>
-[[nodiscard]] bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
+MOZ_MUST_USE bool TokenStreamSpecific<Unit, AnyCharsAccess>::getTokenInternal(
     TokenKind* const ttp, const Modifier modifier) {
   // Assume we'll fail: success cases will overwrite this.
 #ifdef DEBUG
@@ -2811,7 +2807,7 @@ template <typename Unit, class AnyCharsAccess>
                               modifier, NameVisibility::Public, ttp);
       }
 
-      reportIllegalCharacter(cp);
+      error(JSMSG_ILLEGAL_CHARACTER);
       return badToken();
     }  // !isAsciiCodePoint(unit)
 
@@ -2949,15 +2945,10 @@ template <typename Unit, class AnyCharsAccess>
           return badToken();
         }
       } else if (IsAsciiDigit(unit)) {
-        // Reject octal literals that appear in strict mode code.
-        if (!strictModeError(JSMSG_DEPRECATED_OCTAL_LITERAL)) {
+        // Octal integer literals are not permitted in strict mode code.
+        if (!strictModeError(JSMSG_DEPRECATED_OCTAL)) {
           return badToken();
         }
-
-        // The above test doesn't catch a few edge cases; see
-        // |GeneralParser::maybeParseDirective|.  Record the violation so that
-        // that function can handle them.
-        anyCharsAccess().setSawDeprecatedOctalLiteral();
 
         radix = 8;
         // one past the '0'
@@ -3077,20 +3068,20 @@ template <typename Unit, class AnyCharsAccess>
         break;
 
       case '#': {
-        if (options().privateClassFields) {
-          TokenStart start(this->sourceUnits, -1);
-          const Unit* identStart =
-              this->sourceUnits.addressOfNextCodeUnit() - 1;
-          IdentifierEscapes sawEscape;
-          if (!matchIdentifierStart(&sawEscape)) {
-            return badToken();
-          }
-          return identifierName(start, identStart, sawEscape, modifier,
-                                NameVisibility::Private, ttp);
+#ifdef JS_PRIVATE_FIELDS
+        TokenStart start(this->sourceUnits, -1);
+        const Unit* identStart = this->sourceUnits.addressOfNextCodeUnit() - 1;
+        IdentifierEscapes sawEscape;
+        if (!matchIdentifierStart(&sawEscape)) {
+          return badToken();
         }
+        return identifierName(start, identStart, sawEscape, modifier,
+                              NameVisibility::Private, ttp);
+#else
         ungetCodeUnit(unit);
         error(JSMSG_PRIVATE_FIELDS_NOT_SUPPORTED);
         return badToken();
+#endif
       }
 
       case '=':
@@ -3133,7 +3124,11 @@ template <typename Unit, class AnyCharsAccess>
 
       case '|':
         if (matchCodeUnit('|')) {
+#ifdef NIGHTLY_BUILD
           simpleKind = matchCodeUnit('=') ? TokenKind::OrAssign : TokenKind::Or;
+#else
+          simpleKind = TokenKind::Or;
+#endif
 #ifdef ENABLE_PIPELINE_OPERATOR
         } else if (matchCodeUnit('>')) {
           simpleKind = TokenKind::Pipeline;
@@ -3151,8 +3146,12 @@ template <typename Unit, class AnyCharsAccess>
 
       case '&':
         if (matchCodeUnit('&')) {
+#ifdef NIGHTLY_BUILD
           simpleKind =
               matchCodeUnit('=') ? TokenKind::AndAssign : TokenKind::And;
+#else
+          simpleKind = TokenKind::And;
+#endif
         } else {
           simpleKind =
               matchCodeUnit('=') ? TokenKind::BitAndAssign : TokenKind::BitAnd;
@@ -3174,8 +3173,12 @@ template <typename Unit, class AnyCharsAccess>
             simpleKind = TokenKind::OptionalChain;
           }
         } else if (matchCodeUnit('?')) {
+#ifdef NIGHTLY_BUILD
           simpleKind = matchCodeUnit('=') ? TokenKind::CoalesceAssign
                                           : TokenKind::Coalesce;
+#else
+          simpleKind = TokenKind::Coalesce;
+#endif
         } else {
           simpleKind = TokenKind::Hook;
         }
@@ -3327,7 +3330,7 @@ template <typename Unit, class AnyCharsAccess>
         // We consumed a bad ASCII code point/unit.  Put it back so the
         // error location is the bad code point.
         ungetCodeUnit(unit);
-        reportIllegalCharacter(unit);
+        error(JSMSG_ILLEGAL_CHARACTER);
         return badToken();
     }  // switch (AssertedCast<uint8_t>(CodeUnitValue(toUnit(unit))))
 
@@ -3405,7 +3408,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
         MOZ_ASSERT(!IsLineTerminator(cp));
       }
 
-      if (!AppendCodePointToCharBuffer(this->charBuffer, cp)) {
+      if (!appendCodePointToCharBuffer(cp)) {
         return false;
       }
 
@@ -3435,8 +3438,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
         // LineContinuation represents no code points, so don't append
         // in this case.
         if (codePoint != '\n') {
-          if (!AppendCodePointToCharBuffer(this->charBuffer,
-                                           AssertedCast<char32_t>(codePoint))) {
+          if (!appendCodePointToCharBuffer(AssertedCast<char32_t>(codePoint))) {
             return false;
           }
         }
@@ -3563,7 +3565,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
             }
 
             MOZ_ASSERT(code <= unicode::NonBMPMax);
-            if (!AppendCodePointToCharBuffer(this->charBuffer, code)) {
+            if (!appendCodePointToCharBuffer(code)) {
               return false;
             }
 
@@ -3614,38 +3616,6 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
 
         default: {
           if (!IsAsciiOctal(unit)) {
-            // \8 or \9 in an untagged template literal is a syntax error,
-            // reported in GeneralParser::noSubstitutionUntaggedTemplate.
-            //
-            // Tagged template literals, however, may contain \8 and \9.  The
-            // "cooked" representation of such a part will be |undefined|, and
-            // the "raw" representation will contain the literal characters.
-            //
-            //   function f(parts) {
-            //     assertEq(parts[0], undefined);
-            //     assertEq(parts.raw[0], "\\8");
-            //     return "composed";
-            //   }
-            //   assertEq(f`\8`, "composed");
-            if (unit == '8' || unit == '9') {
-              TokenStreamAnyChars& anyChars = anyCharsAccess();
-              if (parsingTemplate) {
-                anyChars.setInvalidTemplateEscape(
-                    this->sourceUnits.offset() - 2,
-                    InvalidEscapeType::EightOrNine);
-                continue;
-              }
-
-              // \8 and \9 are forbidden in string literals in strict mode code.
-              if (!strictModeError(JSMSG_DEPRECATED_EIGHT_OR_NINE_ESCAPE)) {
-                return false;
-              }
-
-              // The above test doesn't catch a few edge cases; see
-              // |GeneralParser::maybeParseDirective|.  Record the violation so
-              // that that function can handle them.
-              anyChars.setSawDeprecatedEightOrNineEscape();
-            }
             break;
           }
 
@@ -3658,7 +3628,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
             return false;
           }
 
-          // Strict mode code allows only \0 followed by a non-digit.
+          // Strict mode code allows only \0, then a non-digit.
           if (val != 0 || IsAsciiDigit(unit)) {
             TokenStreamAnyChars& anyChars = anyCharsAccess();
             if (parsingTemplate) {
@@ -3666,15 +3636,10 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
                                                 InvalidEscapeType::Octal);
               continue;
             }
-
-            if (!strictModeError(JSMSG_DEPRECATED_OCTAL_ESCAPE)) {
+            if (!strictModeError(JSMSG_DEPRECATED_OCTAL)) {
               return false;
             }
-
-            // The above test doesn't catch a few edge cases; see
-            // |GeneralParser::maybeParseDirective|.  Record the violation so
-            // that that function can handle them.
-            anyChars.setSawDeprecatedOctalEscape();
+            anyChars.flags.sawOctalEscape = true;
           }
 
           if (IsAsciiOctal(unit)) {
@@ -3738,7 +3703,7 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
     }
   }
 
-  TaggedParserAtomIndex atom = drainCharBufferIntoAtom();
+  JSAtom* atom = drainCharBufferIntoAtom(anyCharsAccess().cx);
   if (!atom) {
     return false;
   }
@@ -3748,8 +3713,8 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getStringOrTemplateToken(
   MOZ_ASSERT_IF(!parsingTemplate, !templateHead);
 
   TokenKind kind = !parsingTemplate ? TokenKind::String
-                   : templateHead   ? TokenKind::TemplateHead
-                                    : TokenKind::NoSubsTemplate;
+                                    : templateHead ? TokenKind::TemplateHead
+                                                   : TokenKind::NoSubsTemplate;
   newAtomToken(kind, atom, start, modifier, out);
   return true;
 }
@@ -3828,3 +3793,30 @@ template class TokenStreamSpecific<
 }  // namespace frontend
 
 }  // namespace js
+
+JS_FRIEND_API int js_fgets(char* buf, int size, FILE* file) {
+  int n, i, c;
+  bool crflag;
+
+  n = size - 1;
+  if (n < 0) {
+    return -1;
+  }
+
+  crflag = false;
+  for (i = 0; i < n && (c = fast_getc(file)) != EOF; i++) {
+    buf[i] = c;
+    if (c == '\n') {  // any \n ends a line
+      i++;            // keep the \n; we know there is room for \0
+      break;
+    }
+    if (crflag) {  // \r not followed by \n ends line at the \r
+      ungetc(c, file);
+      break;  // and overwrite c in buf with \0
+    }
+    crflag = (c == '\r');
+  }
+
+  buf[i] = '\0';
+  return i;
+}

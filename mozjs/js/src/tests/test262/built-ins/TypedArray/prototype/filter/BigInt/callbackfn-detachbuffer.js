@@ -1,5 +1,4 @@
 // Copyright (C) 2016 the V8 project authors. All rights reserved.
-// Copyright (C) 2021 Apple Inc. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
 esid: sec-%typedarray%.prototype.filter
@@ -22,18 +21,17 @@ testWithBigIntTypedArrayConstructors(function(TA) {
   var loops = 0;
   var sample = new TA(2);
 
-  sample.filter(function() {
-    var flag = true;
-    if (loops === 0) {
+  assert.throws(TypeError, function() {
+    sample.filter(function() {
+      if (loops === 1) {
+        throw new Test262Error("callbackfn called twice");
+      }
       $DETACHBUFFER(sample.buffer);
-    } else {
-      flag = false;
-    }
-    loops++;
-    return flag;
+      loops++;
+    });
   });
 
-  assert.sameValue(loops, 2);
+  assert.sameValue(loops, 1);
 });
 
 reportCompare(0, 0);

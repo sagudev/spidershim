@@ -13,12 +13,10 @@
  * limitations under the License.
  */
 
-use crate::{
-    BinaryReader, BinaryReaderError, Range, Result, SectionIteratorLimited, SectionReader,
-    SectionWithLimitedItems, TypeDef,
+use super::{
+    BinaryReader, FuncType, Result, SectionIteratorLimited, SectionReader, SectionWithLimitedItems,
 };
 
-#[derive(Clone)]
 pub struct TypeSectionReader<'a> {
     reader: BinaryReader<'a>,
     count: u32,
@@ -43,31 +41,25 @@ impl<'a> TypeSectionReader<'a> {
     ///
     /// # Examples
     /// ```
-    /// use wasmparser::TypeSectionReader;
-    /// # let data: &[u8] = &[0x01, 0x60, 0x00, 0x00];
-    /// let mut type_reader = TypeSectionReader::new(data, 0).unwrap();
+    /// # let data: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    /// #     0x01, 0x4, 0x01, 0x60, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00,
+    /// #     0x0a, 0x05, 0x01, 0x03, 0x00, 0x01, 0x0b];
+    /// use wasmparser::ModuleReader;
+    /// let mut reader = ModuleReader::new(data).expect("module reader");
+    /// let section = reader.read().expect("section");
+    /// let mut type_reader = section.get_type_section_reader().expect("type section reader");
     /// for _ in 0..type_reader.get_count() {
     ///     let ty = type_reader.read().expect("type");
     ///     println!("Type {:?}", ty);
     /// }
     /// ```
-    pub fn read(&mut self) -> Result<TypeDef<'a>> {
-        Ok(match self.reader.read_u8()? {
-            0x60 => TypeDef::Func(self.reader.read_func_type()?),
-            0x61 => TypeDef::Module(self.reader.read_module_type()?),
-            0x62 => TypeDef::Instance(self.reader.read_instance_type()?),
-            _ => {
-                return Err(BinaryReaderError::new(
-                    "invalid leading byte in type definition",
-                    self.original_position() - 1,
-                ))
-            }
-        })
+    pub fn read(&mut self) -> Result<FuncType> {
+        self.reader.read_func_type()
     }
 }
 
 impl<'a> SectionReader for TypeSectionReader<'a> {
-    type Item = TypeDef<'a>;
+    type Item = FuncType;
     fn read(&mut self) -> Result<Self::Item> {
         TypeSectionReader::read(self)
     }
@@ -76,9 +68,6 @@ impl<'a> SectionReader for TypeSectionReader<'a> {
     }
     fn original_position(&self) -> usize {
         TypeSectionReader::original_position(self)
-    }
-    fn range(&self) -> Range {
-        self.reader.range()
     }
 }
 
@@ -89,16 +78,21 @@ impl<'a> SectionWithLimitedItems for TypeSectionReader<'a> {
 }
 
 impl<'a> IntoIterator for TypeSectionReader<'a> {
-    type Item = Result<TypeDef<'a>>;
+    type Item = Result<FuncType>;
     type IntoIter = SectionIteratorLimited<TypeSectionReader<'a>>;
 
     /// Implements iterator over the type section.
     ///
     /// # Examples
     /// ```
-    /// use wasmparser::TypeSectionReader;
-    /// # let data: &[u8] = &[0x01, 0x60, 0x00, 0x00];
-    /// let mut type_reader = TypeSectionReader::new(data, 0).unwrap();
+    /// # let data: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    /// #     0x01, 0x4, 0x01, 0x60, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00,
+    /// #     0x0a, 0x05, 0x01, 0x03, 0x00, 0x01, 0x0b];
+    /// use wasmparser::ModuleReader;
+    /// use wasmparser::{Result, FuncType};
+    /// let mut reader = ModuleReader::new(data).expect("module reader");
+    /// let section = reader.read().expect("section");
+    /// let mut type_reader = section.get_type_section_reader().expect("type section reader");
     /// for ty in type_reader {
     ///     println!("Type {:?}", ty);
     /// }

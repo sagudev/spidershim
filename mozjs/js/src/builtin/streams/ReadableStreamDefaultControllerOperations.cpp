@@ -9,6 +9,7 @@
 #include "builtin/streams/ReadableStreamDefaultControllerOperations.h"
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT{,_IF}
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
 #include "jsfriendapi.h"  // js::AssertSameCompartment
 
@@ -33,7 +34,7 @@
 #include "vm/Runtime.h"        // JSAtomState
 #include "vm/SavedFrame.h"  // js::SavedFrame
 
-#include "builtin/HandlerFunction-inl.h"                  // js::NewHandler
+#include "builtin/streams/HandlerFunction-inl.h"          // js::NewHandler
 #include "builtin/streams/MiscellaneousOperations-inl.h"  // js::PromiseCall
 #include "vm/Compartment-inl.h"  // JS::Compartment::wrap, js::UnwrapCalleeSlot
 #include "vm/JSContext-inl.h"    // JSContext::check
@@ -127,7 +128,7 @@ static bool ReadableStreamControllerShouldCallPull(
  * Streams spec, 3.13.3.
  *      ReadableByteStreamControllerCallPullIfNeeded ( controller )
  */
-[[nodiscard]] bool js::ReadableStreamControllerCallPullIfNeeded(
+MOZ_MUST_USE bool js::ReadableStreamControllerCallPullIfNeeded(
     JSContext* cx, Handle<ReadableStreamController*> unwrappedController) {
   // Step 1: Let shouldPull be
   //         ! ReadableStreamDefaultControllerShouldCallPull(controller).
@@ -329,7 +330,7 @@ void js::ReadableStreamControllerClearAlgorithms(
 /**
  * Streams spec, 3.10.5. ReadableStreamDefaultControllerClose ( controller )
  */
-[[nodiscard]] bool js::ReadableStreamDefaultControllerClose(
+MOZ_MUST_USE bool js::ReadableStreamDefaultControllerClose(
     JSContext* cx,
     Handle<ReadableStreamDefaultController*> unwrappedController) {
   // Step 1: Let stream be controller.[[controlledReadableStream]].
@@ -362,7 +363,7 @@ void js::ReadableStreamControllerClearAlgorithms(
  * Streams spec, 3.10.6.
  *      ReadableStreamDefaultControllerEnqueue ( controller, chunk )
  */
-[[nodiscard]] bool js::ReadableStreamDefaultControllerEnqueue(
+MOZ_MUST_USE bool js::ReadableStreamDefaultControllerEnqueue(
     JSContext* cx, Handle<ReadableStreamDefaultController*> unwrappedController,
     Handle<Value> chunk) {
   AssertSameCompartment(cx, chunk);
@@ -445,7 +446,7 @@ void js::ReadableStreamControllerClearAlgorithms(
  * Streams spec, 3.10.7. ReadableStreamDefaultControllerError ( controller, e )
  * Streams spec, 3.13.11. ReadableByteStreamControllerError ( controller, e )
  */
-[[nodiscard]] bool js::ReadableStreamControllerError(
+MOZ_MUST_USE bool js::ReadableStreamControllerError(
     JSContext* cx, Handle<ReadableStreamController*> unwrappedController,
     Handle<Value> e) {
   MOZ_ASSERT(!cx->isExceptionPending());
@@ -491,7 +492,7 @@ void js::ReadableStreamControllerClearAlgorithms(
  * Streams spec 3.13.14.
  *      ReadableByteStreamControllerGetDesiredSize ( controller )
  */
-[[nodiscard]] double js::ReadableStreamControllerGetDesiredSizeUnchecked(
+MOZ_MUST_USE double js::ReadableStreamControllerGetDesiredSizeUnchecked(
     ReadableStreamController* controller) {
   // Steps 1-4 done at callsites, so only assert that they have been done.
 #if DEBUG
@@ -538,7 +539,7 @@ void js::ReadableStreamControllerClearAlgorithms(
  * Note: All arguments must be same-compartment with cx. ReadableStream
  * controllers are always created in the same compartment as the stream.
  */
-[[nodiscard]] bool js::SetUpReadableStreamDefaultController(
+MOZ_MUST_USE bool js::SetUpReadableStreamDefaultController(
     JSContext* cx, Handle<ReadableStream*> stream,
     SourceAlgorithms sourceAlgorithms, Handle<Value> underlyingSource,
     Handle<Value> pullMethod, Handle<Value> cancelMethod, double highWaterMark,
@@ -636,7 +637,7 @@ void js::ReadableStreamControllerClearAlgorithms(
  *      SetUpReadableStreamDefaultControllerFromUnderlyingSource( stream,
  *          underlyingSource, highWaterMark, sizeAlgorithm )
  */
-[[nodiscard]] bool js::SetUpReadableStreamDefaultControllerFromUnderlyingSource(
+MOZ_MUST_USE bool js::SetUpReadableStreamDefaultControllerFromUnderlyingSource(
     JSContext* cx, Handle<ReadableStream*> stream,
     Handle<Value> underlyingSource, double highWaterMark,
     Handle<Value> sizeAlgorithm) {

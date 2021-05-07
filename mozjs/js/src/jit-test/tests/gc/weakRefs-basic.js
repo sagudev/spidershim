@@ -1,3 +1,5 @@
+// |jit-test| --enable-weak-refs
+
 assertEq('WeakRef' in this, true);
 
 function checkPropertyDescriptor(obj, property, writable, enumerable,

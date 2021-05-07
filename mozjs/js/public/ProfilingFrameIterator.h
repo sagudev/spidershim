@@ -7,14 +7,12 @@
 #ifndef js_ProfilingFrameIterator_h
 #define js_ProfilingFrameIterator_h
 
-#include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 
-#include "jstypes.h"
-
-#include "js/GCAnnotations.h"
+#include "js/GCAPI.h"
 #include "js/TypeDecls.h"
+#include "js/Utility.h"
 
 namespace js {
 class Activation;

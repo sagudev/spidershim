@@ -115,12 +115,12 @@ related build flows:
 
 #. Get the localization repository, if needed
 #. Run l10n-merge with a prior clobber of the merge dir
-#. Copy l10n files to ``dist``, with minor differences here between ``l10n-%`` and ``chrome-%``
+#. Copy l10n files to ``dist``, with minor differences here between ``libs-%`` and ``chrome-%``
 #. Repackage and package
 
 Details on l10n-merge are described in its own section below.
 The copying of files is mainly controlled by ``jar.mn``, in the few source
-directories that include localizable files. ``l10n-%`` is used for repacks,
+directories that include localizable files. ``libs-%`` is used for repacks,
 ``chrome-%`` for multi-locale packages. The repackaging is dedicated
 Python code in ``toolkit/mozapps/installer/l10n-repack.py``, using an existing
 package. It strips existing ``chrome`` l10n resources, and adds localizations
@@ -165,7 +165,7 @@ The first thing to note is that only files beneath :file:`locales/en-US` are
 exposed to localizers. The second thing to note is that only a few directories
 are exposed. Which directories are exposed is defined in files called
 ``l10n.ini``, which are at a
-`few places <https://searchfox.org/mozilla-central/search?q=path%3Al10n.ini&redirect=true>`_
+`few places <https://dxr.mozilla.org/mozilla-central/search?q=path%3Al10n.ini&redirect=true>`_
 in the source code.
 
 An example looks like this
@@ -328,4 +328,5 @@ We host a mercurial repository per locale. All of our
 localizations can be found on https://hg.mozilla.org/l10n-central/.
 
 You can search inside our localized files on
-`Transvision <https://transvision.mozfr.org/>`_.
+`Transvision <https://transvision.mozfr.org/>`_ and
+https://dxr.mozilla.org/l10n-central/source/.

@@ -4,21 +4,15 @@
 /*---
 esid: sec-atomics.wait
 description: >
-  A null value for bufferData (detached) throws a TypeError
+  A null value for bufferData throws a TypeError
 info: |
   Atomics.wait( typedArray, index, value, timeout )
 
-  Let buffer be ? ValidateIntegerTypedArray(typedArray, true).
-  ...
-
-    Let buffer be ? ValidateTypedArray(typedArray).
+  1.Let buffer be ? ValidateSharedIntegerTypedArray(typedArray, true).
     ...
-
-      If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
-      ...
-
-        If arrayBuffer.[[ArrayBufferData]] is null, return true.
-
+      9.If IsSharedArrayBuffer(buffer) is false, throw a TypeError exception.
+        ...
+          3.If bufferData is null, return false.
 includes: [detachArrayBuffer.js]
 features: [ArrayBuffer, Atomics, TypedArray]
 ---*/

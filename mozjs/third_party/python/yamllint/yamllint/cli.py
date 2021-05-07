@@ -17,7 +17,6 @@
 from __future__ import print_function
 
 import argparse
-import io
 import os
 import platform
 import sys
@@ -177,7 +176,7 @@ def run(argv=None):
     for file in find_files_recursively(args.files, conf):
         filepath = file[2:] if file.startswith('./') else file
         try:
-            with io.open(file, newline='') as f:
+            with open(file) as f:
                 problems = linter.run(f, conf, filepath)
         except EnvironmentError as e:
             print(e, file=sys.stderr)

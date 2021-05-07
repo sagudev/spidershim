@@ -75,7 +75,7 @@
             "description": "The data can be defined within an object, or through a path to where the data can be found"
         }
     },
-    "id": "https://searchfox.org/mozilla-central/source/python/mozperftest/mozperftest/schemas/intermediate-results-schema.json",
+    "id": "https://dxr.mozilla.org/mozilla-central/source/python/mozperftest/mozperftest/schemas/results-schema.json",
     "allOf": [
         {"$ref": "#/definitions/perfherder-options-schema"},
         {
@@ -88,10 +88,6 @@
                 "transformer-options": {
                     "type": "object",
                     "title": "Options used in the transformer"
-                },
-                "framework": {
-                    "title": "Framework that produced the data",
-                    "type": "object"
                 },
                 "extraOptions": {
                     "type": "array",

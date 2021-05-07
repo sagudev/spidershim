@@ -9,8 +9,6 @@
 
 #include "vm/Caches.h"
 
-#include <iterator>
-
 #include "gc/Allocator.h"
 #include "gc/GCProbes.h"
 #include "vm/Probes.h"
@@ -44,32 +42,45 @@ inline void NewObjectCache::fillGlobal(EntryIndex entry, const JSClass* clasp,
 inline NativeObject* NewObjectCache::newObjectFromHit(JSContext* cx,
                                                       EntryIndex entryIndex,
                                                       gc::InitialHeap heap) {
-  MOZ_ASSERT(unsigned(entryIndex) < std::size(entries));
+  MOZ_ASSERT(unsigned(entryIndex) < mozilla::ArrayLength(entries));
   Entry* entry = &entries[entryIndex];
 
   NativeObject* templateObj =
       reinterpret_cast<NativeObject*>(&entry->templateObject);
 
-  // If we did the lookup based on the proto we might have a shape/object from a
+  // Do an end run around JSObject::group() to avoid doing AutoUnprotectCell
+  // on the templateObj, which is not a GC thing and can't use
+  // runtimeFromAnyThread.
+  ObjectGroup* group = templateObj->groupRaw();
+
+  // If we did the lookup based on the proto we might have a group/object from a
   // different (same-compartment) realm, so we have to do a realm check.
-  if (templateObj->shape()->realm() != cx->realm()) {
+  if (group->realm() != cx->realm()) {
     return nullptr;
+  }
+
+  MOZ_ASSERT(!group->hasUnanalyzedPreliminaryObjects());
+
+  {
+    AutoSweepObjectGroup sweepGroup(group);
+    if (group->shouldPreTenure(sweepGroup)) {
+      heap = gc::TenuredHeap;
+    }
   }
 
   if (cx->runtime()->gc.upcomingZealousGC()) {
     return nullptr;
   }
 
-  const JSClass* clasp = templateObj->getClass();
   NativeObject* obj = static_cast<NativeObject*>(AllocateObject<NoGC>(
-      cx, entry->kind, /* nDynamicSlots = */ 0, heap, clasp));
+      cx, entry->kind, /* nDynamicSlots = */ 0, heap, group->clasp()));
   if (!obj) {
     return nullptr;
   }
 
   copyCachedToObject(obj, templateObj, entry->kind);
 
-  if (clasp->shouldDelayMetadataBuilder()) {
+  if (group->clasp()->shouldDelayMetadataBuilder()) {
     cx->realm()->setObjectPendingMetadata(cx, obj);
   } else {
     obj = static_cast<NativeObject*>(SetNewObjectMetadata(cx, obj));

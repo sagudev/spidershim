@@ -11,9 +11,7 @@
 
 #include <stdint.h>
 
-#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
 #include "js/TypeDecls.h"
-#include "vm/SharedStencil.h"  // GCThingIndex
 
 namespace js {
 namespace frontend {
@@ -126,7 +124,10 @@ class MOZ_STACK_CLASS PropOpEmitter {
   ObjKind objKind_;
 
   // The index for the property name's atom.
-  GCThingIndex propAtomIndex_;
+  uint32_t propAtomIndex_ = 0;
+
+  // Whether the property name is `length` or not.
+  bool isLength_ = false;
 
 #ifdef DEBUG
   // The state of this emitter.
@@ -200,54 +201,52 @@ class MOZ_STACK_CLASS PropOpEmitter {
   PropOpEmitter(BytecodeEmitter* bce, Kind kind, ObjKind objKind);
 
  private:
-  [[nodiscard]] bool isCall() const { return kind_ == Kind::Call; }
+  MOZ_MUST_USE bool isCall() const { return kind_ == Kind::Call; }
 
-  [[nodiscard]] bool isSuper() const { return objKind_ == ObjKind::Super; }
+  MOZ_MUST_USE bool isSuper() const { return objKind_ == ObjKind::Super; }
 
-  [[nodiscard]] bool isSimpleAssignment() const {
+  MOZ_MUST_USE bool isSimpleAssignment() const {
     return kind_ == Kind::SimpleAssignment;
   }
 
-  [[nodiscard]] bool isPropInit() const { return kind_ == Kind::PropInit; }
+  MOZ_MUST_USE bool isPropInit() const { return kind_ == Kind::PropInit; }
 
-  [[nodiscard]] bool isDelete() const { return kind_ == Kind::Delete; }
+  MOZ_MUST_USE bool isDelete() const { return kind_ == Kind::Delete; }
 
-  [[nodiscard]] bool isCompoundAssignment() const {
+  MOZ_MUST_USE bool isCompoundAssignment() const {
     return kind_ == Kind::CompoundAssignment;
   }
 
-  [[nodiscard]] bool isIncDec() const {
-    return isPostIncDec() || isPreIncDec();
-  }
+  MOZ_MUST_USE bool isIncDec() const { return isPostIncDec() || isPreIncDec(); }
 
-  [[nodiscard]] bool isPostIncDec() const {
+  MOZ_MUST_USE bool isPostIncDec() const {
     return kind_ == Kind::PostIncrement || kind_ == Kind::PostDecrement;
   }
 
-  [[nodiscard]] bool isPreIncDec() const {
+  MOZ_MUST_USE bool isPreIncDec() const {
     return kind_ == Kind::PreIncrement || kind_ == Kind::PreDecrement;
   }
 
-  [[nodiscard]] bool isInc() const {
+  MOZ_MUST_USE bool isInc() const {
     return kind_ == Kind::PostIncrement || kind_ == Kind::PreIncrement;
   }
 
-  [[nodiscard]] bool prepareAtomIndex(TaggedParserAtomIndex prop);
+  MOZ_MUST_USE bool prepareAtomIndex(JSAtom* prop);
 
  public:
-  [[nodiscard]] bool prepareForObj();
+  MOZ_MUST_USE bool prepareForObj();
 
-  [[nodiscard]] bool emitGet(TaggedParserAtomIndex prop);
+  MOZ_MUST_USE bool emitGet(JSAtom* prop);
 
-  [[nodiscard]] bool prepareForRhs();
-  [[nodiscard]] bool skipObjAndRhs();
+  MOZ_MUST_USE bool prepareForRhs();
+  MOZ_MUST_USE bool skipObjAndRhs();
 
-  [[nodiscard]] bool emitDelete(TaggedParserAtomIndex prop);
+  MOZ_MUST_USE bool emitDelete(JSAtom* prop);
 
   // `prop` can be nullptr for CompoundAssignment.
-  [[nodiscard]] bool emitAssignment(TaggedParserAtomIndex prop);
+  MOZ_MUST_USE bool emitAssignment(JSAtom* prop);
 
-  [[nodiscard]] bool emitIncDec(TaggedParserAtomIndex prop);
+  MOZ_MUST_USE bool emitIncDec(JSAtom* prop);
 };
 
 } /* namespace frontend */

@@ -18,7 +18,7 @@ impl<I> MinLen<I>
 where
     I: IndexedParallelIterator,
 {
-    /// Creates a new `MinLen` iterator.
+    /// Create a new `MinLen` iterator.
     pub(super) fn new(base: I, min: usize) -> Self {
         MinLen { base, min }
     }
@@ -152,7 +152,7 @@ impl<I> MaxLen<I>
 where
     I: IndexedParallelIterator,
 {
-    /// Creates a new `MaxLen` iterator.
+    /// Create a new `MaxLen` iterator.
     pub(super) fn new(base: I, max: usize) -> Self {
         MaxLen { base, max }
     }

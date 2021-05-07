@@ -6,11 +6,9 @@
 
 #include <utility>
 
-#include "mozilla/IntegerRange.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
 
-using mozilla::IntegerRange;
 using mozilla::MakeUnique;
 using mozilla::UniquePtr;
 using mozilla::Vector;
@@ -27,7 +25,6 @@ struct mozilla::detail::VectorTesting {
   static void testInsert();
   static void testErase();
   static void testShrinkStorageToFit();
-  static void testAppend();
 };
 
 void mozilla::detail::VectorTesting::testReserved() {
@@ -665,26 +662,6 @@ void mozilla::detail::VectorTesting::testShrinkStorageToFit() {
   }
 }
 
-void mozilla::detail::VectorTesting::testAppend() {
-  // Test moving append/appendAll with a move-only type
-  Vector<UniquePtr<int>> bv;
-  for (const int val : IntegerRange<int>(0, 3)) {
-    MOZ_RELEASE_ASSERT(bv.append(MakeUnique<int>(val)));
-  }
-
-  Vector<UniquePtr<int>> otherbv;
-  for (const int val : IntegerRange<int>(3, 8)) {
-    MOZ_RELEASE_ASSERT(otherbv.append(MakeUnique<int>(val)));
-  }
-  MOZ_RELEASE_ASSERT(bv.appendAll(std::move(otherbv)));
-
-  MOZ_RELEASE_ASSERT(otherbv.length() == 0);
-  MOZ_RELEASE_ASSERT(bv.length() == 8);
-  for (const int val : IntegerRange<int>(0, 8)) {
-    MOZ_RELEASE_ASSERT(*bv[val] == val);
-  }
-}
-
 // Declare but leave (permanently) incomplete.
 struct Incomplete;
 
@@ -800,6 +777,5 @@ int main() {
   VectorTesting::testInsert();
   VectorTesting::testErase();
   VectorTesting::testShrinkStorageToFit();
-  VectorTesting::testAppend();
   TestVectorBeginNonNull();
 }

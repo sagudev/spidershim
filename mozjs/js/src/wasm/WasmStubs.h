@@ -56,7 +56,6 @@ class ABIResult {
       case ValType::F64:
         MOZ_ASSERT(loc_ == Location::Fpr);
         break;
-      case ValType::Rtt:
       case ValType::Ref:
         MOZ_ASSERT(loc_ == Location::Gpr);
         break;
@@ -257,15 +256,13 @@ extern bool GenerateStubs(const ModuleEnvironment& env,
                           const FuncExportVector& exports, CompiledCode* code);
 
 extern bool GenerateEntryStubs(jit::MacroAssembler& masm,
-                               size_t funcExportIndex, const FuncExport& fe,
+                               size_t funcExportIndex,
+                               const FuncExport& funcExport,
                                const Maybe<jit::ImmPtr>& callee, bool isAsmJS,
                                CodeRangeVector* codeRanges);
 
 extern void GenerateTrapExitMachineState(jit::MachineState* machine,
                                          size_t* numWords);
-
-extern bool GenerateProvisionalLazyJitEntryStub(MacroAssembler& masm,
-                                                Offsets* offsets);
 
 // A value that is written into the trap exit frame, which is useful for
 // cross-checking during garbage collection.

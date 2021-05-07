@@ -16,30 +16,38 @@
 namespace js {
 namespace jit {
 
-class ICCacheIRStub;
 class ICFallbackStub;
+class ICStub;
 
-ICCacheIRStub* AttachBaselineCacheIRStub(JSContext* cx,
-                                         const CacheIRWriter& writer,
-                                         CacheKind kind, JSScript* outerScript,
-                                         ICScript* icScript,
-                                         ICFallbackStub* stub, bool* attached);
+enum class BaselineCacheIRStubKind { Regular, Monitored, Updated };
+
+ICStub* AttachBaselineCacheIRStub(JSContext* cx, const CacheIRWriter& writer,
+                                  CacheKind kind,
+                                  BaselineCacheIRStubKind stubKind,
+                                  JSScript* outerScript, ICFallbackStub* stub,
+                                  bool* attached);
 
 // BaselineCacheIRCompiler compiles CacheIR to BaselineIC native code.
 class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
   bool makesGCCalls_;
+  BaselineCacheIRStubKind kind_;
 
   void tailCallVMInternal(MacroAssembler& masm, TailCallVMFunctionId id);
 
   template <typename Fn, Fn fn>
   void tailCallVM(MacroAssembler& masm);
 
-  [[nodiscard]] bool emitStoreSlotShared(bool isFixed, ObjOperandId objId,
-                                         uint32_t offsetOffset,
-                                         ValOperandId rhsId);
-  [[nodiscard]] bool emitAddAndStoreSlotShared(
+  MOZ_MUST_USE bool callTypeUpdateIC(Register obj, ValueOperand val,
+                                     Register scratch,
+                                     LiveGeneralRegisterSet saveRegs);
+
+  MOZ_MUST_USE bool emitStoreSlotShared(bool isFixed, ObjOperandId objId,
+                                        uint32_t offsetOffset,
+                                        ValOperandId rhsId);
+  MOZ_MUST_USE bool emitAddAndStoreSlotShared(
       CacheOp op, ObjOperandId objId, uint32_t offsetOffset, ValOperandId rhsId,
-      uint32_t newShapeOffset, mozilla::Maybe<uint32_t> numNewSlotsOffset);
+      bool changeGroup, uint32_t newGroupOffset, uint32_t newShapeOffset,
+      mozilla::Maybe<uint32_t> numNewSlotsOffset);
 
   bool updateArgc(CallFlags flags, Register argcReg, Register scratch);
   void loadStackObject(ArgumentKind kind, CallFlags flags, size_t stackPushed,
@@ -54,15 +62,10 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
   void pushFunCallArguments(Register argcReg, Register calleeReg,
                             Register scratch, Register scratch2,
                             bool isJitCall);
-  void pushFunApplyMagicArgs(Register argcReg, Register calleeReg,
-                             Register scratch, Register scratch2,
-                             bool isJitCall);
-  void pushFunApplyArgsObj(Register argcReg, Register calleeReg,
-                           Register scratch, Register scratch2, bool isJitCall);
+  void pushFunApplyArgs(Register argcReg, Register calleeReg, Register scratch,
+                        Register scratch2, bool isJitCall);
   void createThis(Register argcReg, Register calleeReg, Register scratch,
                   CallFlags flags);
-  template <typename T>
-  void storeThis(const T& newThis, Register argcReg, CallFlags flags);
   void updateReturnValue();
 
   enum class NativeCallType { Native, ClassHook };
@@ -71,26 +74,22 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
                             mozilla::Maybe<bool> ignoresReturnValue,
                             mozilla::Maybe<uint32_t> targetOffset);
 
-  enum class StringCode { CodeUnit, CodePoint };
-  bool emitStringFromCodeResult(Int32OperandId codeId, StringCode stringCode);
+  MOZ_MUST_USE bool emitCallScriptedGetterResultShared(
+      TypedOrValueRegister receiver, uint32_t getterOffset, bool sameRealm);
 
-  bool emitCallScriptedGetterShared(ValOperandId receiverId,
-                                    uint32_t getterOffset, bool sameRealm,
-                                    uint32_t nargsAndFlagsOffset,
-                                    mozilla::Maybe<uint32_t> icScriptOffset);
-  bool emitCallScriptedSetterShared(ObjOperandId receiverId,
-                                    uint32_t setterOffset, ValOperandId rhsId,
-                                    bool sameRealm,
-                                    uint32_t nargsAndFlagsOffset,
-                                    mozilla::Maybe<uint32_t> icScriptOffset);
+  template <typename T, typename CallVM>
+  MOZ_MUST_USE bool emitCallNativeGetterResultShared(T receiver,
+                                                     uint32_t getterOffset,
+                                                     const CallVM& emitCallVM);
 
  public:
   friend class AutoStubFrame;
 
   BaselineCacheIRCompiler(JSContext* cx, const CacheIRWriter& writer,
-                          uint32_t stubDataOffset);
+                          uint32_t stubDataOffset,
+                          BaselineCacheIRStubKind stubKind);
 
-  [[nodiscard]] bool init(CacheKind kind);
+  MOZ_MUST_USE bool init(CacheKind kind);
 
   template <typename Fn, Fn fn>
   void callVM(MacroAssembler& masm);

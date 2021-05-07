@@ -15,12 +15,12 @@
 #include "gc/GCLock.h"
 #include "gc/GCProbes.h"
 #include "gc/Nursery.h"
+#include "jit/JitRealm.h"
 #include "threading/CpuCount.h"
 #include "util/Poison.h"
 #include "vm/JSContext.h"
 #include "vm/Runtime.h"
 #include "vm/StringType.h"
-#include "vm/TraceLogging.h"
 
 #include "gc/ArenaList-inl.h"
 #include "gc/Heap-inl.h"
@@ -46,7 +46,7 @@ JSObject* js::AllocateObject(JSContext* cx, AllocKind kind,
       sizeof(JSObject_Slots0) >= MinCellSize,
       "All allocations must be at least the allocator-imposed minimum size.");
 
-  MOZ_ASSERT_IF(nDynamicSlots != 0, clasp->isNativeObject());
+  MOZ_ASSERT_IF(nDynamicSlots != 0, clasp->isNative());
 
   // We cannot trigger GC or make runtime assertions when nursery allocation
   // is suppressed, either explicitly or because we are off-thread.
@@ -127,31 +127,28 @@ template <AllowGC allowGC>
 JSObject* GCRuntime::tryNewTenuredObject(JSContext* cx, AllocKind kind,
                                          size_t thingSize,
                                          size_t nDynamicSlots) {
-  ObjectSlots* slotsHeader = nullptr;
+  HeapSlot* slots = nullptr;
   if (nDynamicSlots) {
-    HeapSlot* allocation =
-        cx->maybe_pod_malloc<HeapSlot>(ObjectSlots::allocCount(nDynamicSlots));
-    if (MOZ_UNLIKELY(!allocation)) {
+    slots = cx->maybe_pod_malloc<HeapSlot>(nDynamicSlots);
+    if (MOZ_UNLIKELY(!slots)) {
       if (allowGC) {
         ReportOutOfMemory(cx);
       }
       return nullptr;
     }
-
-    slotsHeader = new (allocation) ObjectSlots(nDynamicSlots, 0);
-    Debug_SetSlotRangeToCrashOnTouch(slotsHeader->slots(), nDynamicSlots);
+    Debug_SetSlotRangeToCrashOnTouch(slots, nDynamicSlots);
   }
 
   JSObject* obj = tryNewTenuredThing<JSObject, allowGC>(cx, kind, thingSize);
 
   if (obj) {
     if (nDynamicSlots) {
-      static_cast<NativeObject*>(obj)->initSlots(slotsHeader->slots());
-      AddCellMemory(obj, ObjectSlots::allocSize(nDynamicSlots),
+      static_cast<NativeObject*>(obj)->initSlots(slots);
+      AddCellMemory(obj, nDynamicSlots * sizeof(HeapSlot),
                     MemoryUse::ObjectSlots);
     }
   } else {
-    js_free(slotsHeader);
+    js_free(slots);
   }
 
   return obj;
@@ -213,7 +210,7 @@ StringAllocT* js::AllocateStringImpl(JSContext* cx, InitialHeap heap) {
 
   if (cx->nursery().isEnabled() && heap != TenuredHeap &&
       cx->nursery().canAllocateStrings() && cx->zone()->allocNurseryStrings) {
-    auto* str = static_cast<StringAllocT*>(
+    auto str = static_cast<StringAllocT*>(
         rt->gc.tryNewNurseryString<allowGC>(cx, size, kind));
     if (str) {
       return str;
@@ -284,7 +281,7 @@ JS::BigInt* js::AllocateBigInt(JSContext* cx, InitialHeap heap) {
 
   if (cx->nursery().isEnabled() && heap != TenuredHeap &&
       cx->nursery().canAllocateBigInts() && cx->zone()->allocNurseryBigInts) {
-    auto* bi = static_cast<JS::BigInt*>(
+    auto bi = static_cast<JS::BigInt*>(
         rt->gc.tryNewNurseryBigInt<allowGC>(cx, size, kind));
     if (bi) {
       return bi;
@@ -349,7 +346,7 @@ template <typename T, AllowGC allowGC>
 T* GCRuntime::tryNewTenuredThing(JSContext* cx, AllocKind kind,
                                  size_t thingSize) {
   // Bump allocate in the arena's current free-list span.
-  auto* t = reinterpret_cast<T*>(cx->freeLists().allocate(kind));
+  T* t = reinterpret_cast<T*>(cx->freeLists().allocate(kind));
   if (MOZ_UNLIKELY(!t)) {
     // Get the next available free list and allocate out of it. This may
     // acquire a new arena, which will lock the chunk list. If there are no
@@ -465,7 +462,7 @@ void GCRuntime::checkIncrementalZoneState(JSContext* cx, T* t) {
 
   TenuredCell* cell = &t->asTenured();
   Zone* zone = cell->zone();
-  if (zone->isGCMarkingOrSweeping()) {
+  if (zone->isGCMarking() || zone->isGCSweeping()) {
     MOZ_ASSERT(cell->isMarkedBlack());
   } else {
     MOZ_ASSERT(!cell->isMarkedAny());
@@ -558,7 +555,8 @@ TenuredCell* ArenaLists::refillFreeListAndAllocate(
     maybeLock.emplace(rt);
   }
 
-  Arena* arena = arenaList(thingKind).takeNextArena();
+  ArenaList& al = arenaList(thingKind);
+  Arena* arena = al.takeNextArena();
   if (arena) {
     // Empty arenas should be immediately freed.
     MOZ_ASSERT(!arena->isEmpty());
@@ -572,30 +570,23 @@ TenuredCell* ArenaLists::refillFreeListAndAllocate(
     maybeLock.emplace(rt);
   }
 
-  TenuredChunk* chunk = rt->gc.pickChunk(maybeLock.ref());
+  Chunk* chunk = rt->gc.pickChunk(maybeLock.ref());
   if (!chunk) {
     return nullptr;
   }
 
   // Although our chunk should definitely have enough space for another arena,
-  // there are other valid reasons why TenuredChunk::allocateArena() may fail.
+  // there are other valid reasons why Chunk::allocateArena() may fail.
   arena = rt->gc.allocateArena(chunk, zone_, thingKind, checkThresholds,
                                maybeLock.ref());
   if (!arena) {
     return nullptr;
   }
 
-  addNewArena(arena, thingKind);
-
-  return freeLists.setArenaAndAllocate(arena, thingKind);
-}
-
-inline void ArenaLists::addNewArena(Arena* arena, AllocKind thingKind) {
-  ArenaList& al = zone_->isGCMarking() ? newArenasInMarkPhase(thingKind)
-                                       : arenaList(thingKind);
-
   MOZ_ASSERT(al.isCursorAtEnd());
   al.insertBeforeCursor(arena);
+
+  return freeLists.setArenaAndAllocate(arena, thingKind);
 }
 
 inline TenuredCell* FreeLists::setArenaAndAllocate(Arena* arena,
@@ -610,8 +601,7 @@ inline TenuredCell* FreeLists::setArenaAndAllocate(Arena* arena,
   FreeSpan* span = arena->getFirstFreeSpan();
   freeLists_[kind] = span;
 
-  Zone* zone = arena->zone;
-  if (MOZ_UNLIKELY(zone->isGCMarkingOrSweeping())) {
+  if (MOZ_UNLIKELY(arena->zone->wasGCStarted())) {
     arena->arenaAllocatedDuringGC();
   }
 
@@ -626,10 +616,12 @@ void Arena::arenaAllocatedDuringGC() {
   // incremental GC will be marked black by pre-marking all free cells in the
   // arena we are about to allocate from.
 
-  MOZ_ASSERT(zone->isGCMarkingOrSweeping());
-  for (ArenaFreeCellIter cell(this); !cell.done(); cell.next()) {
-    MOZ_ASSERT(!cell->isMarkedAny());
-    cell->markBlack();
+  if (zone->needsIncrementalBarrier() || zone->isGCSweeping()) {
+    for (ArenaFreeCellIter iter(this); !iter.done(); iter.next()) {
+      TenuredCell* cell = iter.getCell();
+      MOZ_ASSERT(!cell->isMarkedAny());
+      cell->markBlack();
+    }
   }
 }
 
@@ -653,26 +645,7 @@ void ArenaLists::setParallelAllocEnabled(bool enabled) {
   }
 }
 
-void GCRuntime::setParallelUnmarkEnabled(bool enabled) {
-  // This can only be changed on the main thread otherwise we could race.
-  MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
-  MOZ_ASSERT(JS::RuntimeHeapIsMajorCollecting());
-  for (GCZonesIter zone(this); !zone.done(); zone.next()) {
-    zone->arenas.setParallelUnmarkEnabled(enabled);
-  }
-}
-
-void ArenaLists::setParallelUnmarkEnabled(bool enabled) {
-  static const ConcurrentUse states[2] = {ConcurrentUse::None,
-                                          ConcurrentUse::ParallelUnmark};
-
-  for (auto kind : AllAllocKinds()) {
-    MOZ_ASSERT(concurrentUse(kind) == states[!enabled]);
-    concurrentUse(kind) = states[enabled];
-  }
-}
-
-// ///////////  TenuredChunk -> Arena Allocator  ///////////////////////////////
+// ///////////  Chunk -> Arena Allocator  //////////////////////////////////////
 
 bool GCRuntime::wantBackgroundAllocation(const AutoLockGC& lock) const {
   // To minimize memory waste, we do not want to run the background chunk
@@ -683,8 +656,7 @@ bool GCRuntime::wantBackgroundAllocation(const AutoLockGC& lock) const {
          (fullChunks(lock).count() + availableChunks(lock).count()) >= 4;
 }
 
-Arena* GCRuntime::allocateArena(TenuredChunk* chunk, Zone* zone,
-                                AllocKind thingKind,
+Arena* GCRuntime::allocateArena(Chunk* chunk, Zone* zone, AllocKind thingKind,
                                 ShouldCheckThresholds checkThresholds,
                                 const AutoLockGC& lock) {
   MOZ_ASSERT(chunk->hasAvailableArenas());
@@ -699,15 +671,14 @@ Arena* GCRuntime::allocateArena(TenuredChunk* chunk, Zone* zone,
 
   // Trigger an incremental slice if needed.
   if (checkThresholds != ShouldCheckThresholds::DontCheckThresholds) {
-    maybeTriggerGCAfterAlloc(zone);
+    maybeAllocTriggerZoneGC(zone);
   }
 
   return arena;
 }
 
-Arena* TenuredChunk::allocateArena(GCRuntime* gc, Zone* zone,
-                                   AllocKind thingKind,
-                                   const AutoLockGC& lock) {
+Arena* Chunk::allocateArena(GCRuntime* gc, Zone* zone, AllocKind thingKind,
+                            const AutoLockGC& lock) {
   Arena* arena = info.numArenasFreeCommitted > 0 ? fetchNextFreeArena(gc)
                                                  : fetchNextDecommittedArena();
   arena->init(zone, thingKind, lock);
@@ -715,12 +686,12 @@ Arena* TenuredChunk::allocateArena(GCRuntime* gc, Zone* zone,
   return arena;
 }
 
-inline void GCRuntime::updateOnFreeArenaAlloc(const TenuredChunkInfo& info) {
+inline void GCRuntime::updateOnFreeArenaAlloc(const ChunkInfo& info) {
   MOZ_ASSERT(info.numArenasFreeCommitted <= numArenasFreeCommitted);
   --numArenasFreeCommitted;
 }
 
-Arena* TenuredChunk::fetchNextFreeArena(GCRuntime* gc) {
+Arena* Chunk::fetchNextFreeArena(GCRuntime* gc) {
   MOZ_ASSERT(info.numArenasFreeCommitted > 0);
   MOZ_ASSERT(info.numArenasFreeCommitted <= info.numArenasFree);
 
@@ -733,19 +704,17 @@ Arena* TenuredChunk::fetchNextFreeArena(GCRuntime* gc) {
   return arena;
 }
 
-Arena* TenuredChunk::fetchNextDecommittedArena() {
+Arena* Chunk::fetchNextDecommittedArena() {
   MOZ_ASSERT(info.numArenasFreeCommitted == 0);
   MOZ_ASSERT(info.numArenasFree > 0);
 
   unsigned offset = findDecommittedArenaOffset();
   info.lastDecommittedArenaOffset = offset + 1;
   --info.numArenasFree;
-  decommittedArenas[offset] = false;
+  decommittedArenas.unset(offset);
 
   Arena* arena = &arenas[offset];
-  if (DecommitEnabled()) {
-    MarkPagesInUseSoft(arena, ArenaSize);
-  }
+  MarkPagesInUseSoft(arena, ArenaSize);
   arena->setAsNotAllocated();
 
   return arena;
@@ -757,27 +726,27 @@ Arena* TenuredChunk::fetchNextDecommittedArena() {
  * it to the most recently freed arena when we free, and forcing it to
  * the last alloc + 1 when we allocate.
  */
-uint32_t TenuredChunk::findDecommittedArenaOffset() {
+uint32_t Chunk::findDecommittedArenaOffset() {
   /* Note: lastFreeArenaOffset can be past the end of the list. */
   for (unsigned i = info.lastDecommittedArenaOffset; i < ArenasPerChunk; i++) {
-    if (decommittedArenas[i]) {
+    if (decommittedArenas.get(i)) {
       return i;
     }
   }
   for (unsigned i = 0; i < info.lastDecommittedArenaOffset; i++) {
-    if (decommittedArenas[i]) {
+    if (decommittedArenas.get(i)) {
       return i;
     }
   }
   MOZ_CRASH("No decommitted arenas found.");
 }
 
-// ///////////  System -> TenuredChunk Allocator  //////////////////////////////
+// ///////////  System -> Chunk Allocator  /////////////////////////////////////
 
-TenuredChunk* GCRuntime::getOrAllocChunk(AutoLockGCBgAlloc& lock) {
-  TenuredChunk* chunk = emptyChunks(lock).pop();
+Chunk* GCRuntime::getOrAllocChunk(AutoLockGCBgAlloc& lock) {
+  Chunk* chunk = emptyChunks(lock).pop();
   if (!chunk) {
-    chunk = TenuredChunk::allocate(this);
+    chunk = Chunk::allocate(this);
     if (!chunk) {
       return nullptr;
     }
@@ -791,18 +760,18 @@ TenuredChunk* GCRuntime::getOrAllocChunk(AutoLockGCBgAlloc& lock) {
   return chunk;
 }
 
-void GCRuntime::recycleChunk(TenuredChunk* chunk, const AutoLockGC& lock) {
-  AlwaysPoison(chunk, JS_FREED_CHUNK_PATTERN, sizeof(ChunkBase),
+void GCRuntime::recycleChunk(Chunk* chunk, const AutoLockGC& lock) {
+  AlwaysPoison(&chunk->trailer, JS_FREED_CHUNK_PATTERN, sizeof(ChunkTrailer),
                MemCheckKind::MakeNoAccess);
   emptyChunks(lock).push(chunk);
 }
 
-TenuredChunk* GCRuntime::pickChunk(AutoLockGCBgAlloc& lock) {
+Chunk* GCRuntime::pickChunk(AutoLockGCBgAlloc& lock) {
   if (availableChunks(lock).count()) {
     return availableChunks(lock).head();
   }
 
-  TenuredChunk* chunk = getOrAllocChunk(lock);
+  Chunk* chunk = getOrAllocChunk(lock);
   if (!chunk) {
     return nullptr;
   }
@@ -823,18 +792,16 @@ BackgroundAllocTask::BackgroundAllocTask(GCRuntime* gc, ChunkPool& pool)
       chunkPool_(pool),
       enabled_(CanUseExtraThreads() && GetCPUCount() >= 2) {}
 
-void BackgroundAllocTask::run(AutoLockHelperThreadState& lock) {
-  AutoUnlockHelperThreadState unlock(lock);
-
+void BackgroundAllocTask::run() {
   TraceLoggerThread* logger = TraceLoggerForCurrentThread();
   AutoTraceLog logAllocation(logger, TraceLogger_GCAllocation);
 
-  AutoLockGC gcLock(gc);
-  while (!isCancelled() && gc->wantBackgroundAllocation(gcLock)) {
-    TenuredChunk* chunk;
+  AutoLockGC lock(gc);
+  while (!cancel_ && gc->wantBackgroundAllocation(lock)) {
+    Chunk* chunk;
     {
-      AutoUnlockGC unlock(gcLock);
-      chunk = TenuredChunk::allocate(gc);
+      AutoUnlockGC unlock(lock);
+      chunk = Chunk::allocate(gc);
       if (!chunk) {
         break;
       }
@@ -845,17 +812,16 @@ void BackgroundAllocTask::run(AutoLockHelperThreadState& lock) {
 }
 
 /* static */
-TenuredChunk* TenuredChunk::allocate(GCRuntime* gc) {
-  void* chunk = MapAlignedPages(ChunkSize, ChunkSize);
+Chunk* Chunk::allocate(GCRuntime* gc) {
+  Chunk* chunk = static_cast<Chunk*>(MapAlignedPages(ChunkSize, ChunkSize));
   if (!chunk) {
     return nullptr;
   }
-
   gc->stats().count(gcstats::COUNT_NEW_CHUNK);
-  return static_cast<TenuredChunk*>(chunk);
+  return chunk;
 }
 
-void TenuredChunk::init(GCRuntime* gc) {
+void Chunk::init(GCRuntime* gc) {
   /* The chunk may still have some regions marked as no-access. */
   MOZ_MAKE_MEM_UNDEFINED(this, ChunkSize);
 
@@ -866,7 +832,11 @@ void TenuredChunk::init(GCRuntime* gc) {
   Poison(this, JS_FRESH_TENURED_PATTERN, ChunkSize,
          MemCheckKind::MakeUndefined);
 
-  new (this) TenuredChunk(gc->rt);
+  /*
+   * We clear the bitmap to guard against JS::GCThingIsMarkedGray being called
+   * on uninitialized data, which would happen before the first GC cycle.
+   */
+  bitmap.clear();
 
   /*
    * Decommit the arenas. We do this after poisoning so that if the OS does
@@ -874,18 +844,16 @@ void TenuredChunk::init(GCRuntime* gc) {
    */
   decommitAllArenas();
 
-#ifdef DEBUG
-  verify();
-#endif
+  /* Initialize the chunk info. */
+  info.init();
+  new (&trailer) ChunkTrailer(gc->rt);
 
   /* The rest of info fields are initialized in pickChunk. */
 }
 
-void TenuredChunk::decommitAllArenas() {
-  decommittedArenas.SetAll();
-  if (DecommitEnabled()) {
-    MarkPagesUnusedSoft(&arenas[0], ArenasPerChunk * ArenaSize);
-  }
+void Chunk::decommitAllArenas() {
+  decommittedArenas.clear(true);
+  MarkPagesUnusedSoft(&arenas[0], ArenasPerChunk * ArenaSize);
 
   info.freeArenasHead = nullptr;
   info.lastDecommittedArenaOffset = 0;

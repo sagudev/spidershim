@@ -11,45 +11,35 @@ info: |
   2. If Type(P) is String, then
     a. Let numericIndex be ! CanonicalNumericIndexString(P).
     b. If numericIndex is not undefined, then
-      i. Perform ? IntegerIndexedElementSet(O, numericIndex, V).
-      ii. Return true.
+      i. Return ? IntegerIndexedElementSet(O, numericIndex, V).
   ...
 
-  IntegerIndexedElementSet ( O, index, value )
+  9.4.5.9 IntegerIndexedElementSet ( O, index, value )
 
-  Assert: O is an Integer-Indexed exotic object.
-  If O.[[ContentType]] is BigInt, let numValue be ? ToBigInt(value).
-  Otherwise, let numValue be ? ToNumber(value).
-  Let buffer be O.[[ViewedArrayBuffer]].
-  If IsDetachedBuffer(buffer) is false and ! IsValidIntegerIndex(O, index) is true, then
-    Let offset be O.[[ByteOffset]].
-    Let arrayTypeName be the String value of O.[[TypedArrayName]].
-    Let elementSize be the Element Size value specified in Table 62 for arrayTypeName.
-    Let indexedPosition be (ℝ(index) × elementSize) + offset.
-    Let elementType be the Element Type value in Table 62 for arrayTypeName.
-    Perform SetValueInBuffer(buffer, indexedPosition, elementType, numValue, true, Unordered).
-  Return NormalCompletion(undefined).
-
+  ...
+  15. Perform SetValueInBuffer(buffer, indexedPosition, elementType, numValue).
+  16. Return true.
 includes: [testTypedArray.js]
-features: [align-detached-buffer-semantics-with-web-reality, Reflect, TypedArray]
+features: [Reflect, TypedArray]
 ---*/
 
-let proto = TypedArray.prototype;
-let throwDesc = {
+var proto = TypedArray.prototype;
+var throwDesc = {
   set: function() {
-    throw new Test262Error('OrdinarySet was called!');
+    throw new Test262Error("OrdinarySet was called! Ref: 9.1.9.1 3.b.i");
   }
 };
-
-Object.defineProperty(proto, '0', throwDesc);
-Object.defineProperty(proto, '1', throwDesc);
+Object.defineProperty(proto, "0", throwDesc);
+Object.defineProperty(proto, "1", throwDesc);
 
 testWithTypedArrayConstructors(function(TA) {
-  let sample = new TA(2);
-  assert.sameValue(Reflect.set(sample, '0', 1), true, 'Reflect.set(sample, "0", 1) must return true');
-  assert.sameValue(sample[0], 1, 'The value of sample[0] is 1');
-  assert.sameValue(Reflect.set(sample, '1', 42), true, 'Reflect.set(sample, "1", 42) must return true');
-  assert.sameValue(sample[1], 42, 'The value of sample[1] is 42');
+  var sample = new TA([42, 43]);
+
+  assert.sameValue(Reflect.set(sample, "0", 1), true, "sample[0]");
+  assert.sameValue(sample[0], 1, "sample[0] value is set");
+
+  assert.sameValue(Reflect.set(sample, "1", 42), true, "sample[1]");
+  assert.sameValue(sample[1], 42, "sample[1] value is set");
 });
 
 reportCompare(0, 0);

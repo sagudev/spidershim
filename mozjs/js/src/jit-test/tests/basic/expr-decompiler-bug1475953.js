@@ -1,4 +1,5 @@
 Object.defineProperty(this, "fuzzutils", { value:{} });
+setModuleResolveHook(function(module, specifier) {});
 try { evaluate(`
   var f = 396684;
   var src = "return f(" +Array(10*1000).join("0,")+"Math.atan2());";

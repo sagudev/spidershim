@@ -10,14 +10,14 @@ var throws = [
     {set: function() {}},
     {get: function() {}, set: function() {}},
 
-    {configurable: false},
+    {configurable: true},
     {enumerable: false},
     {writable: false},
 
-    {configurable: false, writable: true},
+    {configurable: true, writable: true},
     {enumerable: false, configurable: false},
 
-    {configurable: false, value: 15}
+    {configurable: true, value: 15}
 ];
 
 for (var desc of throws) {
@@ -26,13 +26,13 @@ for (var desc of throws) {
 }
 
 Object.defineProperty(obj, 0, {});
-Object.defineProperty(obj, 0, {configurable: true});
+Object.defineProperty(obj, 0, {configurable: false});
 Object.defineProperty(obj, 0, {enumerable: true});
 Object.defineProperty(obj, 0, {writable: true});
 
 assertEq(obj[0], 100);
 
-Object.defineProperty(obj, 0, {configurable: true, value: 15});
+Object.defineProperty(obj, 0, {configurable: false, value: 15});
 assertEq(obj[0], 15);
 Object.defineProperty(obj, 0, {enumerable: true, value: 16});
 assertEq(obj[0], 16);
@@ -42,7 +42,7 @@ Object.defineProperty(obj, 0, {value: 18});
 assertEq(obj[0], 18);
 
 var desc = Object.getOwnPropertyDescriptor(obj, 0);
-assertEq(desc.configurable, true);
+assertEq(desc.configurable, false);
 assertEq(desc.enumerable, true);
 assertEq(desc.writable, true);
 assertEq(desc.value, 18);

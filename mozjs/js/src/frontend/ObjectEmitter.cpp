@@ -10,7 +10,6 @@
 
 #include "frontend/BytecodeEmitter.h"  // BytecodeEmitter
 #include "frontend/IfEmitter.h"        // IfEmitter
-#include "frontend/ParseNode.h"        // AccessorType
 #include "frontend/SharedContext.h"    // SharedContext
 #include "gc/AllocKind.h"              // AllocKind
 #include "js/Id.h"                     // jsid
@@ -21,8 +20,7 @@
 #include "vm/NativeObject.h"           // NativeDefineDataProperty
 #include "vm/ObjectGroup.h"            // TenuredObject
 #include "vm/Opcodes.h"                // JSOp
-#include "vm/Runtime.h"                // cx->parserNames()
-#include "vm/SharedStencil.h"          // GCThingIndex
+#include "vm/Runtime.h"                // JSAtomState (cx->names())
 
 #include "gc/ObjectKind-inl.h"  // GetGCObjectKind
 #include "vm/JSAtom-inl.h"      // AtomToId
@@ -211,7 +209,7 @@ bool PropertyEmitter::prepareForComputedPropValue() {
 
   //                [stack] CTOR? OBJ CTOR? KEY
 
-  if (!bce_->emit1(JSOp::ToPropertyKey)) {
+  if (!bce_->emit1(JSOp::ToId)) {
     //              [stack] CTOR? OBJ CTOR? KEY
     return false;
   }
@@ -263,39 +261,51 @@ bool PropertyEmitter::emitInitHomeObject() {
   return true;
 }
 
-bool PropertyEmitter::emitInit(AccessorType accessorType,
-                               TaggedParserAtomIndex key) {
-  switch (accessorType) {
-    case AccessorType::None:
-      return emitInit(isClass_ ? JSOp::InitHiddenProp : JSOp::InitProp, key);
-    case AccessorType::Getter:
-      return emitInit(
-          isClass_ ? JSOp::InitHiddenPropGetter : JSOp::InitPropGetter, key);
-    case AccessorType::Setter:
-      return emitInit(
-          isClass_ ? JSOp::InitHiddenPropSetter : JSOp::InitPropSetter, key);
-    default:
-      MOZ_CRASH("Invalid op");
-  }
+bool PropertyEmitter::emitInitProp(JS::Handle<JSAtom*> key) {
+  return emitInit(isClass_ ? JSOp::InitHiddenProp : JSOp::InitProp, key);
 }
 
-bool PropertyEmitter::emitInitIndexOrComputed(AccessorType accessorType) {
-  switch (accessorType) {
-    case AccessorType::None:
-      return emitInitIndexOrComputed(isClass_ ? JSOp::InitHiddenElem
-                                              : JSOp::InitElem);
-    case AccessorType::Getter:
-      return emitInitIndexOrComputed(isClass_ ? JSOp::InitHiddenElemGetter
-                                              : JSOp::InitElemGetter);
-    case AccessorType::Setter:
-      return emitInitIndexOrComputed(isClass_ ? JSOp::InitHiddenElemSetter
-                                              : JSOp::InitElemSetter);
-    default:
-      MOZ_CRASH("Invalid op");
-  }
+bool PropertyEmitter::emitInitGetter(JS::Handle<JSAtom*> key) {
+  return emitInit(isClass_ ? JSOp::InitHiddenPropGetter : JSOp::InitPropGetter,
+                  key);
 }
 
-bool PropertyEmitter::emitInit(JSOp op, TaggedParserAtomIndex key) {
+bool PropertyEmitter::emitInitSetter(JS::Handle<JSAtom*> key) {
+  return emitInit(isClass_ ? JSOp::InitHiddenPropSetter : JSOp::InitPropSetter,
+                  key);
+}
+
+bool PropertyEmitter::emitInitIndexProp() {
+  return emitInitIndexOrComputed(isClass_ ? JSOp::InitHiddenElem
+                                          : JSOp::InitElem);
+}
+
+bool PropertyEmitter::emitInitIndexGetter() {
+  return emitInitIndexOrComputed(isClass_ ? JSOp::InitHiddenElemGetter
+                                          : JSOp::InitElemGetter);
+}
+
+bool PropertyEmitter::emitInitIndexSetter() {
+  return emitInitIndexOrComputed(isClass_ ? JSOp::InitHiddenElemSetter
+                                          : JSOp::InitElemSetter);
+}
+
+bool PropertyEmitter::emitInitComputedProp() {
+  return emitInitIndexOrComputed(isClass_ ? JSOp::InitHiddenElem
+                                          : JSOp::InitElem);
+}
+
+bool PropertyEmitter::emitInitComputedGetter() {
+  return emitInitIndexOrComputed(isClass_ ? JSOp::InitHiddenElemGetter
+                                          : JSOp::InitElemGetter);
+}
+
+bool PropertyEmitter::emitInitComputedSetter() {
+  return emitInitIndexOrComputed(isClass_ ? JSOp::InitHiddenElemSetter
+                                          : JSOp::InitElemSetter);
+}
+
+bool PropertyEmitter::emitInit(JSOp op, JS::Handle<JSAtom*> key) {
   MOZ_ASSERT(propertyState_ == PropertyState::PropValue ||
              propertyState_ == PropertyState::InitHomeObj);
 
@@ -421,11 +431,14 @@ void AutoSaveLocalStrictMode::restore() {
 }
 
 ClassEmitter::ClassEmitter(BytecodeEmitter* bce)
-    : PropertyEmitter(bce), strictMode_(bce->sc) {
+    : PropertyEmitter(bce),
+      strictMode_(bce->sc),
+      name_(bce->cx),
+      nameForAnonymousClass_(bce->cx) {
   isClass_ = true;
 }
 
-bool ClassEmitter::emitScope(LexicalScope::ParserData* scopeBindings) {
+bool ClassEmitter::emitScope(JS::Handle<LexicalScope::Data*> scopeBindings) {
   MOZ_ASSERT(propertyState_ == PropertyState::Start);
   MOZ_ASSERT(classState_ == ClassState::Start);
 
@@ -443,32 +456,12 @@ bool ClassEmitter::emitScope(LexicalScope::ParserData* scopeBindings) {
   return true;
 }
 
-bool ClassEmitter::emitBodyScope(LexicalScope::ParserData* scopeBindings) {
-  MOZ_ASSERT(propertyState_ == PropertyState::Start);
-  MOZ_ASSERT(classState_ == ClassState::Start ||
-             classState_ == ClassState::Scope);
-
-  bodyTdzCache_.emplace(bce_);
-
-  bodyScope_.emplace(bce_);
-  if (!bodyScope_->enterLexical(bce_, ScopeKind::ClassBody, scopeBindings)) {
-    return false;
-  }
-
-#ifdef DEBUG
-  classState_ = ClassState::BodyScope;
-#endif
-
-  return true;
-}
-
-bool ClassEmitter::emitClass(TaggedParserAtomIndex name,
-                             TaggedParserAtomIndex nameForAnonymousClass,
+bool ClassEmitter::emitClass(JS::Handle<JSAtom*> name,
+                             JS::Handle<JSAtom*> nameForAnonymousClass,
                              bool hasNameOnStack) {
   MOZ_ASSERT(propertyState_ == PropertyState::Start);
   MOZ_ASSERT(classState_ == ClassState::Start ||
-             classState_ == ClassState::Scope ||
-             classState_ == ClassState::BodyScope);
+             classState_ == ClassState::Scope);
   MOZ_ASSERT_IF(nameForAnonymousClass || hasNameOnStack, !name);
   MOZ_ASSERT(!(nameForAnonymousClass && hasNameOnStack));
 
@@ -490,17 +483,16 @@ bool ClassEmitter::emitClass(TaggedParserAtomIndex name,
   return true;
 }
 
-bool ClassEmitter::emitDerivedClass(TaggedParserAtomIndex name,
-                                    TaggedParserAtomIndex nameForAnonymousClass,
+bool ClassEmitter::emitDerivedClass(JS::Handle<JSAtom*> name,
+                                    JS::Handle<JSAtom*> nameForAnonymousClass,
                                     bool hasNameOnStack) {
   MOZ_ASSERT(propertyState_ == PropertyState::Start);
   MOZ_ASSERT(classState_ == ClassState::Start ||
-             classState_ == ClassState::Scope ||
-             classState_ == ClassState::BodyScope);
+             classState_ == ClassState::Scope);
   MOZ_ASSERT_IF(nameForAnonymousClass || hasNameOnStack, !name);
   MOZ_ASSERT(!nameForAnonymousClass || !hasNameOnStack);
 
-  //                [stack] HERITAGE
+  //                [stack]
 
   name_ = name;
   nameForAnonymousClass_ = nameForAnonymousClass;
@@ -537,8 +529,7 @@ bool ClassEmitter::emitDerivedClass(TaggedParserAtomIndex name,
     //              [stack] HERITAGE HERITAGE
     return false;
   }
-  if (!bce_->emitAtomOp(JSOp::GetProp,
-                        TaggedParserAtomIndex::WellKnown::prototype())) {
+  if (!bce_->emitAtomOp(JSOp::GetProp, bce_->cx->names().prototype)) {
     //              [stack] HERITAGE PROTO
     return false;
   }
@@ -551,7 +542,7 @@ bool ClassEmitter::emitDerivedClass(TaggedParserAtomIndex name,
     //              [stack]
     return false;
   }
-  if (!bce_->emitBuiltinObject(BuiltinObjectKind::FunctionPrototype)) {
+  if (!bce_->emit1(JSOp::FunctionProto)) {
     //              [stack] PROTO
     return false;
   }
@@ -583,7 +574,7 @@ bool ClassEmitter::emitDerivedClass(TaggedParserAtomIndex name,
 bool ClassEmitter::emitInitConstructor(bool needsHomeObject) {
   MOZ_ASSERT(propertyState_ == PropertyState::Start);
   MOZ_ASSERT(classState_ == ClassState::Class ||
-             classState_ == ClassState::InstanceMemberInitializersEnd);
+             classState_ == ClassState::InstanceFieldInitializersEnd);
 
   //                [stack] HOMEOBJ CTOR
 
@@ -597,6 +588,57 @@ bool ClassEmitter::emitInitConstructor(bool needsHomeObject) {
       return false;
     }
   }
+
+  if (!initProtoAndCtor()) {
+    //              [stack] CTOR HOMEOBJ
+    return false;
+  }
+
+#ifdef DEBUG
+  classState_ = ClassState::InitConstructor;
+#endif
+  return true;
+}
+
+bool ClassEmitter::emitInitDefaultConstructor(uint32_t classStart,
+                                              uint32_t classEnd) {
+  MOZ_ASSERT(propertyState_ == PropertyState::Start);
+  MOZ_ASSERT(classState_ == ClassState::Class);
+
+  RootedAtom className(bce_->cx, name_);
+  if (!className) {
+    if (nameForAnonymousClass_) {
+      className = nameForAnonymousClass_;
+    } else {
+      className = bce_->cx->names().empty;
+    }
+  }
+
+  uint32_t atomIndex;
+  if (!bce_->makeAtomIndex(className, &atomIndex)) {
+    return false;
+  }
+
+  // In the case of default class constructors, emit the start and end
+  // offsets in the source buffer as source notes so that when we
+  // actually make the constructor during execution, we can give it the
+  // correct toString output.
+  BytecodeOffset off;
+  if (isDerived_) {
+    //              [stack] HERITAGE PROTO
+    if (!bce_->emitN(JSOp::DerivedConstructor, 12, &off)) {
+      //            [stack] HOMEOBJ CTOR
+      return false;
+    }
+  } else {
+    //              [stack] HOMEOBJ
+    if (!bce_->emitN(JSOp::ClassConstructor, 12, &off)) {
+      //            [stack] HOMEOBJ CTOR
+      return false;
+    }
+  }
+  SetClassConstructorOperands(bce_->bytecodeSection().code(off), atomIndex,
+                              classStart, classEnd);
 
   if (!initProtoAndCtor()) {
     //              [stack] CTOR HOMEOBJ
@@ -631,13 +673,11 @@ bool ClassEmitter::initProtoAndCtor() {
     //              [stack] NAME? CTOR HOMEOBJ CTOR HOMEOBJ
     return false;
   }
-  if (!bce_->emitAtomOp(JSOp::InitLockedProp,
-                        TaggedParserAtomIndex::WellKnown::prototype())) {
+  if (!bce_->emitAtomOp(JSOp::InitLockedProp, bce_->cx->names().prototype)) {
     //              [stack] NAME? CTOR HOMEOBJ CTOR
     return false;
   }
-  if (!bce_->emitAtomOp(JSOp::InitHiddenProp,
-                        TaggedParserAtomIndex::WellKnown::constructor())) {
+  if (!bce_->emitAtomOp(JSOp::InitHiddenProp, bce_->cx->names().constructor)) {
     //              [stack] NAME? CTOR HOMEOBJ
     return false;
   }
@@ -645,54 +685,54 @@ bool ClassEmitter::initProtoAndCtor() {
   return true;
 }
 
-bool ClassEmitter::prepareForMemberInitializers(size_t numInitializers,
-                                                bool isStatic) {
+bool ClassEmitter::prepareForFieldInitializers(size_t numFields,
+                                               bool isStatic) {
   MOZ_ASSERT_IF(!isStatic, classState_ == ClassState::Class);
   MOZ_ASSERT_IF(isStatic, classState_ == ClassState::InitConstructor);
-  MOZ_ASSERT(memberState_ == MemberState::Start);
+  MOZ_ASSERT(fieldState_ == FieldState::Start);
 
   // .initializers is a variable that stores an array of lambdas containing
   // code (the initializer) for each field. Upon an object's construction,
   // these lambdas will be called, defining the values.
-  auto initializers =
-      isStatic ? TaggedParserAtomIndex::WellKnown::dotStaticInitializers()
-               : TaggedParserAtomIndex::WellKnown::dotInitializers();
+  auto initializersName = isStatic ? &JSAtomState::dotStaticInitializers
+                                   : &JSAtomState::dotInitializers;
+  HandlePropertyName initializers = bce_->cx->names().*initializersName;
   initializersAssignment_.emplace(bce_, initializers,
                                   NameOpEmitter::Kind::Initialize);
   if (!initializersAssignment_->prepareForRhs()) {
     return false;
   }
 
-  if (!bce_->emitUint32Operand(JSOp::NewArray, numInitializers)) {
+  if (!bce_->emitUint32Operand(JSOp::NewArray, numFields)) {
     //              [stack] ARRAY
     return false;
   }
 
-  initializerIndex_ = 0;
+  fieldIndex_ = 0;
 #ifdef DEBUG
   if (isStatic) {
-    classState_ = ClassState::StaticMemberInitializers;
+    classState_ = ClassState::StaticFieldInitializers;
   } else {
-    classState_ = ClassState::InstanceMemberInitializers;
+    classState_ = ClassState::InstanceFieldInitializers;
   }
-  numInitializers_ = numInitializers;
+  numFields_ = numFields;
 #endif
   return true;
 }
 
-bool ClassEmitter::prepareForMemberInitializer() {
-  MOZ_ASSERT(classState_ == ClassState::InstanceMemberInitializers ||
-             classState_ == ClassState::StaticMemberInitializers);
-  MOZ_ASSERT(memberState_ == MemberState::Start);
+bool ClassEmitter::prepareForFieldInitializer() {
+  MOZ_ASSERT(classState_ == ClassState::InstanceFieldInitializers ||
+             classState_ == ClassState::StaticFieldInitializers);
+  MOZ_ASSERT(fieldState_ == FieldState::Start);
 
 #ifdef DEBUG
-  memberState_ = MemberState::Initializer;
+  fieldState_ = FieldState::Initializer;
 #endif
   return true;
 }
 
-bool ClassEmitter::emitMemberInitializerHomeObject(bool isStatic) {
-  MOZ_ASSERT(memberState_ == MemberState::Initializer);
+bool ClassEmitter::emitFieldInitializerHomeObject(bool isStatic) {
+  MOZ_ASSERT(fieldState_ == FieldState::Initializer);
   //                [stack] OBJ HERITAGE? ARRAY METHOD
   // or:
   //                [stack] CTOR HOMEOBJ ARRAY METHOD
@@ -716,36 +756,36 @@ bool ClassEmitter::emitMemberInitializerHomeObject(bool isStatic) {
   }
 
 #ifdef DEBUG
-  memberState_ = MemberState::InitializerWithHomeObject;
+  fieldState_ = FieldState::InitializerWithHomeObject;
 #endif
   return true;
 }
 
-bool ClassEmitter::emitStoreMemberInitializer() {
-  MOZ_ASSERT(memberState_ == MemberState::Initializer ||
-             memberState_ == MemberState::InitializerWithHomeObject);
-  MOZ_ASSERT(initializerIndex_ < numInitializers_);
-  //                [stack] HOMEOBJ HERITAGE? ARRAY METHOD
+bool ClassEmitter::emitStoreFieldInitializer() {
+  MOZ_ASSERT(fieldState_ == FieldState::Initializer ||
+             fieldState_ == FieldState::InitializerWithHomeObject);
+  MOZ_ASSERT(fieldIndex_ < numFields_);
+  //          [stack] HOMEOBJ HERITAGE? ARRAY METHOD
 
-  if (!bce_->emitUint32Operand(JSOp::InitElemArray, initializerIndex_)) {
-    //              [stack] HOMEOBJ HERITAGE? ARRAY
+  if (!bce_->emitUint32Operand(JSOp::InitElemArray, fieldIndex_)) {
+    //          [stack] HOMEOBJ HERITAGE? ARRAY
     return false;
   }
 
-  initializerIndex_++;
+  fieldIndex_++;
 #ifdef DEBUG
-  memberState_ = MemberState::Start;
+  fieldState_ = FieldState::Start;
 #endif
   return true;
 }
 
-bool ClassEmitter::emitMemberInitializersEnd() {
+bool ClassEmitter::emitFieldInitializersEnd() {
   MOZ_ASSERT(propertyState_ == PropertyState::Start ||
              propertyState_ == PropertyState::Init);
-  MOZ_ASSERT(classState_ == ClassState::InstanceMemberInitializers ||
-             classState_ == ClassState::StaticMemberInitializers);
-  MOZ_ASSERT(memberState_ == MemberState::Start);
-  MOZ_ASSERT(initializerIndex_ == numInitializers_);
+  MOZ_ASSERT(classState_ == ClassState::InstanceFieldInitializers ||
+             classState_ == ClassState::StaticFieldInitializers);
+  MOZ_ASSERT(fieldState_ == FieldState::Start);
+  MOZ_ASSERT(fieldIndex_ == numFields_);
 
   if (!initializersAssignment_->emitAssignment()) {
     //              [stack] HOMEOBJ HERITAGE? ARRAY
@@ -759,10 +799,10 @@ bool ClassEmitter::emitMemberInitializersEnd() {
   }
 
 #ifdef DEBUG
-  if (classState_ == ClassState::InstanceMemberInitializers) {
-    classState_ = ClassState::InstanceMemberInitializersEnd;
+  if (classState_ == ClassState::InstanceFieldInitializers) {
+    classState_ = ClassState::InstanceFieldInitializersEnd;
   } else {
-    classState_ = ClassState::StaticMemberInitializersEnd;
+    classState_ = ClassState::StaticFieldInitializersEnd;
   }
 #endif
   return true;
@@ -772,8 +812,8 @@ bool ClassEmitter::emitBinding() {
   MOZ_ASSERT(propertyState_ == PropertyState::Start ||
              propertyState_ == PropertyState::Init);
   MOZ_ASSERT(classState_ == ClassState::InitConstructor ||
-             classState_ == ClassState::InstanceMemberInitializersEnd ||
-             classState_ == ClassState::StaticMemberInitializersEnd);
+             classState_ == ClassState::InstanceFieldInitializersEnd ||
+             classState_ == ClassState::StaticFieldInitializersEnd);
   //                [stack] CTOR HOMEOBJ
 
   if (!bce_->emit1(JSOp::Pop)) {
@@ -801,16 +841,6 @@ bool ClassEmitter::emitBinding() {
 bool ClassEmitter::emitEnd(Kind kind) {
   MOZ_ASSERT(classState_ == ClassState::BoundName);
   //                [stack] CTOR
-
-  if (bodyScope_.isSome()) {
-    MOZ_ASSERT(bodyTdzCache_.isSome());
-
-    if (!bodyScope_->leave(bce_)) {
-      return false;
-    }
-    bodyScope_.reset();
-    bodyTdzCache_.reset();
-  }
 
   if (innerScope_.isSome()) {
     MOZ_ASSERT(tdzCache_.isSome());

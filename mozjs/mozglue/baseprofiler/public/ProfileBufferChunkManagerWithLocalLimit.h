@@ -12,8 +12,6 @@
 #include "mozilla/ProfileBufferChunkManager.h"
 #include "mozilla/ProfileBufferControlledChunkManager.h"
 
-#include <utility>
-
 namespace mozilla {
 
 // Manages the Chunks for this process in a thread-safe manner, with a maximum
@@ -57,18 +55,8 @@ class ProfileBufferChunkManagerWithLocalLimit final
 
   [[nodiscard]] UniquePtr<ProfileBufferChunk> GetChunk() final {
     AUTO_PROFILER_STATS(Local_GetChunk);
-
-    ChunkAndUpdate chunkAndUpdate = [&]() {
-      baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
-      return GetChunk(lock);
-    }();
-
-    baseprofiler::detail::BaseProfilerAutoLock lock(mUpdateCallbackMutex);
-    if (mUpdateCallback && !chunkAndUpdate.second.IsNotUpdate()) {
-      mUpdateCallback(std::move(chunkAndUpdate.second));
-    }
-
-    return std::move(chunkAndUpdate.first);
+    baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
+    return GetChunk(lock);
   }
 
   void RequestChunk(std::function<void(UniquePtr<ProfileBufferChunk>)>&&
@@ -87,11 +75,12 @@ class ProfileBufferChunkManagerWithLocalLimit final
   void FulfillChunkRequests() final {
     AUTO_PROFILER_STATS(Local_FulfillChunkRequests);
     std::function<void(UniquePtr<ProfileBufferChunk>)> chunkReceiver;
-    ChunkAndUpdate chunkAndUpdate = [&]() -> ChunkAndUpdate {
+    UniquePtr<ProfileBufferChunk> chunk;
+    {
       baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
       if (!mChunkReceiver) {
         // No receiver means no pending request, we're done.
-        return {};
+        return;
       }
       // Otherwise there is a request, extract the receiver to call below.
       std::swap(chunkReceiver, mChunkReceiver);
@@ -99,84 +88,56 @@ class ProfileBufferChunkManagerWithLocalLimit final
       // And allocate the requested chunk. This may fail, it's fine, we're
       // letting the receiver know about it.
       AUTO_PROFILER_STATS(Local_FulfillChunkRequests_GetChunk);
-      return GetChunk(lock);
-    }();
-
-    if (chunkReceiver) {
-      {
-        baseprofiler::detail::BaseProfilerAutoLock lock(mUpdateCallbackMutex);
-        if (mUpdateCallback && !chunkAndUpdate.second.IsNotUpdate()) {
-          mUpdateCallback(std::move(chunkAndUpdate.second));
-        }
-      }
-
-      // Invoke callback outside of lock, so that it can use other chunk manager
-      // functions if needed.
-      // Note that this means there could be a race, where another request
-      // happens now and even gets fulfilled before this one is! It should be
-      // rare, and shouldn't be a problem anyway, the user will still get their
-      // requested chunks, new/recycled chunks look the same so their order
-      // doesn't matter.
-      std::move(chunkReceiver)(std::move(chunkAndUpdate.first));
+      chunk = GetChunk(lock);
     }
+    // Invoke callback outside of lock, so that it can use other chunk manager
+    // functions if needed.
+    // Note that this means there could be a race, where another request happens
+    // now and even gets fulfilled before this one is! It should be rare, and
+    // shouldn't be a problem anyway, the user will still get their requested
+    // chunks, new/recycled chunks look the same so their order doesn't matter.
+    MOZ_ASSERT(!!chunkReceiver, "chunkReceiver shouldn't be empty here");
+    std::move(chunkReceiver)(std::move(chunk));
   }
 
-  void ReleaseChunk(UniquePtr<ProfileBufferChunk> aChunk) final {
-    if (!aChunk) {
-      return;
+  void ReleaseChunks(UniquePtr<ProfileBufferChunk> aChunks) final {
+    baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
+    MOZ_ASSERT(mUser, "Not registered yet");
+    // Keep a pointer to the first newly-released chunk, so we can use it to
+    // prepare an update (after `aChunks` is moved-from).
+    const ProfileBufferChunk* const newlyReleasedChunks = aChunks.get();
+    // Compute the size of all provided chunks.
+    size_t bytes = 0;
+    for (const ProfileBufferChunk* chunk = newlyReleasedChunks; chunk;
+         chunk = chunk->GetNext()) {
+      bytes += chunk->BufferBytes();
+      MOZ_ASSERT(!chunk->ChunkHeader().mDoneTimeStamp.IsNull(),
+                 "All released chunks should have a 'Done' timestamp");
+      MOZ_ASSERT(
+          !chunk->GetNext() || (chunk->ChunkHeader().mDoneTimeStamp <
+                                chunk->GetNext()->ChunkHeader().mDoneTimeStamp),
+          "Released chunk groups must have increasing timestamps");
+    }
+    // Transfer the chunks size from the unreleased bucket to the released one.
+    mUnreleasedBufferBytes -= bytes;
+    if (!mReleasedChunks) {
+      // No other released chunks at the moment, we're starting the list.
+      MOZ_ASSERT(mReleasedBufferBytes == 0);
+      mReleasedBufferBytes = bytes;
+      mReleasedChunks = std::move(aChunks);
+    } else {
+      // Add to the end of the released chunks list (oldest first, most recent
+      // last.)
+      MOZ_ASSERT(mReleasedChunks->Last()->ChunkHeader().mDoneTimeStamp <
+                     aChunks->ChunkHeader().mDoneTimeStamp,
+                 "Chunks must be released in increasing timestamps");
+      mReleasedBufferBytes += bytes;
+      mReleasedChunks->SetLast(std::move(aChunks));
     }
 
-    MOZ_RELEASE_ASSERT(!aChunk->GetNext(), "ReleaseChunk only accepts 1 chunk");
-    MOZ_RELEASE_ASSERT(!aChunk->ChunkHeader().mDoneTimeStamp.IsNull(),
-                       "Released chunk should have a 'Done' timestamp");
-
-    Update update = [&]() {
-      baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
-      MOZ_ASSERT(mUser, "Not registered yet");
-      // Keep a pointer to the first newly-released chunk, so we can use it to
-      // prepare an update (after `aChunk` is moved-from).
-      const ProfileBufferChunk* const newlyReleasedChunk = aChunk.get();
-      // Transfer the chunk size from the unreleased bucket to the released one.
-      mUnreleasedBufferBytes -= aChunk->BufferBytes();
-      mReleasedBufferBytes += aChunk->BufferBytes();
-      if (!mReleasedChunks) {
-        // No other released chunks at the moment, we're starting the list.
-        MOZ_ASSERT(mReleasedBufferBytes == aChunk->BufferBytes());
-        mReleasedChunks = std::move(aChunk);
-      } else {
-        // Insert aChunk in mReleasedChunks to keep done-timestamp order.
-        const TimeStamp& releasedChunkDoneTimeStamp =
-            aChunk->ChunkHeader().mDoneTimeStamp;
-        if (releasedChunkDoneTimeStamp <
-            mReleasedChunks->ChunkHeader().mDoneTimeStamp) {
-          // aChunk is the oldest -> Insert at the beginning.
-          aChunk->SetLast(std::move(mReleasedChunks));
-          mReleasedChunks = std::move(aChunk);
-        } else {
-          // Go through the already-released chunk list, and insert aChunk
-          // before the first younger released chunk, or at the end.
-          ProfileBufferChunk* chunk = mReleasedChunks.get();
-          for (;;) {
-            ProfileBufferChunk* const nextChunk = chunk->GetNext();
-            if (!nextChunk || releasedChunkDoneTimeStamp <
-                                  nextChunk->ChunkHeader().mDoneTimeStamp) {
-              // Either we're at the last released chunk, or the next released
-              // chunk is younger -> Insert right after this released chunk.
-              chunk->InsertNext(std::move(aChunk));
-              break;
-            }
-            chunk = nextChunk;
-          }
-        }
-      }
-
-      return Update(mUnreleasedBufferBytes, mReleasedBufferBytes,
-                    mReleasedChunks.get(), newlyReleasedChunk);
-    }();
-
-    baseprofiler::detail::BaseProfilerAutoLock lock(mUpdateCallbackMutex);
-    if (mUpdateCallback && !update.IsNotUpdate()) {
-      mUpdateCallback(std::move(update));
+    if (mUpdateCallback) {
+      mUpdateCallback(Update(mUnreleasedBufferBytes, mReleasedBufferBytes,
+                             mReleasedChunks.get(), newlyReleasedChunks));
     }
   }
 
@@ -189,33 +150,22 @@ class ProfileBufferChunkManagerWithLocalLimit final
   }
 
   [[nodiscard]] UniquePtr<ProfileBufferChunk> GetExtantReleasedChunks() final {
-    UniquePtr<ProfileBufferChunk> chunks;
-    size_t unreleasedBufferBytes = [&]() {
-      baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
-      MOZ_ASSERT(mUser, "Not registered yet");
-      mReleasedBufferBytes = 0;
-      chunks = std::move(mReleasedChunks);
-      return mUnreleasedBufferBytes;
-    }();
-
-    baseprofiler::detail::BaseProfilerAutoLock lock(mUpdateCallbackMutex);
+    baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
+    MOZ_ASSERT(mUser, "Not registered yet");
+    mReleasedBufferBytes = 0;
     if (mUpdateCallback) {
-      mUpdateCallback(Update(unreleasedBufferBytes, 0, nullptr, nullptr));
+      mUpdateCallback(Update(mUnreleasedBufferBytes, 0, nullptr, nullptr));
     }
-
-    return chunks;
+    return std::move(mReleasedChunks);
   }
 
   void ForgetUnreleasedChunks() final {
-    Update update = [&]() {
-      baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
-      MOZ_ASSERT(mUser, "Not registered yet");
-      mUnreleasedBufferBytes = 0;
-      return Update(0, mReleasedBufferBytes, mReleasedChunks.get(), nullptr);
-    }();
-    baseprofiler::detail::BaseProfilerAutoLock lock(mUpdateCallbackMutex);
+    baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
+    MOZ_ASSERT(mUser, "Not registered yet");
+    mUnreleasedBufferBytes = 0;
     if (mUpdateCallback) {
-      mUpdateCallback(std::move(update));
+      mUpdateCallback(
+          Update(0, mReleasedBufferBytes, mReleasedChunks.get(), nullptr));
     }
   }
 
@@ -233,26 +183,15 @@ class ProfileBufferChunkManagerWithLocalLimit final
   }
 
   void SetUpdateCallback(UpdateCallback&& aUpdateCallback) final {
-    {
-      baseprofiler::detail::BaseProfilerAutoLock lock(mUpdateCallbackMutex);
-      if (mUpdateCallback) {
-        // Signal the end of the previous callback.
-        std::move(mUpdateCallback)(Update(nullptr));
-        mUpdateCallback = nullptr;
-      }
+    baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
+    if (mUpdateCallback) {
+      // Signal the end of the previous callback.
+      std::move(mUpdateCallback)(Update(nullptr));
     }
-
-    if (aUpdateCallback) {
-      Update initialUpdate = [&]() {
-        baseprofiler::detail::BaseProfilerAutoLock lock(mMutex);
-        return Update(mUnreleasedBufferBytes, mReleasedBufferBytes,
-                      mReleasedChunks.get(), nullptr);
-      }();
-
-      baseprofiler::detail::BaseProfilerAutoLock lock(mUpdateCallbackMutex);
-      MOZ_ASSERT(!mUpdateCallback, "Only one update callback allowed");
-      mUpdateCallback = std::move(aUpdateCallback);
-      mUpdateCallback(std::move(initialUpdate));
+    mUpdateCallback = std::move(aUpdateCallback);
+    if (mUpdateCallback) {
+      mUpdateCallback(Update(mUnreleasedBufferBytes, mReleasedBufferBytes,
+                             mReleasedChunks.get(), nullptr));
     }
   }
 
@@ -321,8 +260,7 @@ class ProfileBufferChunkManagerWithLocalLimit final
     MaybeRecycleChunk(std::move(oldest), aLock);
   }
 
-  using ChunkAndUpdate = std::pair<UniquePtr<ProfileBufferChunk>, Update>;
-  [[nodiscard]] ChunkAndUpdate GetChunk(
+  [[nodiscard]] UniquePtr<ProfileBufferChunk> GetChunk(
       const baseprofiler::detail::BaseProfilerAutoLock& aLock) {
     MOZ_ASSERT(mUser, "Not registered yet");
     // After this function, the total memory consumption will be the sum of:
@@ -344,8 +282,7 @@ class ProfileBufferChunkManagerWithLocalLimit final
     }
 
     // Extract the recycled chunk, if any.
-    ChunkAndUpdate chunkAndUpdate{TakeRecycledChunk(aLock), Update()};
-    UniquePtr<ProfileBufferChunk>& chunk = chunkAndUpdate.first;
+    UniquePtr<ProfileBufferChunk> chunk = TakeRecycledChunk(aLock);
 
     if (!chunk) {
       // No recycled chunk -> Create a chunk now. (This could still fail.)
@@ -356,12 +293,13 @@ class ProfileBufferChunkManagerWithLocalLimit final
       // We do have a chunk (recycled or new), record its size as "unreleased".
       mUnreleasedBufferBytes += chunk->BufferBytes();
 
-      chunkAndUpdate.second =
-          Update(mUnreleasedBufferBytes, mReleasedBufferBytes,
-                 mReleasedChunks.get(), nullptr);
+      if (mUpdateCallback) {
+        mUpdateCallback(Update(mUnreleasedBufferBytes, mReleasedBufferBytes,
+                               mReleasedChunks.get(), nullptr));
+      }
     }
 
-    return chunkAndUpdate;
+    return chunk;
   }
 
   [[nodiscard]] size_t SizeOfExcludingThis(
@@ -415,10 +353,6 @@ class ProfileBufferChunkManagerWithLocalLimit final
   // Callback set from `RequestChunk()`, until it is serviced in
   // `FulfillChunkRequests()`. There can only be one request in flight.
   std::function<void(UniquePtr<ProfileBufferChunk>)> mChunkReceiver;
-
-  // Separate mutex guarding mUpdateCallback, so that it may be invoked outside
-  // of the main buffer `mMutex`.
-  mutable baseprofiler::detail::BaseProfilerMutex mUpdateCallbackMutex;
 
   UpdateCallback mUpdateCallback;
 };

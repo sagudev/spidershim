@@ -30,6 +30,20 @@ struct Statistics;
 }  // namespace gcstats
 }  // namespace js
 
+typedef enum JSGCMode {
+  /** Perform only global GCs. */
+  JSGC_MODE_GLOBAL = 0,
+
+  /** Perform per-zone GCs until too much garbage has accumulated. */
+  JSGC_MODE_ZONE = 1,
+
+  /** Collect in short time slices rather than all at once. */
+  JSGC_MODE_INCREMENTAL = 2,
+
+  /** Both of the above. */
+  JSGC_MODE_ZONE_INCREMENTAL = 3,
+} JSGCMode;
+
 /**
  * Kinds of js_GC invocation.
  */
@@ -72,21 +86,14 @@ typedef enum JSGCParamKey {
   JSGC_NUMBER = 4,
 
   /**
-   * Whether incremental GC is enabled. If not, GC will always run to
-   * completion.
+   * Select GC mode.
    *
-   * prefs: javascript.options.mem.gc_incremental.
-   * Default: false
+   * See: JSGCMode in GCAPI.h
+   * prefs: javascript.options.mem.gc_per_zone and
+   *   javascript.options.mem.gc_incremental.
+   * Default: JSGC_MODE_ZONE_INCREMENTAL
    */
-  JSGC_INCREMENTAL_GC_ENABLED = 5,
-
-  /**
-   * Whether per-zone GC is enabled. If not, all zones are collected every time.
-   *
-   * prefs: javascript.options.mem.gc_per_zone
-   * Default: false
-   */
-  JSGC_PER_ZONE_GC_ENABLED = 6,
+  JSGC_MODE = 6,
 
   /** Number of cached empty GC chunks. */
   JSGC_UNUSED_CHUNKS = 7,
@@ -96,8 +103,6 @@ typedef enum JSGCParamKey {
 
   /**
    * Max milliseconds to spend in an incremental GC slice.
-   *
-   * A value of zero means there is no maximum.
    *
    * Pref: javascript.options.mem.gc_incremental_slice_ms
    * Default: DefaultTimeBudgetMS.
@@ -318,7 +323,7 @@ typedef enum JSGCParamKey {
   /*
    * The current size of the nursery.
    *
-   * This parameter is read-only.
+   * read-only.
    */
   JSGC_NURSERY_BYTES = 34,
 
@@ -343,75 +348,6 @@ typedef enum JSGCParamKey {
    * Default: IncrementalWeakMarkEnabled
    */
   JSGC_INCREMENTAL_WEAKMAP_ENABLED = 37,
-
-  /**
-   * The chunk size in bytes for this system.
-   *
-   * This parameter is read-only.
-   */
-  JSGC_CHUNK_BYTES = 38,
-
-  /**
-   * The number of background threads to use for parallel GC work for each CPU
-   * core, expressed as an integer percentage.
-   *
-   * Pref: javascript.options.mem.gc_helper_thread_ratio
-   */
-  JSGC_HELPER_THREAD_RATIO = 39,
-
-  /**
-   * The maximum number of background threads to use for parallel GC work.
-   *
-   * Pref: javascript.options.mem.gc_max_helper_threads
-   */
-  JSGC_MAX_HELPER_THREADS = 40,
-
-  /**
-   * The number of background threads to use for parallel GC work.
-   *
-   * This parameter is read-only and is set based on the
-   * JSGC_HELPER_THREAD_RATIO and JSGC_MAX_HELPER_THREADS parameters.
-   */
-  JSGC_HELPER_THREAD_COUNT = 41,
-
-  /**
-   * If the percentage of the tenured strings exceeds this threshold, string
-   * will be allocated in tenured heap instead. (Default is allocated in
-   * nursery.)
-   */
-  JSGC_PRETENURE_STRING_THRESHOLD = 42,
-
-  /**
-   * If the finalization rate of the tenured strings exceeds this threshold,
-   * string will be allocated in nursery.
-   */
-  JSGC_STOP_PRETENURE_STRING_THRESHOLD = 43,
-
-  /**
-   * A number that is incremented on every major GC slice.
-   */
-  JSGC_MAJOR_GC_NUMBER = 44,
-
-  /**
-   * A number that is incremented on every minor GC.
-   */
-  JSGC_MINOR_GC_NUMBER = 45,
-
-  /**
-   * JS::RunIdleTimeGCTask will collect the nursery if it hasn't been collected
-   * in this many milliseconds.
-   *
-   * Default: 5000
-   * Pref: None
-   */
-  JSGC_NURSERY_TIMEOUT_FOR_IDLE_COLLECTION_MS = 46,
-
-  /**
-   * The system page size in KB.
-   *
-   * This parameter is read-only.
-   */
-  JSGC_SYSTEM_PAGE_SIZE_KB = 47,
 } JSGCParamKey;
 
 /*
@@ -461,14 +397,14 @@ typedef void (*JSWeakPointerCompartmentCallback)(JSContext* cx,
                                                  void* data);
 
 /*
- * This is called to tell the embedding that a FinalizationRegistry object has
- * cleanup work, and that the engine should be called back at an appropriate
- * later time to perform this cleanup, by calling the function |doCleanup|.
+ * This is called to tell the embedding that the FinalizationRegistry object
+ * |registry| has cleanup work, and that then engine should be called back at an
+ * appropriate later time to perform this cleanup.
  *
  * This callback must not do anything that could cause GC.
  */
-using JSHostCleanupFinalizationRegistryCallback =
-    void (*)(JSFunction* doCleanup, JSObject* incumbentGlobal, void* data);
+using JSHostCleanupFinalizationRegistryCallback = void (*)(JSObject* registry,
+                                                           void* data);
 
 /**
  * Each external string has a pointer to JSExternalStringCallbacks. Embedders
@@ -524,7 +460,7 @@ namespace JS {
   D(DISABLE_GENERATIONAL_GC, 24)            \
   D(FINISH_GC, 25)                          \
   D(PREPARE_FOR_TRACING, 26)                \
-  D(UNUSED4, 27)                            \
+  D(INCREMENTAL_ALLOC_TRIGGER, 27)          \
   D(FULL_CELL_PTR_STR_BUFFER, 28)           \
   D(TOO_MUCH_JIT_CODE, 29)                  \
   D(FULL_CELL_PTR_BIGINT_BUFFER, 30)        \
@@ -535,7 +471,7 @@ namespace JS {
   D(DOM_WINDOW_UTILS, FIRST_FIREFOX_REASON) \
   D(COMPONENT_UTILS, 34)                    \
   D(MEM_PRESSURE, 35)                       \
-  D(CC_FINISHED, 36)                        \
+  D(CC_WAITING, 36)                         \
   D(CC_FORCED, 37)                          \
   D(LOAD_END, 38)                           \
   D(UNUSED3, 39)                            \
@@ -658,7 +594,8 @@ extern JS_PUBLIC_API void NonIncrementalGC(JSContext* cx,
  * must be met:
  *  - The collection must be run by calling JS::IncrementalGC() rather than
  *    JS_GC().
- *  - The GC parameter JSGC_INCREMENTAL_GC_ENABLED must be true.
+ *  - The GC mode must have been set to JSGC_MODE_INCREMENTAL or
+ *    JSGC_MODE_ZONE_INCREMENTAL with JS_SetGCParameter().
  *
  * Note: Even if incremental GC is enabled and working correctly,
  *       non-incremental collections can still happen when low on memory.
@@ -795,6 +732,8 @@ struct JS_PUBLIC_API GCDescription {
   mozilla::TimeStamp endTime(JSContext* cx) const;
   mozilla::TimeStamp lastSliceStart(JSContext* cx) const;
   mozilla::TimeStamp lastSliceEnd(JSContext* cx) const;
+
+  char16_t* formatJSONTelemetry(JSContext* cx, uint64_t timestamp) const;
 
   JS::UniqueChars sliceToJSONProfiler(JSContext* cx) const;
   JS::UniqueChars formatJSONProfiler(JSContext* cx) const;
@@ -1146,6 +1085,12 @@ extern JS_PUBLIC_API JSString* JS_NewExternalString(
 extern JS_PUBLIC_API JSString* JS_NewMaybeExternalString(
     JSContext* cx, const char16_t* chars, size_t length,
     const JSExternalStringCallbacks* callbacks, bool* allocatedExternal);
+
+/**
+ * Return whether 'str' was created with JS_NewExternalString or
+ * JS_NewExternalStringWithClosure.
+ */
+extern JS_PUBLIC_API bool JS_IsExternalString(JSString* str);
 
 /**
  * Return the 'callbacks' arg passed to JS_NewExternalString or

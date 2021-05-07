@@ -27,14 +27,16 @@ info: |
     ...
 
 includes: [testBigIntTypedArray.js, detachArrayBuffer.js]
-features: [align-detached-buffer-semantics-with-web-reality, BigInt, TypedArray]
+features: [BigInt, TypedArray]
 ---*/
 
 testWithBigIntTypedArrayConstructors(function(TA) {
-  let sample = new TA(0);
+  var sample = new TA(0);
   $DETACHBUFFER(sample.buffer);
 
-  assert.sameValue(sample.Infinity, undefined, 'The value of sample.Infinity is expected to equal `undefined`');
+  assert.throws(TypeError, function() {
+    sample.Infinity;
+  });
 });
 
 reportCompare(0, 0);

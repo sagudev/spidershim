@@ -1,30 +1,38 @@
 //! Command buffers.
 //!
 //! A command buffer collects a list of commands to be submitted to the device.
-//!
 //! Each command buffer has specific capabilities for graphics, compute or transfer operations,
-//! and can be either a *primary* command buffer or a *secondary* command buffer.
+//! and can be either a "primary" command buffer or a "secondary" command buffer.  Operations
+//! always start from a primary command buffer, but a primary command buffer can contain calls
+//! to secondary command buffers that contain snippets of commands that do specific things, similar
+//! to function calls.
 //!
-//! Operations are always initiated by a primary command buffer,
-//! but a primary command buffer can contain calls to secondary command buffers
-//! that contain snippets of commands that do specific things, similar to function calls.
-//!
-//! All the possible commands are exposed by the [`CommandBuffer`][CommandBuffer] trait.
+//! All the possible commands are implemented in the `RawCommandBuffer` trait, and then the `CommandBuffer`
+//! and related types make a generic, strongly-typed wrapper around it that only expose the methods that
+//! are valid for the capabilities it provides.
 
 // TODO: Document pipelines and subpasses better.
 
 mod clear;
 mod structs;
 
-use crate::{
-    buffer,
-    image::{Filter, Layout, SubresourceRange},
-    memory::{Barrier, Dependencies},
-    pass, pso, query, Backend, DrawCount, IndexCount, IndexType, InstanceCount, TaskCount,
-    VertexCount, VertexOffset, WorkGroupCount,
-};
+use std::any::Any;
+use std::borrow::Borrow;
+use std::fmt;
+use std::ops::Range;
 
-use std::{any::Any, fmt, ops::Range};
+use crate::image::{Filter, Layout, SubresourceRange};
+use crate::memory::{Barrier, Dependencies};
+use crate::{buffer, pass, pso, query};
+use crate::{
+    Backend,
+    DrawCount,
+    IndexCount,
+    InstanceCount,
+    VertexCount,
+    VertexOffset,
+    WorkGroupCount,
+};
 
 pub use self::clear::*;
 pub use self::structs::*;
@@ -36,6 +44,10 @@ bitflags! {
     /// Option flags for various command buffer settings.
     #[derive(Default)]
     pub struct CommandBufferFlags: u32 {
+        // TODO: Remove once 'const fn' is stabilized: https://github.com/rust-lang/rust/issues/24111
+        /// No flags.
+        const EMPTY = 0x0;
+
         /// Says that the command buffer will be recorded, submitted only once, and then reset and re-filled
         /// for another submission.
         const ONE_TIME_SUBMIT = 0x1;
@@ -50,17 +62,17 @@ bitflags! {
     }
 }
 
-/// An enum that indicates whether a command buffer is primary or secondary.
+/// An enum that indicates at runtime whether a command buffer
+/// is primary or secondary, similar to what `command::Primary`
+/// and `command::Secondary` do at compile-time.
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Level {
-    /// Can be submitted to a queue for execution, but cannot be called from other
-    /// command buffers.
     Primary,
-    /// Cannot be submitted directly, but can be called from primary command buffers.
     Secondary,
 }
 
-/// Specifies how commands for the following render passes will be recorded.
+/// Specifies how commands for the following renderpasses will be recorded.
 #[derive(Debug)]
 pub enum SubpassContents {
     /// Contents of the subpass will be inline in the command buffer,
@@ -70,15 +82,6 @@ pub enum SubpassContents {
     /// the primary command buffer will only contain `execute_command()` calls
     /// until the subpass or render pass is complete.
     SecondaryBuffers,
-}
-
-/// A render attachment provided to `begin_render_pass`.
-#[derive(Debug)]
-pub struct RenderAttachmentInfo<'a, B: Backend> {
-    /// View of the attachment image.
-    pub image_view: &'a B::ImageView,
-    /// Clear value, if needed.
-    pub clear_value: ClearValue,
 }
 
 #[allow(missing_docs)]
@@ -136,7 +139,8 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         dependencies: Dependencies,
         barriers: T,
     ) where
-        T: Iterator<Item = Barrier<'a, B>>;
+        T: IntoIterator,
+        T::Item: Borrow<Barrier<'a, B>>;
 
     /// Fill a buffer with the given `u32` value.
     unsafe fn fill_buffer(&mut self, buffer: &B::Buffer, range: buffer::SubRange, data: u32);
@@ -152,14 +156,17 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         value: ClearValue,
         subresource_ranges: T,
     ) where
-        T: Iterator<Item = SubresourceRange>;
+        T: IntoIterator,
+        T::Item: Borrow<SubresourceRange>;
 
     /// Takes an iterator of attachments and an iterator of rect's,
     /// and clears the given rect's for *each* attachment.
     unsafe fn clear_attachments<T, U>(&mut self, clears: T, rects: U)
     where
-        T: Iterator<Item = AttachmentClear>,
-        U: Iterator<Item = pso::ClearRect>;
+        T: IntoIterator,
+        T::Item: Borrow<AttachmentClear>,
+        U: IntoIterator,
+        U::Item: Borrow<pso::ClearRect>;
 
     /// "Resolves" a multisampled image, converting it into a non-multisampled
     /// image. Takes an iterator of regions to apply the resolution to.
@@ -171,7 +178,8 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         dst_layout: Layout,
         regions: T,
     ) where
-        T: Iterator<Item = ImageResolve>;
+        T: IntoIterator,
+        T::Item: Borrow<ImageResolve>;
 
     /// Copies regions from the source to destination image,
     /// applying scaling, filtering and potentially format conversion.
@@ -184,16 +192,12 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         filter: Filter,
         regions: T,
     ) where
-        T: Iterator<Item = ImageBlit>;
+        T: IntoIterator,
+        T::Item: Borrow<ImageBlit>;
 
     /// Bind the index buffer view, making it the "current" one that draw commands
     /// will operate on.
-    unsafe fn bind_index_buffer(
-        &mut self,
-        buffer: &B::Buffer,
-        sub: buffer::SubRange,
-        ty: IndexType,
-    );
+    unsafe fn bind_index_buffer(&mut self, view: buffer::IndexBufferView<B>);
 
     /// Bind the vertex buffer set, making it the "current" one that draw commands
     /// will operate on.
@@ -210,11 +214,12 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
     ///
     /// The `buffers` iterator should yield the `Buffer` to bind, as well as a subrange,
     /// in bytes, into that buffer where the vertex data that should be bound.
-    unsafe fn bind_vertex_buffers<'a, T>(&mut self, first_binding: pso::BufferIndex, buffers: T)
+    unsafe fn bind_vertex_buffers<I, T>(&mut self, first_binding: pso::BufferIndex, buffers: I)
     where
-        T: Iterator<Item = (&'a B::Buffer, buffer::SubRange)>;
+        I: IntoIterator<Item = (T, buffer::SubRange)>,
+        T: Borrow<B::Buffer>;
 
-    /// Set the [viewport][crate::pso::Viewport] parameters for the rasterizer.
+    /// Set the viewport parameters for the rasterizer.
     ///
     /// Each viewport passed corresponds to the viewport with the same index,
     /// starting from an offset index `first_viewport`.
@@ -233,7 +238,8 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
     ///   draw call.
     unsafe fn set_viewports<T>(&mut self, first_viewport: u32, viewports: T)
     where
-        T: Iterator<Item = pso::Viewport>;
+        T: IntoIterator,
+        T::Item: Borrow<pso::Viewport>;
 
     /// Set the scissor rectangles for the rasterizer.
     ///
@@ -254,7 +260,8 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
     ///   call.
     unsafe fn set_scissors<T>(&mut self, first_scissor: u32, rects: T)
     where
-        T: Iterator<Item = pso::Rect>;
+        T: IntoIterator,
+        T::Item: Borrow<pso::Rect>;
 
     /// Sets the stencil reference value for comparison operations and store operations.
     /// Will be used on the LHS of stencil compare ops and as store value when the
@@ -282,24 +289,23 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
     unsafe fn set_depth_bias(&mut self, depth_bias: pso::DepthBias);
 
     /// Begins recording commands for a render pass on the given framebuffer.
-    ///
-    /// # Arguments
-    ///
-    /// * `render_area` - section of the framebuffer to render.
-    /// * `attachments` - iterator of [attachments][crate::command::RenderAttachmentInfo]
-    ///   that has both the image views and the clear values
-    /// * `first_subpass` - specifies, for the first subpass, whether the
-    ///   rendering commands are provided inline or whether the render
-    ///   pass is composed of subpasses.
-    unsafe fn begin_render_pass<'a, T>(
+    /// `render_area` is the section of the framebuffer to render,
+    /// `clear_values` is an iterator of `ClearValueRaw`'s to use to use for
+    /// `clear_*` commands, one for each attachment of the render pass
+    /// that has a clear operation.
+    /// `first_subpass` specifies, for the first subpass, whether the
+    /// rendering commands are provided inline or whether the render
+    /// pass is composed of subpasses.
+    unsafe fn begin_render_pass<T>(
         &mut self,
         render_pass: &B::RenderPass,
         framebuffer: &B::Framebuffer,
         render_area: pso::Rect,
-        attachments: T,
+        clear_values: T,
         first_subpass: SubpassContents,
     ) where
-        T: Iterator<Item = RenderAttachmentInfo<'a, B>>;
+        T: IntoIterator,
+        T::Item: Borrow<ClearValue>;
 
     /// Steps to the next subpass in the current render pass.
     unsafe fn next_subpass(&mut self, contents: SubpassContents);
@@ -320,15 +326,17 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
 
     /// Takes an iterator of graphics `DescriptorSet`'s, and binds them to the command buffer.
     /// `first_set` is the index that the first descriptor is mapped to in the command buffer.
-    unsafe fn bind_graphics_descriptor_sets<'a, I, J>(
+    unsafe fn bind_graphics_descriptor_sets<I, J>(
         &mut self,
         layout: &B::PipelineLayout,
         first_set: usize,
         sets: I,
         offsets: J,
     ) where
-        I: Iterator<Item = &'a B::DescriptorSet>,
-        J: Iterator<Item = DescriptorSetOffset>;
+        I: IntoIterator,
+        I::Item: Borrow<B::DescriptorSet>,
+        J: IntoIterator,
+        J::Item: Borrow<DescriptorSetOffset>;
 
     /// Bind a compute pipeline.
     ///
@@ -343,15 +351,17 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
 
     /// Takes an iterator of compute `DescriptorSet`'s, and binds them to the command buffer,
     /// `first_set` is the index that the first descriptor is mapped to in the command buffer.
-    unsafe fn bind_compute_descriptor_sets<'a, I, J>(
+    unsafe fn bind_compute_descriptor_sets<I, J>(
         &mut self,
         layout: &B::PipelineLayout,
         first_set: usize,
         sets: I,
         offsets: J,
     ) where
-        I: Iterator<Item = &'a B::DescriptorSet>,
-        J: Iterator<Item = DescriptorSetOffset>;
+        I: IntoIterator,
+        I::Item: Borrow<B::DescriptorSet>,
+        J: IntoIterator,
+        J::Item: Borrow<DescriptorSetOffset>;
 
     /// Execute a workgroup in the compute pipeline. `x`, `y` and `z` are the
     /// number of local workgroups to dispatch along each "axis"; a total of `x`*`y`*`z`
@@ -378,7 +388,8 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
     /// Adds a command to copy regions from the source to destination buffer.
     unsafe fn copy_buffer<T>(&mut self, src: &B::Buffer, dst: &B::Buffer, regions: T)
     where
-        T: Iterator<Item = BufferCopy>;
+        T: IntoIterator,
+        T::Item: Borrow<BufferCopy>;
 
     /// Copies regions from the source to the destination images, which
     /// have the given layouts.  No format conversion is done; the source and destination
@@ -392,7 +403,8 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         dst_layout: Layout,
         regions: T,
     ) where
-        T: Iterator<Item = ImageCopy>;
+        T: IntoIterator,
+        T::Item: Borrow<ImageCopy>;
 
     /// Copies regions from the source buffer to the destination image.
     unsafe fn copy_buffer_to_image<T>(
@@ -402,7 +414,8 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         dst_layout: Layout,
         regions: T,
     ) where
-        T: Iterator<Item = BufferImageCopy>;
+        T: IntoIterator,
+        T::Item: Borrow<BufferImageCopy>;
 
     /// Copies regions from the source image to the destination buffer.
     unsafe fn copy_image_to_buffer<T>(
@@ -412,7 +425,8 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         dst: &B::Buffer,
         regions: T,
     ) where
-        T: Iterator<Item = BufferImageCopy>;
+        T: IntoIterator,
+        T::Item: Borrow<BufferImageCopy>;
 
     // TODO: This explanation needs improvement.
     /// Performs a non-indexed drawing operation, fetching vertex attributes
@@ -448,7 +462,7 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         buffer: &B::Buffer,
         offset: buffer::Offset,
         draw_count: DrawCount,
-        stride: buffer::Stride,
+        stride: u32,
     );
 
     /// Like `draw_indirect()`, this does indexed drawing a la `draw_indexed()` but
@@ -463,69 +477,7 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         buffer: &B::Buffer,
         offset: buffer::Offset,
         draw_count: DrawCount,
-        stride: buffer::Stride,
-    );
-
-    /// Functions identically to `draw_indirect()`, except the amount of draw
-    /// calls are specified by the u32 in `count_buffer` at `count_buffer_offset`.
-    /// There is a limit of `max_draw_count` invocations.
-    ///
-    /// Each draw command in the buffer is a series of 4 `u32` values specifying,
-    /// in order, the number of vertices to draw, the number of instances to draw,
-    /// the index of the first vertex to draw, and the instance ID of the first
-    /// instance to draw.
-    unsafe fn draw_indirect_count(
-        &mut self,
-        _buffer: &B::Buffer,
-        _offset: buffer::Offset,
-        _count_buffer: &B::Buffer,
-        _count_buffer_offset: buffer::Offset,
-        _max_draw_count: u32,
-        _stride: buffer::Stride,
-    );
-
-    /// Functions identically to `draw_indexed_indirect()`, except the amount of draw
-    /// calls are specified by the u32 in `count_buffer` at `count_buffer_offset`.
-    /// There is a limit of `max_draw_count` invocations.
-    ///
-    /// Each draw command in the buffer is a series of 5 values specifying,
-    /// in order, the number of indices, the number of instances, the first index,
-    /// the vertex offset, and the first instance.  All are `u32`'s except
-    /// the vertex offset, which is an `i32`.
-    unsafe fn draw_indexed_indirect_count(
-        &mut self,
-        _buffer: &B::Buffer,
-        _offset: buffer::Offset,
-        _count_buffer: &B::Buffer,
-        _count_buffer_offset: buffer::Offset,
-        _max_draw_count: u32,
-        _stride: buffer::Stride,
-    );
-
-    /// Dispatches `task_count` of threads. Similar to compute dispatch.
-    unsafe fn draw_mesh_tasks(&mut self, task_count: TaskCount, first_task: TaskCount);
-
-    /// Indirect version of `draw_mesh_tasks`. Analogous to `draw_indirect`, but for mesh shaders.
-    unsafe fn draw_mesh_tasks_indirect(
-        &mut self,
-        buffer: &B::Buffer,
-        offset: buffer::Offset,
-        draw_count: DrawCount,
-        stride: buffer::Stride,
-    );
-
-    /// Like `draw_mesh_tasks_indirect` except that the draw count is read by
-    /// the device from a buffer during execution. The command will read an
-    /// unsigned 32-bit integer from `count_buffer` located at `count_buffer_offset`
-    /// and use this as the draw count.
-    unsafe fn draw_mesh_tasks_indirect_count(
-        &mut self,
-        buffer: &B::Buffer,
-        offset: buffer::Offset,
-        count_buffer: &B::Buffer,
-        count_buffer_offset: buffer::Offset,
-        max_draw_count: DrawCount,
-        stride: buffer::Stride,
+        stride: u32,
     );
 
     /// Signals an event once all specified stages of the shader pipeline have completed.
@@ -546,8 +498,10 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         stages: Range<pso::PipelineStage>,
         barriers: J,
     ) where
-        I: Iterator<Item = &'a B::Event>,
-        J: Iterator<Item = Barrier<'a, B>>;
+        I: IntoIterator,
+        I::Item: Borrow<B::Event>,
+        J: IntoIterator,
+        J::Item: Borrow<Barrier<'a, B>>;
 
     /// Begins a query operation.  Queries count operations or record timestamps
     /// resulting from commands that occur between the beginning and end of the query,
@@ -567,7 +521,7 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
         queries: Range<query::Id>,
         buffer: &B::Buffer,
         offset: buffer::Offset,
-        stride: buffer::Stride,
+        stride: buffer::Offset,
         flags: query::ResultFlags,
     );
 
@@ -600,9 +554,10 @@ pub trait CommandBuffer<B: Backend>: fmt::Debug + Any + Send + Sync {
     );
 
     /// Execute the given secondary command buffers.
-    unsafe fn execute_commands<'a, T>(&mut self, cmd_buffers: T)
+    unsafe fn execute_commands<'a, T, I>(&mut self, cmd_buffers: I)
     where
-        T: Iterator<Item = &'a B::CommandBuffer>;
+        T: 'a + Borrow<B::CommandBuffer>,
+        I: IntoIterator<Item = &'a T>;
 
     /// Debug mark the current spot in the command buffer.
     unsafe fn insert_debug_marker(&mut self, name: &str, color: u32);

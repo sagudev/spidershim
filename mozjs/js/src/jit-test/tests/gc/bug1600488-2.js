@@ -1,3 +1,5 @@
+// |jit-test| --enable-weak-refs
+
 const token = {};
 let iterated;
 const finalizationRegistry = new FinalizationRegistry(items => {

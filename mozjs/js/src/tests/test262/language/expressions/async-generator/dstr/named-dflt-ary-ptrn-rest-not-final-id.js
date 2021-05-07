@@ -6,7 +6,7 @@
 description: Rest element (identifier) may not be followed by any element (async generator named function expression (default parameter))
 esid: sec-asyncgenerator-definitions-evaluation
 features: [async-iteration]
-flags: [generated]
+flags: [generated, async]
 negative:
   phase: parse
   type: SyntaxError

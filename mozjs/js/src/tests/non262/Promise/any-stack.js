@@ -1,4 +1,4 @@
-// |reftest| skip-if(!xulRuntime.shell) -- needs async stack capture
+// |reftest| skip-if(!Promise.any)
 
 function toMessage(stack) {
   // Provide the stack string in the error message for debugging.

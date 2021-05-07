@@ -7,9 +7,9 @@
 #ifndef vm_ErrorObject_h_
 #define vm_ErrorObject_h_
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 
-#include <iterator>
 #include <stdint.h>
 
 #include "jspubtd.h"
@@ -55,10 +55,6 @@ class ErrorObject : public NativeObject {
 
   static const uint32_t RESERVED_SLOTS = SOURCEID_SLOT + 1;
 
-  // This slot is only used for errors that could be Wasm traps.
-  static const uint32_t WASM_TRAP_SLOT = SOURCEID_SLOT + 1;
-  static const uint32_t RESERVED_SLOTS_MAYBE_WASM_TRAP = WASM_TRAP_SLOT + 1;
-
  public:
   static const JSClass classes[JSEXN_ERROR_LIMIT];
 
@@ -68,7 +64,8 @@ class ErrorObject : public NativeObject {
   }
 
   static bool isErrorClass(const JSClass* clasp) {
-    return &classes[0] <= clasp && clasp < &classes[0] + std::size(classes);
+    return &classes[0] <= clasp &&
+           clasp < &classes[0] + mozilla::ArrayLength(classes);
   }
 
   // Create an error of the given type corresponding to the provided location
@@ -119,20 +116,22 @@ class ErrorObject : public NativeObject {
   static bool getStack_impl(JSContext* cx, const CallArgs& args);
   static bool setStack(JSContext* cx, unsigned argc, Value* vp);
   static bool setStack_impl(JSContext* cx, const CallArgs& args);
+};
 
-  // Used to distinguish errors created from Wasm traps.
-  bool mightBeWasmTrap() const {
-    return type() == JSEXN_WASMRUNTIMEERROR || type() == JSEXN_INTERNALERR;
-  }
-  bool fromWasmTrap() const {
-    if (!mightBeWasmTrap()) {
-      return false;
-    } else {
-      MOZ_ASSERT(JSCLASS_RESERVED_SLOTS(getClass()) > WASM_TRAP_SLOT);
-      return getReservedSlot(WASM_TRAP_SLOT).toBoolean();
-    }
-  }
-  void setFromWasmTrap();
+class AggregateErrorObject : public ErrorObject {
+  friend class ErrorObject;
+
+  // [[AggregateErrors]] slot of AggregateErrorObjects.
+  static const uint32_t AGGREGATE_ERRORS_SLOT = ErrorObject::RESERVED_SLOTS;
+  static const uint32_t RESERVED_SLOTS = AGGREGATE_ERRORS_SLOT + 1;
+
+ public:
+  ArrayObject* aggregateErrors() const;
+  void setAggregateErrors(ArrayObject* errors);
+
+  // Getter for the AggregateError.prototype.errors accessor.
+  static bool getErrors(JSContext* cx, unsigned argc, Value* vp);
+  static bool getErrors_impl(JSContext* cx, const CallArgs& args);
 };
 
 JSString* ErrorToSource(JSContext* cx, HandleObject obj);
@@ -142,6 +141,11 @@ JSString* ErrorToSource(JSContext* cx, HandleObject obj);
 template <>
 inline bool JSObject::is<js::ErrorObject>() const {
   return js::ErrorObject::isErrorClass(getClass());
+}
+
+template <>
+inline bool JSObject::is<js::AggregateErrorObject>() const {
+  return hasClass(js::ErrorObject::classForType(JSEXN_AGGREGATEERR));
 }
 
 #endif  // vm_ErrorObject_h_

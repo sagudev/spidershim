@@ -22,11 +22,9 @@
 
 #include "debugger/Debugger.h"
 #include "ds/Sort.h"
-#include "jit/AutoWritableJitCode.h"
 #include "jit/ExecutableAllocator.h"
 #include "jit/MacroAssembler.h"
 #include "wasm/WasmInstance.h"
-#include "wasm/WasmJS.h"
 #include "wasm/WasmStubs.h"
 #include "wasm/WasmValidate.h"
 
@@ -76,7 +74,10 @@ static const CallSite* SlowCallSiteSearchByOffset(const MetadataTier& metadata,
 bool DebugState::getLineOffsets(size_t lineno, Vector<uint32_t>* offsets) {
   const CallSite* callsite =
       SlowCallSiteSearchByOffset(metadata(Tier::Debug), lineno);
-  return !(callsite && !offsets->append(lineno));
+  if (callsite && !offsets->append(lineno)) {
+    return false;
+  }
+  return true;
 }
 
 bool DebugState::getAllColumnOffsets(Vector<ExprLoc>* offsets) {
@@ -278,6 +279,11 @@ void DebugState::clearBreakpointsIn(JSFreeOp* fop, WasmInstanceObject* instance,
   }
 }
 
+void DebugState::clearAllBreakpoints(JSFreeOp* fop,
+                                     WasmInstanceObject* instance) {
+  clearBreakpointsIn(fop, instance, nullptr, nullptr);
+}
+
 void DebugState::toggleDebugTrap(uint32_t offset, bool enabled) {
   MOZ_ASSERT(offset);
   uint8_t* trap = code_->segment(Tier::Debug).base() + offset;
@@ -290,10 +296,8 @@ void DebugState::toggleDebugTrap(uint32_t offset, bool enabled) {
       i++;
     }
     if (i >= farJumpOffsets.length() ||
-        (i > 0 &&
-         offset - farJumpOffsets[i - 1] < farJumpOffsets[i] - offset)) {
+        (i > 0 && offset - farJumpOffsets[i - 1] < farJumpOffsets[i] - offset))
       i--;
-    }
     uint8_t* farJump = code_->segment(Tier::Debug).base() + farJumpOffsets[i];
     MacroAssembler::patchNopToCall(trap, farJump);
   } else {
@@ -464,7 +468,7 @@ bool DebugState::getSourceMappingURL(JSContext* cx,
       return true;  // ignoring invalid section data
     }
 
-    JS::UTF8Chars utf8Chars(reinterpret_cast<const char*>(chars), nchars);
+    UTF8Chars utf8Chars(reinterpret_cast<const char*>(chars), nchars);
     JSString* str = JS_NewStringCopyUTF8N(cx, utf8Chars);
     if (!str) {
       return false;
@@ -476,7 +480,7 @@ bool DebugState::getSourceMappingURL(JSContext* cx,
   // Check presence of "SourceMap:" HTTP response header.
   char* sourceMapURL = metadata().sourceMapURL.get();
   if (sourceMapURL && strlen(sourceMapURL)) {
-    JS::UTF8Chars utf8Chars(sourceMapURL, strlen(sourceMapURL));
+    UTF8Chars utf8Chars(sourceMapURL, strlen(sourceMapURL));
     JSString* str = JS_NewStringCopyUTF8N(cx, utf8Chars);
     if (!str) {
       return false;

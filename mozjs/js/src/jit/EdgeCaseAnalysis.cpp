@@ -7,7 +7,6 @@
 #include "jit/EdgeCaseAnalysis.h"
 
 #include "jit/MIR.h"
-#include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 
 using namespace js;

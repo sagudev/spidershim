@@ -8,9 +8,8 @@
 
 #include "jsapi.h"
 
+#include "builtin/TypedObject.h"
 #include "gc/Tracer.h"
-#include "jit/InlinableNatives.h"
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
 #include "js/TracingAPI.h"
 #include "vm/ArrayBufferObject.h"
@@ -208,15 +207,16 @@ const ClassSpec BigIntObject::classSpec_ = {
     BigIntObject::methods,
     BigIntObject::properties};
 
+// The class is named "Object" as a workaround for bug 1277801.
 const JSClass BigIntObject::class_ = {
-    "BigInt",
+    "Object",
     JSCLASS_HAS_CACHED_PROTO(JSProto_BigInt) |
         JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS),
     JS_NULL_CLASS_OPS, &BigIntObject::classSpec_};
 
 const JSClass BigIntObject::protoClass_ = {
-    "BigInt.prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_BigInt),
-    JS_NULL_CLASS_OPS, &BigIntObject::classSpec_};
+    js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_BigInt), JS_NULL_CLASS_OPS,
+    &BigIntObject::classSpec_};
 
 const JSPropertySpec BigIntObject::properties[] = {
     // BigInt proposal section 5.3.5
@@ -232,5 +232,4 @@ const JSFunctionSpec BigIntObject::methods[] = {
     JS_FS_END};
 
 const JSFunctionSpec BigIntObject::staticMethods[] = {
-    JS_INLINABLE_FN("asUintN", asUintN, 2, 0, BigIntAsUintN),
-    JS_INLINABLE_FN("asIntN", asIntN, 2, 0, BigIntAsIntN), JS_FS_END};
+    JS_FN("asUintN", asUintN, 2, 0), JS_FN("asIntN", asIntN, 2, 0), JS_FS_END};

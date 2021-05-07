@@ -11,10 +11,7 @@ use std::hash::Hash;
 //=============================================================================
 // SparseSet
 
-// Handy wrappers around `SparseSetU`, if you don't want to have to guess at an "optimal"
-// in-line size.
 pub type SparseSet<T> = SparseSetU<[T; 12]>;
-//pub type SparseSetIter<'a, T> = SparseSetUIter<'a, [T; 12]>; // No use case yet
 
 // Implementation: for small, unordered but no dups
 
@@ -73,7 +70,6 @@ where
             SparseSetU::Small { card, arr } => {
                 assert!(*card == A::size());
                 let mut set = FxHashSet::<A::Item>::default();
-                set.reserve(A::size());
                 // Could this be done faster?
                 let arr_p = arr.as_mut_ptr() as *mut A::Item;
                 for i in 0..*card {
@@ -199,7 +195,7 @@ where
     A: Array + Eq + Ord + Hash + Copy + fmt::Debug,
     A::Item: Eq + Ord + Hash + Copy + fmt::Debug,
 {
-    #[inline(always)]
+    #[inline(never)]
     pub fn empty() -> Self {
         SparseSetU::Small {
             card: 0,
@@ -207,7 +203,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline(never)]
     pub fn is_empty(&self) -> bool {
         match self {
             SparseSetU::Small { card, .. } => *card == 0,
@@ -257,11 +253,20 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline(never)]
     pub fn contains(&self, item: A::Item) -> bool {
         match self {
             SparseSetU::Large { set } => set.contains(&item),
-            SparseSetU::Small { card, arr } => small_contains(*card, arr, item),
+            SparseSetU::Small { card, arr } => {
+                assert!(*card <= A::size());
+                let arr_p = arr.as_ptr() as *const A::Item;
+                for i in 0..*card {
+                    if unsafe { read(arr_p.add(i)) } == item {
+                        return true;
+                    }
+                }
+                false
+            }
         }
     }
 

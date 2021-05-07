@@ -15,4 +15,4 @@ assertEq(source.text, "x = 3");
 assertEq(source.url, "foo.js");
 assertEq(source.startLine, 3);
 assertEq(source.sourceMapURL, "sourceMapURL");
-assertEq(source.introductionType, "inlineScript");
+assertEq(source.introductionType, "scriptElement");

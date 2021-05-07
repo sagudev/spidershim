@@ -8,21 +8,19 @@
 // except according to those terms.
 //! A one-dimensional length, tagged with its units.
 
-use crate::approxeq::ApproxEq;
-use crate::num::Zero;
-use crate::scale::Scale;
-use crate::approxord::{max, min};
+use scale::Scale;
+use num::Zero;
 
-use crate::num::One;
-use core::cmp::Ordering;
-use core::fmt;
-use core::hash::{Hash, Hasher};
-use core::marker::PhantomData;
-use core::ops::{Add, Div, Mul, Neg, Sub};
-use core::ops::{AddAssign, DivAssign, MulAssign, SubAssign};
 use num_traits::{NumCast, Saturating};
+use num::One;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use core::cmp::Ordering;
+use core::ops::{Add, Div, Mul, Neg, Sub};
+use core::ops::{AddAssign, DivAssign, MulAssign, SubAssign};
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
+use core::fmt;
 
 /// A one-dimensional distance, with value represented by `T` and unit of measurement `Unit`.
 ///
@@ -57,7 +55,10 @@ where
     where
         D: Deserializer<'de>,
     {
-        Ok(Length(Deserialize::deserialize(deserializer)?, PhantomData))
+        Ok(Length(
+            Deserialize::deserialize(deserializer)?,
+            PhantomData,
+        ))
     }
 }
 
@@ -75,7 +76,6 @@ where
 }
 
 impl<T, U> Length<T, U> {
-    /// Associate a value with a unit of measure.
     #[inline]
     pub const fn new(x: T) -> Self {
         Length(x, PhantomData)
@@ -83,71 +83,24 @@ impl<T, U> Length<T, U> {
 }
 
 impl<T: Clone, U> Length<T, U> {
-    /// Unpack the underlying value from the wrapper.
-    pub fn get(self) -> T {
-        self.0
+    pub fn get(&self) -> T {
+        self.0.clone()
     }
 
     /// Cast the unit
     #[inline]
-    pub fn cast_unit<V>(self) -> Length<T, V> {
-        Length::new(self.0)
-    }
-
-    /// Linearly interpolate between this length and another length.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use euclid::default::Length;
-    ///
-    /// let from = Length::new(0.0);
-    /// let to = Length::new(8.0);
-    ///
-    /// assert_eq!(from.lerp(to, -1.0), Length::new(-8.0));
-    /// assert_eq!(from.lerp(to,  0.0), Length::new( 0.0));
-    /// assert_eq!(from.lerp(to,  0.5), Length::new( 4.0));
-    /// assert_eq!(from.lerp(to,  1.0), Length::new( 8.0));
-    /// assert_eq!(from.lerp(to,  2.0), Length::new(16.0));
-    /// ```
-    #[inline]
-    pub fn lerp(self, other: Self, t: T) -> Self
-    where
-        T: One + Sub<Output = T> + Mul<Output = T> + Add<Output = T>,
-    {
-        let one_t = T::one() - t.clone();
-        Length::new(one_t * self.0.clone() + t * other.0)
-    }
-}
-
-impl<T: PartialOrd, U> Length<T, U> {
-    /// Returns minimum between this length and another length.
-    #[inline]
-    pub fn min(self, other: Self) -> Self {
-        min(self, other)
-    }
-
-    /// Returns maximum between this length and another length.
-    #[inline]
-    pub fn max(self, other: Self) -> Self {
-        max(self, other)
-    }
-}
-
-impl<T: NumCast + Clone, U> Length<T, U> {
-    /// Cast from one numeric representation to another, preserving the units.
-    #[inline]
-    pub fn cast<NewT: NumCast>(self) -> Length<NewT, U> {
-        self.try_cast().unwrap()
-    }
-
-    /// Fallible cast from one numeric representation to another, preserving the units.
-    pub fn try_cast<NewT: NumCast>(self) -> Option<Length<NewT, U>> {
-        NumCast::from(self.0).map(Length::new)
+    pub fn cast_unit<V>(&self) -> Length<T, V> {
+        Length::new(self.0.clone())
     }
 }
 
 impl<T: fmt::Debug, U> fmt::Debug for Length<T, U> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<T: fmt::Display, U> fmt::Display for Length<T, U> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)
     }
@@ -160,71 +113,69 @@ impl<T: Default, U> Default for Length<T, U> {
     }
 }
 
-impl<T: Hash, U> Hash for Length<T, U> {
+impl<T, U> Hash for Length<T, U>
+    where T: Hash
+{
     fn hash<H: Hasher>(&self, h: &mut H) {
         self.0.hash(h);
     }
 }
 
 // length + length
-impl<T: Add, U> Add for Length<T, U> {
-    type Output = Length<T::Output, U>;
-
-    fn add(self, other: Self) -> Self::Output {
+impl<U, T: Add<T, Output = T>> Add for Length<T, U> {
+    type Output = Length<T, U>;
+    fn add(self, other: Length<T, U>) -> Length<T, U> {
         Length::new(self.0 + other.0)
     }
 }
 
 // length += length
-impl<T: AddAssign, U> AddAssign for Length<T, U> {
-    fn add_assign(&mut self, other: Self) {
+impl<U, T: AddAssign<T>> AddAssign for Length<T, U> {
+    fn add_assign(&mut self, other: Length<T, U>) {
         self.0 += other.0;
     }
 }
 
 // length - length
-impl<T: Sub, U> Sub for Length<T, U> {
-    type Output = Length<T::Output, U>;
-
-    fn sub(self, other: Length<T, U>) -> Self::Output {
+impl<U, T: Sub<T, Output = T>> Sub<Length<T, U>> for Length<T, U> {
+    type Output = Length<T, U>;
+    fn sub(self, other: Length<T, U>) -> <Self as Sub>::Output {
         Length::new(self.0 - other.0)
     }
 }
 
 // length -= length
-impl<T: SubAssign, U> SubAssign for Length<T, U> {
-    fn sub_assign(&mut self, other: Self) {
+impl<U, T: SubAssign<T>> SubAssign for Length<T, U> {
+    fn sub_assign(&mut self, other: Length<T, U>) {
         self.0 -= other.0;
     }
 }
 
 // Saturating length + length and length - length.
-impl<T: Saturating, U> Saturating for Length<T, U> {
-    fn saturating_add(self, other: Self) -> Self {
+impl<U, T: Saturating> Saturating for Length<T, U> {
+    fn saturating_add(self, other: Length<T, U>) -> Length<T, U> {
         Length::new(self.0.saturating_add(other.0))
     }
 
-    fn saturating_sub(self, other: Self) -> Self {
+    fn saturating_sub(self, other: Length<T, U>) -> Length<T, U> {
         Length::new(self.0.saturating_sub(other.0))
     }
 }
 
 // length / length
-impl<Src, Dst, T: Div> Div<Length<T, Src>> for Length<T, Dst> {
-    type Output = Scale<T::Output, Src, Dst>;
-
+impl<Src, Dst, T: Div<T, Output = T>> Div<Length<T, Src>> for Length<T, Dst> {
+    type Output = Scale<T, Src, Dst>;
     #[inline]
-    fn div(self, other: Length<T, Src>) -> Self::Output {
+    fn div(self, other: Length<T, Src>) -> Scale<T, Src, Dst> {
         Scale::new(self.0 / other.0)
     }
 }
 
 // length * scalar
-impl<T: Mul, U> Mul<T> for Length<T, U> {
-    type Output = Length<T::Output, U>;
-
+impl<T: Mul<T, Output = T>, U> Mul<T> for Length<T, U> {
+    type Output = Self;
     #[inline]
-    fn mul(self, scale: T) -> Self::Output {
+    fn mul(self, scale: T) -> Self {
         Length::new(self.0 * scale)
     }
 }
@@ -238,11 +189,10 @@ impl<T: Copy + Mul<T, Output = T>, U> MulAssign<T> for Length<T, U> {
 }
 
 // length / scalar
-impl<T: Div, U> Div<T> for Length<T, U> {
-    type Output = Length<T::Output, U>;
-
+impl<T: Div<T, Output = T>, U> Div<T> for Length<T, U> {
+    type Output = Self;
     #[inline]
-    fn div(self, scale: T) -> Self::Output {
+    fn div(self, scale: T) -> Self {
         Length::new(self.0 / scale)
     }
 }
@@ -256,32 +206,42 @@ impl<T: Copy + Div<T, Output = T>, U> DivAssign<T> for Length<T, U> {
 }
 
 // length * scaleFactor
-impl<Src, Dst, T: Mul> Mul<Scale<T, Src, Dst>> for Length<T, Src> {
-    type Output = Length<T::Output, Dst>;
-
+impl<Src, Dst, T: Mul<T, Output = T>> Mul<Scale<T, Src, Dst>> for Length<T, Src> {
+    type Output = Length<T, Dst>;
     #[inline]
-    fn mul(self, scale: Scale<T, Src, Dst>) -> Self::Output {
+    fn mul(self, scale: Scale<T, Src, Dst>) -> Length<T, Dst> {
         Length::new(self.0 * scale.0)
     }
 }
 
 // length / scaleFactor
-impl<Src, Dst, T: Div> Div<Scale<T, Src, Dst>> for Length<T, Dst> {
-    type Output = Length<T::Output, Src>;
-
+impl<Src, Dst, T: Div<T, Output = T>> Div<Scale<T, Src, Dst>> for Length<T, Dst> {
+    type Output = Length<T, Src>;
     #[inline]
-    fn div(self, scale: Scale<T, Src, Dst>) -> Self::Output {
+    fn div(self, scale: Scale<T, Src, Dst>) -> Length<T, Src> {
         Length::new(self.0 / scale.0)
     }
 }
 
 // -length
-impl<U, T: Neg> Neg for Length<T, U> {
-    type Output = Length<T::Output, U>;
-
+impl<U, T: Neg<Output = T>> Neg for Length<T, U> {
+    type Output = Length<T, U>;
     #[inline]
-    fn neg(self) -> Self::Output {
+    fn neg(self) -> Length<T, U> {
         Length::new(-self.0)
+    }
+}
+
+impl<T: NumCast + Clone, U> Length<T, U> {
+    /// Cast from one numeric representation to another, preserving the units.
+    #[inline]
+    pub fn cast<NewT: NumCast>(&self) -> Length<NewT, U> {
+        self.try_cast().unwrap()
+    }
+
+    /// Fallible cast from one numeric representation to another, preserving the units.
+    pub fn try_cast<NewT: NumCast>(&self) -> Option<Length<NewT, U>> {
+        NumCast::from(self.get()).map(Length::new)
     }
 }
 
@@ -312,26 +272,29 @@ impl<T: Zero, U> Zero for Length<T, U> {
     }
 }
 
-impl<U, T: ApproxEq<T>> ApproxEq<T> for Length<T, U> {
+impl<T, U> Length<T, U>
+where
+    T: Copy + One + Add<Output = T> + Sub<Output = T> + Mul<Output = T>,
+{
+    /// Linearly interpolate between this length and another length.
+    ///
+    /// When `t` is `One::one()`, returned value equals to `other`,
+    /// otherwise equals to `self`.
     #[inline]
-    fn approx_epsilon() -> T {
-        T::approx_epsilon()
-    }
-
-    #[inline]
-    fn approx_eq_eps(&self, other: &Length<T, U>, approx_epsilon: &T) -> bool {
-        self.0.approx_eq_eps(&other.0, approx_epsilon)
+    pub fn lerp(&self, other: Self, t: T) -> Self {
+        let one_t = T::one() - t;
+        Length::new(one_t * self.get() + t * other.get())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Length;
-    use crate::num::Zero;
+    use num::Zero;
 
-    use crate::scale::Scale;
-    use core::f32::INFINITY;
     use num_traits::Saturating;
+    use scale::Scale;
+    use core::f32::INFINITY;
 
     enum Inch {}
     enum Mm {}
@@ -343,8 +306,8 @@ mod tests {
         use super::*;
 
         extern crate serde_test;
-        use self::serde_test::assert_tokens;
         use self::serde_test::Token;
+        use self::serde_test::assert_tokens;
 
         #[test]
         fn test_length_serde() {
@@ -365,6 +328,19 @@ mod tests {
 
         assert_eq!(one_foot.get(), 12.0);
         assert_eq!(variable_length.get(), 24.0);
+    }
+
+    #[test]
+    fn test_get_clones_length_value() {
+        // Calling get returns a clone of the Length's value.
+        // To test this, we need something clone-able - hence a vector.
+        let mut length: Length<Vec<i32>, Inch> = Length::new(vec![1, 2, 3]);
+
+        let value = length.get();
+        length.0.push(4);
+
+        assert_eq!(value, vec![1, 2, 3]);
+        assert_eq!(length.get(), vec![1, 2, 3, 4]);
     }
 
     #[test]

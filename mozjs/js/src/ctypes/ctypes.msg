@@ -6,7 +6,7 @@
 /*
  * This is the jsctypes error message file.
  *
- * For syntax details, see js/public/friend/ErrorNumbers.msg.
+ * For syntax details, see js/src/js.msg.
  */
 
 MSG_DEF(CTYPESMSG_PLACEHOLDER_0, 0, JSEXN_ERR, NULL)

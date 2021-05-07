@@ -1,11 +1,9 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-import ast
 import os
 import json
 import pathlib
-import re
 
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
@@ -24,20 +22,10 @@ KNOWN_PERFHERDER_PROPS = set(
     ["name", "value", "unit", "lowerIsBetter", "shouldAlert", "alertThreshold"]
 )
 KNOWN_SUITE_PROPS = set(
-    set(["results", "transformer", "transformer-options", "extraOptions", "framework"])
+    set(["results", "transformer", "transformer-options", "extraOptions"])
     | KNOWN_PERFHERDER_PROPS
 )
 KNOWN_SINGLE_MEASURE_PROPS = set(set(["values"]) | KNOWN_PERFHERDER_PROPS)
-
-
-# Regex splitter for the metric fields - used to handle
-# the case when `,` is found within the options values.
-METRIC_SPLITTER = re.compile(r",\s*(?![^\[\]]*\])")
-
-
-def is_number(value):
-    """Determines if the value is an int/float."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def open_file(path):
@@ -106,38 +94,3 @@ def validate_intermediate_results(results):
                 "Found unknown single-measure-level keys for "
                 f"{entry['name']}: {list(unknown_keys)}"
             )
-
-
-def metric_fields(value):
-    # old form: just the name
-    if "," not in value and ":" not in value:
-        return {"name": value}
-
-    def _check(field):
-        sfield = field.strip().partition(":")
-        if len(sfield) != 3 or not (sfield[1] and sfield[2]):
-            raise ValueError(f"Unexpected metrics definition {field}")
-        if sfield[0] not in KNOWN_SUITE_PROPS:
-            raise ValueError(
-                f"Unknown field '{sfield[0]}', should be in " f"{KNOWN_SUITE_PROPS}"
-            )
-
-        sfield = [sfield[0], sfield[2]]
-
-        try:
-            # This handles dealing with parsing lists
-            # from a string
-            sfield[1] = ast.literal_eval(sfield[1])
-        except (ValueError, SyntaxError):
-            # Ignore failures, those are from instances
-            # which don't need to be converted from a python
-            # representation
-            pass
-
-        return sfield
-
-    fields = [field.strip() for field in METRIC_SPLITTER.split(value)]
-    res = dict([_check(field) for field in fields])
-    if "name" not in res:
-        raise ValueError(f"{value} misses the 'name' field")
-    return res

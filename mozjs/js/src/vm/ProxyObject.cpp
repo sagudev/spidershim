@@ -14,13 +14,14 @@
 #include "gc/ObjectKind-inl.h"
 #include "gc/WeakMap-inl.h"
 #include "vm/JSObject-inl.h"
+#include "vm/TypeInference-inl.h"
 
 using namespace js;
 
 static gc::AllocKind GetProxyGCObjectKind(const JSClass* clasp,
                                           const BaseProxyHandler* handler,
                                           const Value& priv) {
-  MOZ_ASSERT(clasp->isProxyObject());
+  MOZ_ASSERT(clasp->isProxy());
 
   uint32_t nreserved = JSCLASS_RESERVED_SLOTS(clasp);
 
@@ -60,10 +61,6 @@ void ProxyObject::init(const BaseProxyHandler* handler, HandleValue priv,
   } else {
     setSameCompartmentPrivate(priv);
   }
-
-  // The expando slot is nullptr until required by the installation of
-  // a private field.
-  setExpando(nullptr);
 }
 
 /* static */
@@ -72,8 +69,111 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
                               const JSClass* clasp) {
   Rooted<TaggedProto> proto(cx, proto_);
 
-  MOZ_ASSERT(!clasp->isNativeObject());
-  MOZ_ASSERT(clasp->isProxyObject());
+  MOZ_ASSERT(clasp->isProxy());
+  MOZ_ASSERT(isValidProxyClass(clasp));
+  MOZ_ASSERT(clasp->shouldDelayMetadataBuilder());
+  MOZ_ASSERT_IF(proto.isObject(),
+                cx->compartment() == proto.toObject()->compartment());
+  MOZ_ASSERT(clasp->hasFinalize());
+
+#ifdef DEBUG
+  if (priv.isGCThing()) {
+    JS::AssertCellIsNotGray(priv.toGCThing());
+  }
+#endif
+
+  /*
+   * Eagerly mark properties unknown for proxies, so we don't try to track
+   * their properties and so that we don't need to walk the compartment if
+   * their prototype changes later.  But don't do this for DOM proxies,
+   * because we want to be able to keep track of them in typesets in useful
+   * ways.
+   */
+  if (proto.isObject() && !clasp->isDOMClass()) {
+    ObjectGroupRealm& realm = ObjectGroupRealm::getForNewObject(cx);
+    RootedObject protoObj(cx, proto.toObject());
+    if (!JSObject::setNewGroupUnknown(cx, realm, clasp, protoObj)) {
+      return nullptr;
+    }
+  }
+
+  gc::AllocKind allocKind = GetProxyGCObjectKind(clasp, handler, priv);
+
+  Realm* realm = cx->realm();
+
+  AutoSetNewObjectMetadata metadata(cx);
+  // Try to look up the group and shape in the NewProxyCache.
+  RootedObjectGroup group(cx);
+  RootedShape shape(cx);
+  if (!realm->newProxyCache.lookup(clasp, proto, group.address(),
+                                   shape.address())) {
+    group = ObjectGroup::defaultNewGroup(cx, clasp, proto, nullptr);
+    if (!group) {
+      return nullptr;
+    }
+
+    shape = EmptyShape::getInitialShape(cx, clasp, proto, /* nfixed = */ 0);
+    if (!shape) {
+      return nullptr;
+    }
+
+    realm->newProxyCache.add(group, shape);
+  }
+
+  MOZ_ASSERT(group->realm() == realm);
+  MOZ_ASSERT(shape->zone() == cx->zone());
+  MOZ_ASSERT(!IsAboutToBeFinalizedUnbarriered(group.address()));
+  MOZ_ASSERT(!IsAboutToBeFinalizedUnbarriered(shape.address()));
+
+  // Ensure that the wrapper has the same lifetime assumptions as the
+  // wrappee. Prefer to allocate in the nursery, when possible.
+  gc::InitialHeap heap;
+  {
+    AutoSweepObjectGroup sweep(group);
+    if (group->shouldPreTenure(sweep) ||
+        (priv.isGCThing() && priv.toGCThing()->isTenured()) ||
+        !handler->canNurseryAllocate()) {
+      heap = gc::TenuredHeap;
+    } else {
+      heap = gc::DefaultHeap;
+    }
+  }
+
+  debugCheckNewObject(group, shape, allocKind, heap);
+
+  JSObject* obj =
+      AllocateObject(cx, allocKind, /* nDynamicSlots = */ 0, heap, clasp);
+  if (!obj) {
+    return nullptr;
+  }
+
+  ProxyObject* proxy = static_cast<ProxyObject*>(obj);
+  proxy->initGroup(group);
+  proxy->initShape(shape);
+
+  MOZ_ASSERT(clasp->shouldDelayMetadataBuilder());
+  realm->setObjectPendingMetadata(cx, proxy);
+
+  gc::gcprobes::CreateObject(proxy);
+
+  proxy->init(handler, priv, cx);
+
+  // Don't track types of properties of non-DOM and non-singleton proxies.
+  if (!clasp->isDOMClass()) {
+    MarkObjectGroupUnknownProperties(cx, proxy->group());
+  }
+
+  return proxy;
+}
+
+/* static */
+ProxyObject* ProxyObject::NewSingleton(JSContext* cx,
+                                       const BaseProxyHandler* handler,
+                                       HandleValue priv, TaggedProto proto_,
+                                       const JSClass* clasp) {
+  Rooted<TaggedProto> proto(cx, proto_);
+
+  MOZ_ASSERT(clasp->isProxy());
   MOZ_ASSERT(isValidProxyClass(clasp));
   MOZ_ASSERT(clasp->shouldDelayMetadataBuilder());
   MOZ_ASSERT_IF(proto.isObject(),
@@ -88,52 +188,61 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
 
   gc::AllocKind allocKind = GetProxyGCObjectKind(clasp, handler, priv);
 
-  Realm* realm = cx->realm();
-
   AutoSetNewObjectMetadata metadata(cx);
-  // Try to look up the shape in the NewProxyCache.
-  RootedShape shape(cx);
-  if (!realm->newProxyCache.lookup(clasp, proto, shape.address())) {
-    shape =
-        EmptyShape::getInitialShape(cx, clasp, realm, proto, /* nfixed = */ 0);
+  Rooted<ProxyObject*> proxy(cx);
+  {
+    Realm* realm = cx->realm();
+
+    // We're creating a singleton, so go straight to getting a singleton group,
+    // from the singleton group cache (or creating it freshly if needed).
+    RootedObjectGroup group(cx, ObjectGroup::lazySingletonGroup(
+                                    cx, ObjectGroupRealm::getForNewObject(cx),
+                                    realm, clasp, proto));
+    if (!group) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(group->realm() == realm);
+    MOZ_ASSERT(group->singleton());
+    MOZ_ASSERT(!IsAboutToBeFinalizedUnbarriered(group.address()));
+
+    // Also retrieve an empty shape.  Unlike for non-singleton proxies, this
+    // shape lookup is not cached in |realm->newProxyCache|.  We could cache it
+    // there, but distinguishing group/shape for singleton and non-singleton
+    // proxies would increase contention on the cache (and might end up evicting
+    // non-singleton cases where performance really matters).  Assume that
+    // singleton proxies are rare, and don't bother caching their shapes/groups.
+    RootedShape shape(
+        cx, EmptyShape::getInitialShape(cx, clasp, proto, /* nfixed = */ 0));
     if (!shape) {
       return nullptr;
     }
 
-    realm->newProxyCache.add(shape);
+    MOZ_ASSERT(shape->zone() == cx->zone());
+    MOZ_ASSERT(!IsAboutToBeFinalizedUnbarriered(shape.address()));
+
+    gc::InitialHeap heap = gc::TenuredHeap;
+    debugCheckNewObject(group, shape, allocKind, heap);
+
+    JSObject* obj =
+        AllocateObject(cx, allocKind, /* nDynamicSlots = */ 0, heap, clasp);
+    if (!obj) {
+      return nullptr;
+    }
+
+    proxy = static_cast<ProxyObject*>(obj);
+    proxy->initGroup(group);
+    proxy->initShape(shape);
+
+    MOZ_ASSERT(clasp->shouldDelayMetadataBuilder());
+    realm->setObjectPendingMetadata(cx, proxy);
+
+    js::gc::gcprobes::CreateObject(proxy);
   }
-
-  MOZ_ASSERT(shape->realm() == realm);
-  MOZ_ASSERT(!IsAboutToBeFinalizedUnbarriered(shape.address()));
-
-  // Ensure that the wrapper has the same lifetime assumptions as the
-  // wrappee. Prefer to allocate in the nursery, when possible.
-  gc::InitialHeap heap;
-  if ((priv.isGCThing() && priv.toGCThing()->isTenured()) ||
-      !handler->canNurseryAllocate()) {
-    heap = gc::TenuredHeap;
-  } else {
-    heap = gc::DefaultHeap;
-  }
-
-  debugCheckNewObject(shape, allocKind, heap);
-
-  JSObject* obj =
-      AllocateObject(cx, allocKind, /* nDynamicSlots = */ 0, heap, clasp);
-  if (!obj) {
-    return nullptr;
-  }
-
-  ProxyObject* proxy = static_cast<ProxyObject*>(obj);
-  proxy->initShape(shape);
-
-  MOZ_ASSERT(clasp->shouldDelayMetadataBuilder());
-  realm->setObjectPendingMetadata(cx, proxy);
-
-  gc::gcprobes::CreateObject(proxy);
 
   proxy->init(handler, priv, cx);
 
+  MOZ_ASSERT(proxy->isSingleton());
   return proxy;
 }
 
@@ -154,20 +263,8 @@ void ProxyObject::setSameCompartmentPrivate(const Value& priv) {
 
 inline void ProxyObject::setPrivate(const Value& priv) {
   MOZ_ASSERT_IF(IsMarkedBlack(this) && priv.isGCThing(),
-                !JS::GCThingIsMarkedGray(priv.toGCCellPtr()));
+                !JS::GCThingIsMarkedGray(JS::GCCellPtr(priv)));
   *slotOfPrivate() = priv;
-}
-
-void ProxyObject::setExpando(JSObject* expando) {
-  // Ensure that we don't accidentally end up pointing to a
-  // grey object, which would violate GC invariants.
-  MOZ_ASSERT_IF(IsMarkedBlack(this) && expando,
-                !JS::GCThingIsMarkedGray(JS::GCCellPtr(expando)));
-
-  // Ensure we're in the same compartment as the proxy object: Don't want the
-  // expando to end up as a CCW.
-  MOZ_ASSERT_IF(expando, expando->compartment() == compartment());
-  *slotOfExpando() = ObjectOrNullValue(expando);
 }
 
 void ProxyObject::nuke() {
@@ -183,9 +280,6 @@ void ProxyObject::nuke() {
   // Clear the target reference and replaced it with a value that encodes
   // various information about the original target.
   setSameCompartmentPrivate(DeadProxyTargetValue(this));
-
-  // Clear out the expando
-  setExpando(nullptr);
 
   // Update the handler to make this a DeadObjectProxy.
   setHandler(&DeadObjectProxy::singleton);

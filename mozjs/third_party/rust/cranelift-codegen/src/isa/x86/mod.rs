@@ -23,7 +23,6 @@ use crate::result::CodegenResult;
 use crate::timing;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
-use core::any::Any;
 use core::fmt;
 use target_lexicon::{PointerWidth, Triple};
 
@@ -54,12 +53,9 @@ fn isa_constructor(
         PointerWidth::U32 => &enc_tables::LEVEL1_I32[..],
         PointerWidth::U64 => &enc_tables::LEVEL1_I64[..],
     };
-
-    let isa_flags = settings::Flags::new(&shared_flags, builder);
-
     Box::new(Isa {
         triple,
-        isa_flags,
+        isa_flags: settings::Flags::new(&shared_flags, builder),
         shared_flags,
         cpumode: level1,
     })
@@ -176,10 +172,6 @@ impl TargetIsa for Isa {
     #[cfg(feature = "unwind")]
     fn create_systemv_cie(&self) -> Option<gimli::write::CommonInformationEntry> {
         Some(unwind::systemv::create_cie())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self as &dyn Any
     }
 }
 

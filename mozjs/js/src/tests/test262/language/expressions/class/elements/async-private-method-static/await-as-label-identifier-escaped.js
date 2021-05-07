@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) error:SyntaxError -- requires shell-options
+// |reftest| skip error:SyntaxError -- class-static-methods-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/async-functions/await-as-label-identifier-escaped.case
 // - src/async-functions/syntax/async-class-expr-static-private-method.template
@@ -32,8 +32,6 @@ info: |
 $DONOTEVALUATE();
 
 
-var C = class {
-  static async #method() {
+var C = class { static async #method() {
     \u0061wait: ;
-  }
-}
+}};

@@ -43,7 +43,7 @@ class LIRGenerator final : public LIRGeneratorSpecific {
   LIRGenerator(MIRGenerator* gen, MIRGraph& graph, LIRGraph& lirGraph)
       : LIRGeneratorSpecific(gen, graph, lirGraph), maxargslots_(0) {}
 
-  [[nodiscard]] bool generate();
+  MOZ_MUST_USE bool generate();
 
  private:
   LBoxAllocation useBoxFixedAtStart(MDefinition* mir, Register reg1,
@@ -59,15 +59,13 @@ class LIRGenerator final : public LIRGeneratorSpecific {
   void lowerShiftOp(JSOp op, MShiftInstruction* ins);
   void definePhis();
 
-  [[nodiscard]] bool lowerCallArguments(MCall* call);
+  MOZ_MUST_USE bool lowerCallArguments(MCall* call);
 
   friend class LIRGeneratorShared;
   void visitInstructionDispatch(MInstruction* ins);
 
-  void visitReturnImpl(MDefinition* def, bool isGenerator = false);
-
-  [[nodiscard]] bool visitInstruction(MInstruction* ins);
-  [[nodiscard]] bool visitBlock(MBasicBlock* block);
+  MOZ_MUST_USE bool visitInstruction(MInstruction* ins);
+  MOZ_MUST_USE bool visitBlock(MBasicBlock* block);
 
 #define MIR_OP(op) void visit##op(M##op* ins);
   MIR_OPCODE_LIST(MIR_OP)

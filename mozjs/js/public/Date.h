@@ -33,8 +33,11 @@
 #include "mozilla/MathAlgorithms.h"  // mozilla::Abs
 
 #include "js/Conversions.h"  // JS::ToInteger
-#include "js/TypeDecls.h"
-#include "js/Value.h"  // JS::CanonicalizeNaN, JS::DoubleValue, JS::Value
+#include "js/RootingAPI.h"   // JS::Handle
+#include "js/Value.h"        // JS::CanonicalizeNaN, JS::DoubleValue, JS::Value
+
+struct JS_PUBLIC_API JSContext;
+class JS_PUBLIC_API JSObject;
 
 namespace JS {
 

@@ -13,19 +13,18 @@
  * limitations under the License.
  */
 
-use crate::{
-    BinaryReader, ImportSectionEntryType, Range, Result, SectionIteratorLimited, SectionReader,
-    SectionWithLimitedItems,
+use super::{
+    BinaryReader, ExternalKind, ImportSectionEntryType, Result, SectionIteratorLimited,
+    SectionReader, SectionWithLimitedItems,
 };
 
 #[derive(Debug, Copy, Clone)]
 pub struct Import<'a> {
     pub module: &'a str,
-    pub field: Option<&'a str>,
+    pub field: &'a str,
     pub ty: ImportSectionEntryType,
 }
 
-#[derive(Clone)]
 pub struct ImportSectionReader<'a> {
     reader: BinaryReader<'a>,
     count: u32,
@@ -50,9 +49,15 @@ impl<'a> ImportSectionReader<'a> {
     ///
     /// # Examples
     /// ```
-    /// use wasmparser::ImportSectionReader;
-    /// # let data: &[u8] = &[0x01, 0x01, 0x41, 0x01, 0x66, 0x00, 0x00];
-    /// let mut import_reader = ImportSectionReader::new(data, 0).unwrap();
+    /// # let data: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    /// #     0x01, 0x4, 0x01, 0x60, 0x00, 0x00,
+    /// #     0x02, 0x07, 0x01, 0x01, 0x41, 0x01, 0x66, 0x00, 0x00,
+    /// #     0x03, 0x02, 0x01, 0x00, 0x0a, 0x05, 0x01, 0x03, 0x00, 0x01, 0x0b];
+    /// use wasmparser::ModuleReader;
+    /// let mut reader = ModuleReader::new(data).expect("module reader");
+    /// let section = reader.read().expect("type section");
+    /// let section = reader.read().expect("import section");
+    /// let mut import_reader = section.get_import_section_reader().expect("import section reader");
     /// for _ in 0..import_reader.get_count() {
     ///     let import = import_reader.read().expect("import");
     ///     println!("Import: {:?}", import);
@@ -62,7 +67,16 @@ impl<'a> ImportSectionReader<'a> {
     where
         'a: 'b,
     {
-        self.reader.read_import()
+        let module = self.reader.read_string()?;
+        let field = self.reader.read_string()?;
+        let kind = self.reader.read_external_kind()?;
+        let ty = match kind {
+            ExternalKind::Function => ImportSectionEntryType::Function(self.reader.read_var_u32()?),
+            ExternalKind::Table => ImportSectionEntryType::Table(self.reader.read_table_type()?),
+            ExternalKind::Memory => ImportSectionEntryType::Memory(self.reader.read_memory_type()?),
+            ExternalKind::Global => ImportSectionEntryType::Global(self.reader.read_global_type()?),
+        };
+        Ok(Import { module, field, ty })
     }
 }
 
@@ -76,9 +90,6 @@ impl<'a> SectionReader for ImportSectionReader<'a> {
     }
     fn original_position(&self) -> usize {
         ImportSectionReader::original_position(self)
-    }
-    fn range(&self) -> Range {
-        self.reader.range()
     }
 }
 

@@ -10,10 +10,10 @@
 #include <utility>
 
 #include "debugger/DebugAPI.h"
-#include "jit/Bailouts.h"
-#include "js/friend/DumpFunctions.h"  // js::DumpValue
+#include "jit/JitFrames.h"
 #include "vm/ArgumentsObject.h"
 
+#include "jit/JitFrames-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/JSScript-inl.h"
 

@@ -1,4 +1,4 @@
-//! Types to describe the properties of memory allocated for graphics resources.
+//! Types to describe the properties of memory allocated for gfx resources.
 
 use crate::{buffer, image, queue, Backend};
 use std::ops::Range;
@@ -26,15 +26,6 @@ bitflags!(
         /// Memory that may be lazily allocated as needed on the GPU
         /// and *must not* be visible to the CPU.
         const LAZILY_ALLOCATED = 0x10;
-    }
-);
-
-bitflags!(
-    /// Memory heap flags.
-    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-    pub struct HeapFlags: u16 {
-        /// Device local memory on the GPU.
-        const DEVICE_LOCAL = 0x1;
     }
 );
 
@@ -108,7 +99,7 @@ pub struct Requirements {
     /// Memory alignment.
     pub alignment: u64,
     /// Supported memory types.
-    pub type_mask: u32,
+    pub type_mask: u64,
 }
 
 /// A linear segment within a memory block.

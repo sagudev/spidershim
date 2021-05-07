@@ -73,78 +73,68 @@ namespace js {
 
 #  define STRUCTURED_CHANNEL_LIST(_) \
     _(BaselineICStats)               \
-    _(ScriptStats)                   \
-    _(RateMyCacheIR)
+    _(ScriptStats)
 
 // Structured spew channels
 enum class SpewChannel {
 #  define STRUCTURED_CHANNEL(name) name,
   STRUCTURED_CHANNEL_LIST(STRUCTURED_CHANNEL)
 #  undef STRUCTURED_CHANNEL
-      Count,
-  Disabled
+      Count
 };
 
-// A filter is used to select what channel is enabled
+// A filter is used to select what channels are enabled
 //
 // To save memory, JSScripts do not have their own filters, but instead have
 // a single bit which tracks if that script has opted into spewing.
 class StructuredSpewFilter {
-  // Indicates what spew channel is enabled.
-  SpewChannel channel_ = SpewChannel::Disabled;
+  // Packed set of bits indicating what spew channels
+  // are enabled.
+  mozilla::EnumSet<SpewChannel> bits_;
 
  public:
-  // Return true iff any channel is enabled.
-  bool isChannelSelected() const {
-    return !(channel_ == SpewChannel::Disabled);
-  }
+  // Default construct to all bits disabled.
+  StructuredSpewFilter() : bits_() {}
 
   // Return true iff spew is enabled for this channel for
   // the script this was created for.
-  bool enabled(SpewChannel x) const { return channel_ == x; }
+  bool enabled(SpewChannel x) const { return bits_.contains(x); }
 
-  // Returns true if we have enabled a new channel, false otherwise.
-  bool enableChannel(SpewChannel x) {
-    // Assert that we are not going to set the channel to
-    // SpewChannel::Disabled.
-    MOZ_ASSERT(x != SpewChannel::Disabled);
-    if (!isChannelSelected()) {
-      channel_ = x;
-      return true;
-    }
+  void enableChannel(SpewChannel x) { bits_ += x; }
 
-    return false;
-  }
-
-  void disableAllChannels() { channel_ = SpewChannel::Disabled; }
+  void disableAllChannels() { bits_.clear(); }
 };
 
 class StructuredSpewer {
  public:
   StructuredSpewer()
       : outputInitializationAttempted_(false),
-        spewingEnabled_(0),
+        spewingEnabled_(false),
         json_(mozilla::Nothing()),
-        selectedChannel_() {
+        selectedChannels_() {
     if (getenv("SPEW")) {
       parseSpewFlags(getenv("SPEW"));
     }
   }
 
-  ~StructuredSpewer() {
+  ~StructuredSpewer() { disableSpewing(); }
+
+  void enableSpewing() { spewingEnabled_ = true; }
+
+  void disableSpewing() {
+    if (!spewingEnabled_) {
+      return;
+    }
+
     if (json_.isSome()) {
       json_->endList();
       output_.flush();
       output_.finish();
       json_.reset();
     }
-  }
 
-  void enableSpewing() { spewingEnabled_++; }
-
-  void disableSpewing() {
-    MOZ_ASSERT(spewingEnabled_ > 0);
-    spewingEnabled_--;
+    spewingEnabled_ = false;
+    outputInitializationAttempted_ = false;
   }
 
   // Check if the spewer is enabled for a particular script, used to power
@@ -154,10 +144,6 @@ class StructuredSpewer {
   // A generic printf like spewer that logs the formatted string.
   static void spew(JSContext* cx, SpewChannel channel, const char* fmt, ...)
       MOZ_FORMAT_PRINTF(3, 4);
-
-  // Returns true iff the channel is enabled for the given script.
-  bool enabled(JSContext* cx, const JSScript* script,
-               SpewChannel channel) const;
 
  private:
   // In order to support lazy initialization, and simultaneously support a
@@ -177,20 +163,21 @@ class StructuredSpewer {
   // attemped in the right place.
   bool outputInitializationAttempted_;
 
-  // Indicates the number of times spewing has been enabled. If
-  // spewingEnabled_ is greater than zero, then spewing is enabled.
-  size_t spewingEnabled_;
+  bool spewingEnabled_;
 
   Fprinter output_;
   mozilla::Maybe<JSONPrinter> json_;
 
-  // Globally selected channel.
-  StructuredSpewFilter selectedChannel_;
+  // Globally selected channels.
+  StructuredSpewFilter selectedChannels_;
 
   using NameArray =
       mozilla::EnumeratedArray<SpewChannel, SpewChannel::Count, const char*>;
   // Channel Names
   static NameArray const names_;
+
+  // Return the global filter.
+  StructuredSpewFilter& filter() { return selectedChannels_; }
 
   // Get channel name
   static const char* getName(SpewChannel channel) { return names_[channel]; }
@@ -209,13 +196,16 @@ class StructuredSpewer {
 
   // Returns true iff the channels is enabled
   bool enabled(SpewChannel channel) {
-    return (spewingEnabled_ > 0 && selectedChannel_.enabled(channel));
+    return (spewingEnabled_ && filter().enabled(channel));
   }
+
+  // Returns true iff the channels is enabled for the given script.
+  bool enabled(JSContext* cx, const JSScript* script,
+               SpewChannel channel) const;
 
   // Start a record
   void startObject(JSContext* cx, const JSScript* script, SpewChannel channel);
 
-  friend class AutoSpewChannel;
   friend class AutoStructuredSpewer;
 };
 
@@ -266,24 +256,6 @@ class MOZ_RAII AutoStructuredSpewer {
     MOZ_ASSERT(printer_.isSome());
     return *printer_.ref();
   }
-};
-
-// An RAII class for setting a structured spewer's channel.
-//
-// This class is used to set a spewer's channel and then automatically
-// unset the channel when AutoSpewChannel goes out of scope.
-class MOZ_RAII AutoSpewChannel {
-  JSContext* cx_;
-  bool wasChannelAutoSet = false;
-
-  AutoSpewChannel(const AutoSpewChannel&) = delete;
-  void operator=(AutoSpewChannel&) = delete;
-
- public:
-  explicit AutoSpewChannel(JSContext* cx, SpewChannel channel,
-                           JSScript* script);
-
-  ~AutoSpewChannel();
 };
 
 }  // namespace js

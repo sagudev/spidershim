@@ -43,7 +43,6 @@ pub enum NodeTypeId {
     ExpressionOrSuper,
     MemberAssignmentTarget,
     ComputedMemberAssignmentTarget,
-    PrivateFieldAssignmentTarget,
     StaticMemberAssignmentTarget,
     ArrayBinding,
     ObjectBinding,
@@ -341,12 +340,6 @@ impl<'alloc> NodeTypeIdAccessor for MemberAssignmentTarget<'alloc> {
 impl<'alloc> NodeTypeIdAccessor for ComputedMemberAssignmentTarget<'alloc> {
     fn get_type_id(&self) -> NodeTypeId {
         NodeTypeId::ComputedMemberAssignmentTarget
-    }
-}
-
-impl<'alloc> NodeTypeIdAccessor for PrivateFieldAssignmentTarget<'alloc> {
-    fn get_type_id(&self) -> NodeTypeId {
-        NodeTypeId::PrivateFieldAssignmentTarget
     }
 }
 

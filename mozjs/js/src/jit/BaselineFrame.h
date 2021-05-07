@@ -9,17 +9,13 @@
 
 #include <algorithm>
 
-#include "jit/CalleeToken.h"
 #include "jit/JitFrames.h"
-#include "jit/ScriptFromCalleeToken.h"
 #include "vm/Stack.h"
 
 namespace js {
 namespace jit {
 
 class ICEntry;
-class ICScript;
-class JSJitFrameIter;
 
 // The stack looks like this, fp is the frame pointer:
 //
@@ -64,7 +60,6 @@ class BaselineFrame {
   ICEntry* interpreterICEntry_;
 
   JSObject* envChain_;        // Environment chain (always initialized).
-  ICScript* icScript_;        // IC script (initialized if Warp is enabled).
   ArgumentsObject* argsObj_;  // If HAS_ARGS_OBJ, the arguments object.
 
   // We need to split the Value into 2 fields of 32 bits, otherwise the C++
@@ -86,17 +81,13 @@ class BaselineFrame {
 #endif
   uint32_t loReturnValue_;  // If HAS_RVAL, the frame's return value.
   uint32_t hiReturnValue_;
-#if JS_BITS_PER_WORD == 32
-  // Ensure frame is 8-byte aligned, see static_assert below.
-  uint32_t padding_;
-#endif
 
  public:
   // Distance between the frame pointer and the frame header (return address).
   // This is the old frame pointer saved in the prologue.
   static const uint32_t FramePointerOffset = sizeof(void*);
 
-  [[nodiscard]] bool initForOsr(InterpreterFrame* fp, uint32_t numStackValues);
+  MOZ_MUST_USE bool initForOsr(InterpreterFrame* fp, uint32_t numStackValues);
 
 #ifdef DEBUG
   uint32_t debugFrameSize() const { return debugFrameSize_; }
@@ -105,6 +96,7 @@ class BaselineFrame {
 
   JSObject* environmentChain() const { return envChain_; }
   void setEnvironmentChain(JSObject* envChain) { envChain_ = envChain; }
+  inline JSObject** addressOfEnvironmentChain() { return &envChain_; }
 
   template <typename SpecificEnvironment>
   inline void pushOnEnvironmentChain(SpecificEnvironment& env);
@@ -145,6 +137,12 @@ class BaselineFrame {
   Value* valueSlot(size_t slot) const {
     MOZ_ASSERT(slot < debugNumValueSlots());
     return (Value*)this - (slot + 1);
+  }
+
+  Value topStackValue(uint32_t frameSize) const {
+    size_t numSlots = numValueSlots(frameSize);
+    MOZ_ASSERT(numSlots > 0);
+    return *valueSlot(numSlots - 1);
   }
 
   static size_t frameSizeForNumValueSlots(size_t numValueSlots) {
@@ -189,9 +187,6 @@ class BaselineFrame {
                     BaselineFrame::Size() + offsetOfArg(0));
   }
 
-  [[nodiscard]] bool saveGeneratorSlots(JSContext* cx, unsigned nslots,
-                                        ArrayObject* dest) const;
-
  private:
   Value* evalNewTargetAddress() const {
     MOZ_ASSERT(isEvalFrame());
@@ -223,25 +218,32 @@ class BaselineFrame {
     flags_ &= ~RUNNING_IN_INTERPRETER;
     interpreterScript_ = nullptr;
     interpreterPC_ = nullptr;
+    interpreterICEntry_ = nullptr;
   }
 
- private:
-  bool uninlineIsProfilerSamplingEnabled(JSContext* cx);
+  void initInterpFieldsForGeneratorThrowOrReturn(JSScript* script,
+                                                 jsbytecode* pc) {
+    // Note: we can initialize interpreterICEntry_ to nullptr because it won't
+    // be used anyway (we are going to enter the exception handler).
+    flags_ |= RUNNING_IN_INTERPRETER;
+    interpreterScript_ = script;
+    interpreterPC_ = pc;
+    interpreterICEntry_ = nullptr;
+  }
 
- public:
   // Switch a JIT frame on the stack to Interpreter mode. The caller is
   // responsible for patching the return address into this frame to a location
   // in the interpreter code. Also assert profiler sampling has been suppressed
   // so the sampler thread doesn't see an inconsistent state while we are
   // patching frames.
   void switchFromJitToInterpreter(JSContext* cx, jsbytecode* pc) {
-    MOZ_ASSERT(!uninlineIsProfilerSamplingEnabled(cx));
+    MOZ_ASSERT(!cx->isProfilerSamplingEnabled());
     MOZ_ASSERT(!runningInInterpreter());
     flags_ |= RUNNING_IN_INTERPRETER;
     setInterpreterFields(pc);
   }
   void switchFromJitToInterpreterAtPrologue(JSContext* cx) {
-    MOZ_ASSERT(!uninlineIsProfilerSamplingEnabled(cx));
+    MOZ_ASSERT(!cx->isProfilerSamplingEnabled());
     MOZ_ASSERT(!runningInInterpreter());
     flags_ |= RUNNING_IN_INTERPRETER;
     setInterpreterFieldsForPrologue(script());
@@ -253,7 +255,7 @@ class BaselineFrame {
   // pc anyway so we can avoid the overhead.
   void switchFromJitToInterpreterForExceptionHandler(JSContext* cx,
                                                      jsbytecode* pc) {
-    MOZ_ASSERT(!uninlineIsProfilerSamplingEnabled(cx));
+    MOZ_ASSERT(!cx->isProfilerSamplingEnabled());
     MOZ_ASSERT(!runningInInterpreter());
     flags_ |= RUNNING_IN_INTERPRETER;
     interpreterScript_ = script();
@@ -283,12 +285,6 @@ class BaselineFrame {
   // argument type check ICs).
   void setInterpreterFieldsForPrologue(JSScript* script);
 
-  ICScript* icScript() const { return icScript_; }
-  void setICScript(ICScript* icScript) { icScript_ = icScript; }
-
-  // The script that owns the current ICScript.
-  JSScript* outerScript() const;
-
   bool hasReturnValue() const { return flags_ & HAS_RVAL; }
   MutableHandleValue returnValue() {
     if (!hasReturnValue()) {
@@ -309,14 +305,15 @@ class BaselineFrame {
   inline CallObject& callObj() const;
 
   void setFlags(uint32_t flags) { flags_ = flags; }
+  uint32_t* addressOfFlags() { return &flags_; }
 
-  [[nodiscard]] inline bool pushLexicalEnvironment(JSContext* cx,
-                                                   Handle<LexicalScope*> scope);
-  [[nodiscard]] inline bool freshenLexicalEnvironment(JSContext* cx);
-  [[nodiscard]] inline bool recreateLexicalEnvironment(JSContext* cx);
+  inline MOZ_MUST_USE bool pushLexicalEnvironment(JSContext* cx,
+                                                  Handle<LexicalScope*> scope);
+  inline MOZ_MUST_USE bool freshenLexicalEnvironment(JSContext* cx);
+  inline MOZ_MUST_USE bool recreateLexicalEnvironment(JSContext* cx);
 
-  [[nodiscard]] bool initFunctionEnvironmentObjects(JSContext* cx);
-  [[nodiscard]] bool pushVarEnvironment(JSContext* cx, HandleScope scope);
+  MOZ_MUST_USE bool initFunctionEnvironmentObjects(JSContext* cx);
+  MOZ_MUST_USE bool pushVarEnvironment(JSContext* cx, HandleScope scope);
 
   void initArgsObjUnchecked(ArgumentsObject& argsobj) {
     flags_ |= HAS_ARGS_OBJ;
@@ -346,9 +343,7 @@ class BaselineFrame {
   bool isGlobalFrame() const { return script()->isGlobalCode(); }
   bool isModuleFrame() const { return script()->isModule(); }
   bool isEvalFrame() const { return script()->isForEval(); }
-  bool isFunctionFrame() const {
-    return CalleeTokenIsFunction(calleeToken()) && !isModuleFrame();
-  }
+  bool isFunctionFrame() const { return CalleeTokenIsFunction(calleeToken()); }
   bool isDebuggerEvalFrame() const { return false; }
 
   JitFrameLayout* framePrefix() const {
@@ -419,9 +414,6 @@ class BaselineFrame {
   }
   static int reverseOffsetOfInterpreterICEntry() {
     return -int(Size()) + offsetof(BaselineFrame, interpreterICEntry_);
-  }
-  static int reverseOffsetOfICScript() {
-    return -int(Size()) + offsetof(BaselineFrame, icScript_);
   }
   static int reverseOffsetOfLocal(size_t index) {
     return -int(Size()) - (index + 1) * sizeof(Value);

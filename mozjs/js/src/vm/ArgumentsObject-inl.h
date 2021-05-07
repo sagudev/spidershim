@@ -27,7 +27,8 @@ inline const Value& ArgumentsObject::element(uint32_t i) const {
   return v;
 }
 
-inline void ArgumentsObject::setElement(uint32_t i, const Value& v) {
+inline void ArgumentsObject::setElement(JSContext* cx, uint32_t i,
+                                        const Value& v) {
   MOZ_ASSERT(!isElementDeleted(i));
   GCPtrValue& lhs = data()->args[i];
   if (IsMagicScopeSlotValue(lhs)) {
@@ -37,7 +38,7 @@ inline void ArgumentsObject::setElement(uint32_t i, const Value& v) {
     for (Shape::Range<NoGC> r(callobj.lastProperty()); !r.empty();
          r.popFront()) {
       if (r.front().slot() == slot) {
-        callobj.setAliasedFormalFromArguments(lhs, v);
+        callobj.setAliasedFormalFromArguments(cx, lhs, r.front().propid(), v);
         return;
       }
     }

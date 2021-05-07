@@ -42,7 +42,6 @@ use network::{parse_address_type, parse_network_type};
  */
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "enhanced_debug", derive(Debug))]
 pub enum SdpBandwidth {
     As(u32),
     Ct(u32),
@@ -69,7 +68,6 @@ impl fmt::Display for SdpBandwidth {
  */
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "enhanced_debug", derive(Debug))]
 pub struct SdpConnection {
     pub address: ExplicitlyTypedAddress,
     pub ttl: Option<u8>,
@@ -99,7 +97,6 @@ impl AnonymizingClone for SdpConnection {
  */
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "enhanced_debug", derive(Debug))]
 pub struct SdpOrigin {
     pub username: String,
     pub session_id: u64,
@@ -137,7 +134,6 @@ impl AnonymizingClone for SdpOrigin {
  */
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "enhanced_debug", derive(Debug))]
 pub struct SdpTiming {
     pub start: u64,
     pub stop: u64,
@@ -150,7 +146,6 @@ impl fmt::Display for SdpTiming {
 }
 
 #[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "enhanced_debug", derive(Debug))]
 pub enum SdpType {
     // Note: Email, Information, Key, Phone, Repeat, Uri and Zone are left out
     //       on purposes as we don't want to support them.
@@ -165,7 +160,6 @@ pub enum SdpType {
 }
 
 #[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "enhanced_debug", derive(Debug))]
 pub struct SdpLine {
     pub line_number: usize,
     pub sdp_type: SdpType,
@@ -191,7 +185,6 @@ pub struct SdpLine {
  */
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "enhanced_debug", derive(Debug))]
 pub struct SdpSession {
     pub version: u64,
     pub origin: SdpOrigin,
@@ -366,7 +359,7 @@ impl SdpSession {
             address: addr,
             ttl: None,
             amount: None,
-        });
+        })?;
 
         self.media.push(media);
 
@@ -821,9 +814,10 @@ fn parse_sdp_vector(lines: &mut Vec<SdpLine>) -> Result<SdpSession, SdpParserErr
     };
     let mut sdp_session = SdpSession::new(version, origin, session);
 
-    let _media_pos = lines
-        .iter()
-        .position(|ref l| matches!(l.sdp_type, SdpType::Media(_)));
+    let _media_pos = lines.iter().position(|ref l| match l.sdp_type {
+        SdpType::Media(_) => true,
+        _ => false,
+    });
 
     match _media_pos {
         Some(p) => {
@@ -1238,7 +1232,7 @@ mod tests {
         let mut second_media = create_dummy_media_section();
         let mconnection = parse_connection("IN IP4 0.0.0.0")?;
         if let SdpType::Connection(c) = mconnection {
-            second_media.set_connection(c);
+            second_media.set_connection(c)?;
         } else {
             unreachable!();
         }

@@ -14,28 +14,29 @@ info: |
       i. Return ? IntegerIndexedElementGet(O, numericIndex).
   ...
 
-  CanonicalNumericIndexString ( argument )
+  7.1.16 CanonicalNumericIndexString ( argument )
     ...
     3. Let n be ! ToNumber(argument).
     4. If SameValue(! ToString(n), argument) is false, return undefined.
     5. Return n.
 
-  IntegerIndexedElementGet ( O, index )
-
-    Assert: O is an Integer-Indexed exotic object.
-    Assert: Type(index) is Number.
-    Let buffer be O.[[ViewedArrayBuffer]].
-    If IsDetachedBuffer(buffer) is true, return undefined.
+  9.4.5.8 IntegerIndexedElementGet ( O, index )
+    ...
+    3. Let buffer be O.[[ViewedArrayBuffer]].
+    4. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
+    ...
 
 includes: [testTypedArray.js, detachArrayBuffer.js]
-features: [align-detached-buffer-semantics-with-web-reality, TypedArray]
+features: [TypedArray]
 ---*/
 
 testWithTypedArrayConstructors(function(TA) {
-  let sample = new TA(0);
+  var sample = new TA(0);
   $DETACHBUFFER(sample.buffer);
 
-  assert.sameValue(sample.Infinity, undefined, 'The value of sample.Infinity is expected to equal `undefined`');
+  assert.throws(TypeError, function() {
+    sample.Infinity;
+  });
 });
 
 reportCompare(0, 0);

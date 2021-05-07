@@ -7,14 +7,17 @@
 #ifndef BaseProfilingStack_h
 #define BaseProfilingStack_h
 
-#ifndef MOZ_GECKO_PROFILER
-#  error Do not #include this header when MOZ_GECKO_PROFILER is not #defined.
-#endif
-
 #include "BaseProfilingCategory.h"
 
 #include "mozilla/Atomics.h"
 
+#include "BaseProfiler.h"
+
+#ifndef MOZ_GECKO_PROFILER
+#  error Do not #include this header when MOZ_GECKO_PROFILER is not #defined.
+#endif
+
+#include <algorithm>
 #include <stdint.h>
 
 // This file defines the classes ProfilingStack and ProfilingStackFrame.
@@ -132,17 +135,17 @@ class ProfilingStackFrame {
   // Stack pointer for non-JS stack frames, the script pointer otherwise.
   Atomic<void*, ReleaseAcquire> spOrScript;
 
-  // ID of the JS Realm for JS stack frames.
-  // Must not be used on non-JS frames; it'll contain either the default 0,
-  // or a leftover value from a previous JS stack frame that was using this
-  // ProfilingStackFrame object.
-  mozilla::Atomic<uint64_t, mozilla::ReleaseAcquire> realmID_;
-
   // The bytecode offset for JS stack frames.
   // Must not be used on non-JS frames; it'll contain either the default 0,
   // or a leftover value from a previous JS stack frame that was using this
   // ProfilingStackFrame object.
   Atomic<int32_t, ReleaseAcquire> pcOffsetIfJS_;
+
+  // ID of the JS Realm for JS stack frames.
+  // Must not be used on non-JS frames; it'll contain either the default 0,
+  // or a leftover value from a previous JS stack frame that was using this
+  // ProfilingStackFrame object.
+  mozilla::Atomic<uint64_t, mozilla::ReleaseAcquire> realmID_;
 
   // Bits 0...8 hold the Flags. Bits 9...31 hold the category pair.
   Atomic<uint32_t, ReleaseAcquire> flagsAndCategoryPair_;
@@ -163,7 +166,8 @@ class ProfilingStackFrame {
     return *this;
   }
 
-  // Reserve up to 16 bits for flags, and 16 for category pair.
+  // 9 bits for the flags.
+  // That leaves 32 - 9 = 23 bits for the category pair.
   enum class Flags : uint32_t {
     // The first three flags describe the kind of the frame and are
     // mutually exclusive. (We still give them individual bits for
@@ -205,13 +209,7 @@ class ProfilingStackFrame {
     // and to be replaced by the subcategory's label.
     LABEL_DETERMINED_BY_CATEGORY_PAIR = 1 << 8,
 
-    // Frame dynamic string does not contain user data.
-    NONSENSITIVE = 1 << 9,
-
-    // A JS Baseline Interpreter frame.
-    IS_BLINTERP_FRAME = 1 << 10,
-
-    FLAGS_BITCOUNT = 16,
+    FLAGS_BITCOUNT = 9,
     FLAGS_MASK = (1 << FLAGS_BITCOUNT) - 1
   };
 

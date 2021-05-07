@@ -8,8 +8,7 @@
 //! The wasm platform can't park when atomic support is not available.
 //! So this ThreadParker just panics on any attempt to park.
 
-use instant::Instant;
-use std::thread;
+use std::{thread, time::Instant};
 
 pub struct ThreadParker(());
 

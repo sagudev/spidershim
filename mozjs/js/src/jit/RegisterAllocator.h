@@ -7,6 +7,7 @@
 #ifndef jit_RegisterAllocator_h
 #define jit_RegisterAllocator_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/MathAlgorithms.h"
 
 #include "jit/LIR.h"
@@ -34,12 +35,12 @@ struct AllocationIntegrityState {
 
   // Record all virtual registers in the graph. This must be called before
   // register allocation, to pick up the original LUses.
-  [[nodiscard]] bool record();
+  MOZ_MUST_USE bool record();
 
   // Perform the liveness analysis on the graph, and assert on an invalid
   // allocation. This must be called after register allocation, to pick up
   // all assigned physical values.
-  [[nodiscard]] bool check();
+  MOZ_MUST_USE bool check();
 
  private:
   LIRGraph& graph;
@@ -113,12 +114,12 @@ struct AllocationIntegrityState {
       IntegrityItemSet;
   IntegrityItemSet seen;
 
-  [[nodiscard]] bool checkIntegrity(LBlock* block, LInstruction* ins,
-                                    uint32_t vreg, LAllocation alloc);
+  MOZ_MUST_USE bool checkIntegrity(LBlock* block, LInstruction* ins,
+                                   uint32_t vreg, LAllocation alloc);
   void checkSafepointAllocation(LInstruction* ins, uint32_t vreg,
                                 LAllocation alloc);
-  [[nodiscard]] bool addPredecessor(LBlock* block, uint32_t vreg,
-                                    LAllocation alloc);
+  MOZ_MUST_USE bool addPredecessor(LBlock* block, uint32_t vreg,
+                                   LAllocation alloc);
 
   void dump();
 };
@@ -198,7 +199,7 @@ class InstructionDataMap {
  public:
   InstructionDataMap() : insData_() {}
 
-  [[nodiscard]] bool init(MIRGenerator* gen, uint32_t numInstructions) {
+  MOZ_MUST_USE bool init(MIRGenerator* gen, uint32_t numInstructions) {
     if (!insData_.init(gen->alloc(), numInstructions)) {
       return false;
     }
@@ -251,7 +252,7 @@ class RegisterAllocator {
     }
   }
 
-  [[nodiscard]] bool init();
+  MOZ_MUST_USE bool init();
 
   TempAllocator& alloc() const { return mir->alloc(); }
 

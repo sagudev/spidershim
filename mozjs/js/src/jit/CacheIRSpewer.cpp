@@ -22,7 +22,6 @@
 
 #  include "jsmath.h"
 
-#  include "js/ScalarType.h"  // js::Scalar::Type
 #  include "util/Text.h"
 #  include "vm/JSFunction.h"
 #  include "vm/JSObject.h"
@@ -66,6 +65,20 @@ class MOZ_RAII CacheIROpsJitSpewer {
   void spewField(const char* name, uint32_t offset) {
     out_.printf("%s %u", name, offset);
   }
+  void spewTypedThingLayoutImm(const char* name, TypedThingLayout layout) {
+    switch (layout) {
+      case TypedThingLayout::TypedArray:
+        out_.printf("%s TypedArray", name);
+        return;
+      case TypedThingLayout::OutlineTypedObject:
+        out_.printf("%s OutlineTypedObject", name);
+        return;
+      case TypedThingLayout::InlineTypedObject:
+        out_.printf("%s InlineTypedObject", name);
+        return;
+    }
+    MOZ_CRASH("Unknown layout");
+  }
   void spewBoolImm(const char* name, bool b) {
     out_.printf("%s %s", name, b ? "true" : "false");
   }
@@ -85,17 +98,21 @@ class MOZ_RAII CacheIROpsJitSpewer {
     out_.printf("%s %u", name, val);
   }
   void spewCallFlagsImm(const char* name, CallFlags flags) {
-    out_.printf(
-        "%s (format %u%s%s%s)", name, flags.getArgFormat(),
-        flags.isConstructing() ? ", isConstructing" : "",
-        flags.isSameRealm() ? ", isSameRealm" : "",
-        flags.needsUninitializedThis() ? ", needsUninitializedThis" : "");
+    out_.printf("%s (format %u, isConstructing %u, isSameRealm %u)", name,
+                flags.getArgFormat(), flags.isConstructing(),
+                flags.isSameRealm());
   }
   void spewJSWhyMagicImm(const char* name, JSWhyMagic magic) {
     out_.printf("%s JSWhyMagic(%u)", name, unsigned(magic));
   }
   void spewScalarTypeImm(const char* name, Scalar::Type type) {
     out_.printf("%s Scalar::Type(%u)", name, unsigned(type));
+  }
+  void spewReferenceTypeImm(const char* name, ReferenceType type) {
+    out_.printf("%s ReferenceType(%u)", name, unsigned(type));
+  }
+  void spewMetaTwoByteKindImm(const char* name, MetaTwoByteKind kind) {
+    out_.printf("%s MetaTwoByteKind(%u)", name, unsigned(kind));
   }
   void spewUnaryMathFunctionImm(const char* name, UnaryMathFunction fun) {
     const char* funName = GetUnaryMathFunctionName(fun);
@@ -109,9 +126,6 @@ class MOZ_RAII CacheIROpsJitSpewer {
   }
   void spewGuardClassKindImm(const char* name, GuardClassKind kind) {
     out_.printf("%s GuardClassKind(%u)", name, unsigned(kind));
-  }
-  void spewWasmValTypeImm(const char* name, wasm::ValType::Kind kind) {
-    out_.printf("%s WasmValTypeKind(%u)", name, unsigned(kind));
   }
 
  public:
@@ -207,6 +221,9 @@ class MOZ_RAII CacheIROpsJSONSpewer {
   void spewField(const char* name, uint32_t offset) {
     spewArgImpl(name, "Field", offset);
   }
+  void spewTypedThingLayoutImm(const char* name, TypedThingLayout layout) {
+    spewArgImpl(name, "Imm", unsigned(layout));
+  }
   void spewBoolImm(const char* name, bool b) { spewArgImpl(name, "Imm", b); }
   void spewByteImm(const char* name, uint8_t val) {
     spewArgImpl(name, "Imm", val);
@@ -232,6 +249,12 @@ class MOZ_RAII CacheIROpsJSONSpewer {
   void spewScalarTypeImm(const char* name, Scalar::Type type) {
     spewArgImpl(name, "Imm", unsigned(type));
   }
+  void spewReferenceTypeImm(const char* name, ReferenceType type) {
+    spewArgImpl(name, "Imm", unsigned(type));
+  }
+  void spewMetaTwoByteKindImm(const char* name, MetaTwoByteKind kind) {
+    spewArgImpl(name, "Imm", unsigned(kind));
+  }
   void spewUnaryMathFunctionImm(const char* name, UnaryMathFunction fun) {
     const char* funName = GetUnaryMathFunctionName(fun);
     spewArgImpl(name, "MathFunction", funName);
@@ -243,9 +266,6 @@ class MOZ_RAII CacheIROpsJSONSpewer {
     spewArgImpl(name, "Word", uintptr_t(native));
   }
   void spewGuardClassKindImm(const char* name, GuardClassKind kind) {
-    spewArgImpl(name, "Imm", unsigned(kind));
-  }
-  void spewWasmValTypeImm(const char* name, wasm::ValType::Kind kind) {
     spewArgImpl(name, "Imm", unsigned(kind));
   }
 
@@ -318,9 +338,9 @@ bool CacheIRSpewer::init(const char* filename) {
   if (!output_.init(name)) {
     return false;
   }
+  output_.put("[");
 
   json_.emplace(output_);
-  json_->beginList();
   return true;
 }
 
@@ -406,7 +426,7 @@ void CacheIRSpewer::valueProperty(const char* name, const Value& v) {
     }
 
     if (NativeObject* nobj =
-            object.is<NativeObject>() ? &object.as<NativeObject>() : nullptr) {
+            object.isNative() ? &object.as<NativeObject>() : nullptr) {
       j.beginListProperty("flags");
       {
         if (nobj->isIndexed()) {
@@ -424,6 +444,8 @@ void CacheIRSpewer::valueProperty(const char* name, const Value& v) {
                      nobj->getDenseInitializedLength());
           j.property("denseCapacity", nobj->getDenseCapacity());
           j.property("denseElementsAreSealed", nobj->denseElementsAreSealed());
+          j.property("denseElementsAreCopyOnWrite",
+                     nobj->denseElementsAreCopyOnWrite());
           j.property("denseElementsAreFrozen", nobj->denseElementsAreFrozen());
         }
         j.endObject();

@@ -12,5 +12,3 @@ cfg_if! {
         pub const _ALIGNBYTES: usize = 4 - 1;
     }
 }
-
-pub const _MAX_PAGE_SHIFT: u32 = 12;

@@ -5,8 +5,9 @@
 //!
 //! [std::option]: https://doc.rust-lang.org/stable/std/option/
 
-use crate::iter::plumbing::*;
-use crate::iter::*;
+use iter::plumbing::*;
+use iter::*;
+use std;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// A parallel iterator over the value in [`Some`] variant of an [`Option`].
@@ -84,7 +85,7 @@ impl<T: Send> IndexedParallelIterator for IntoIter<T> {
 /// [`Some`]: https://doc.rust-lang.org/std/option/enum.Option.html#variant.Some
 /// [`par_iter`]: ../iter/trait.IntoParallelRefIterator.html#tymethod.par_iter
 #[derive(Debug)]
-pub struct Iter<'a, T: Sync> {
+pub struct Iter<'a, T: Sync + 'a> {
     inner: IntoIter<&'a T>,
 }
 
@@ -122,7 +123,7 @@ delegate_indexed_iterator! {
 /// [`Some`]: https://doc.rust-lang.org/std/option/enum.Option.html#variant.Some
 /// [`par_iter_mut`]: ../iter/trait.IntoParallelRefMutIterator.html#tymethod.par_iter_mut
 #[derive(Debug)]
-pub struct IterMut<'a, T: Send> {
+pub struct IterMut<'a, T: Send + 'a> {
     inner: IntoIter<&'a mut T>,
 }
 

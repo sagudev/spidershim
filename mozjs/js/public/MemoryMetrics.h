@@ -16,27 +16,17 @@
 #include <string.h>
 #include <type_traits>
 
-#include "jstypes.h"
+#include "jspubtd.h"
 
 #include "js/AllocPolicy.h"
 #include "js/HashTable.h"
-#include "js/TraceKind.h"
-#include "js/TypeDecls.h"
+#include "js/TracingAPI.h"
 #include "js/Utility.h"
 #include "js/Vector.h"
 
 class nsISupports;  // Needed for ObjectPrivateVisitor.
 
-namespace js {
-class SystemAllocPolicy;
-}
-
-namespace mozilla {
-struct CStringHasher;
-}
-
 namespace JS {
-class JS_PUBLIC_API AutoRequireNoGC;
 
 struct TabSizes {
   TabSizes() = default;
@@ -462,8 +452,7 @@ struct HelperThreadStats {
   MACRO(_, MallocHeap, stateData)      \
   MACRO(_, MallocHeap, parseTask)      \
   MACRO(_, MallocHeap, ionCompileTask) \
-  MACRO(_, MallocHeap, wasmCompile)    \
-  MACRO(_, MallocHeap, contexts)
+  MACRO(_, MallocHeap, wasmCompile)
 
   HelperThreadStats() = default;
 
@@ -546,16 +535,17 @@ struct RuntimeSizes {
 };
 
 struct UnusedGCThingSizes {
-#define FOR_EACH_SIZE(MACRO)            \
-  MACRO(Other, GCHeapUnused, object)    \
-  MACRO(Other, GCHeapUnused, script)    \
-  MACRO(Other, GCHeapUnused, shape)     \
-  MACRO(Other, GCHeapUnused, baseShape) \
-  MACRO(Other, GCHeapUnused, string)    \
-  MACRO(Other, GCHeapUnused, symbol)    \
-  MACRO(Other, GCHeapUnused, bigInt)    \
-  MACRO(Other, GCHeapUnused, jitcode)   \
-  MACRO(Other, GCHeapUnused, scope)     \
+#define FOR_EACH_SIZE(MACRO)              \
+  MACRO(Other, GCHeapUnused, object)      \
+  MACRO(Other, GCHeapUnused, script)      \
+  MACRO(Other, GCHeapUnused, shape)       \
+  MACRO(Other, GCHeapUnused, baseShape)   \
+  MACRO(Other, GCHeapUnused, objectGroup) \
+  MACRO(Other, GCHeapUnused, string)      \
+  MACRO(Other, GCHeapUnused, symbol)      \
+  MACRO(Other, GCHeapUnused, bigInt)      \
+  MACRO(Other, GCHeapUnused, jitcode)     \
+  MACRO(Other, GCHeapUnused, scope)       \
   MACRO(Other, GCHeapUnused, regExpShared)
 
   UnusedGCThingSizes() = default;
@@ -586,6 +576,9 @@ struct UnusedGCThingSizes {
         break;
       case JS::TraceKind::JitCode:
         jitcode += n;
+        break;
+      case JS::TraceKind::ObjectGroup:
+        objectGroup += n;
         break;
       case JS::TraceKind::Scope:
         scope += n;
@@ -628,10 +621,13 @@ struct ZoneStats {
   MACRO(Other, MallocHeap, bigIntsMallocHeap)              \
   MACRO(Other, GCHeapAdmin, gcHeapArenaAdmin)              \
   MACRO(Other, GCHeapUsed, jitCodesGCHeap)                 \
+  MACRO(Other, GCHeapUsed, objectGroupsGCHeap)             \
+  MACRO(Other, MallocHeap, objectGroupsMallocHeap)         \
   MACRO(Other, GCHeapUsed, scopesGCHeap)                   \
   MACRO(Other, MallocHeap, scopesMallocHeap)               \
   MACRO(Other, GCHeapUsed, regExpSharedsGCHeap)            \
   MACRO(Other, MallocHeap, regExpSharedsMallocHeap)        \
+  MACRO(Other, MallocHeap, typePool)                       \
   MACRO(Other, MallocHeap, regexpZone)                     \
   MACRO(Other, MallocHeap, jitZone)                        \
   MACRO(Other, MallocHeap, baselineStubsOptimized)         \
@@ -714,21 +710,24 @@ struct RealmStats {
   // actually guaranteed. But for Servo, at least, it's a moot point because
   // it doesn't provide an ObjectPrivateVisitor so the value will always be
   // zero.
-#define FOR_EACH_SIZE(MACRO)                               \
-  MACRO(Private, MallocHeap, objectsPrivate)               \
-  MACRO(Other, GCHeapUsed, scriptsGCHeap)                  \
-  MACRO(Other, MallocHeap, scriptsMallocHeapData)          \
-  MACRO(Other, MallocHeap, baselineData)                   \
-  MACRO(Other, MallocHeap, baselineStubsFallback)          \
-  MACRO(Other, MallocHeap, ionData)                        \
-  MACRO(Other, MallocHeap, jitScripts)                     \
-  MACRO(Other, MallocHeap, realmObject)                    \
-  MACRO(Other, MallocHeap, realmTables)                    \
-  MACRO(Other, MallocHeap, innerViewsTable)                \
-  MACRO(Other, MallocHeap, objectMetadataTable)            \
-  MACRO(Other, MallocHeap, savedStacksSet)                 \
-  MACRO(Other, MallocHeap, varNamesSet)                    \
-  MACRO(Other, MallocHeap, nonSyntacticLexicalScopesTable) \
+#define FOR_EACH_SIZE(MACRO)                                  \
+  MACRO(Private, MallocHeap, objectsPrivate)                  \
+  MACRO(Other, GCHeapUsed, scriptsGCHeap)                     \
+  MACRO(Other, MallocHeap, scriptsMallocHeapData)             \
+  MACRO(Other, MallocHeap, baselineData)                      \
+  MACRO(Other, MallocHeap, baselineStubsFallback)             \
+  MACRO(Other, MallocHeap, ionData)                           \
+  MACRO(Other, MallocHeap, jitScripts)                        \
+  MACRO(Other, MallocHeap, typeInferenceAllocationSiteTables) \
+  MACRO(Other, MallocHeap, typeInferenceArrayTypeTables)      \
+  MACRO(Other, MallocHeap, typeInferenceObjectTypeTables)     \
+  MACRO(Other, MallocHeap, realmObject)                       \
+  MACRO(Other, MallocHeap, realmTables)                       \
+  MACRO(Other, MallocHeap, innerViewsTable)                   \
+  MACRO(Other, MallocHeap, objectMetadataTable)               \
+  MACRO(Other, MallocHeap, savedStacksSet)                    \
+  MACRO(Other, MallocHeap, varNamesSet)                       \
+  MACRO(Other, MallocHeap, nonSyntacticLexicalScopesTable)    \
   MACRO(Other, MallocHeap, jitRealm)
 
   RealmStats() = default;
@@ -846,10 +845,9 @@ struct RuntimeStats {
 
   mozilla::MallocSizeOf mallocSizeOf_;
 
-  virtual void initExtraRealmStats(JS::Realm* realm, RealmStats* rstats,
-                                   const JS::AutoRequireNoGC& nogc) = 0;
-  virtual void initExtraZoneStats(JS::Zone* zone, ZoneStats* zstats,
-                                  const JS::AutoRequireNoGC& nogc) = 0;
+  virtual void initExtraRealmStats(JS::Handle<JS::Realm*> realm,
+                                   RealmStats* rstats) = 0;
+  virtual void initExtraZoneStats(JS::Zone* zone, ZoneStats* zstats) = 0;
 
 #undef FOR_EACH_SIZE
 };

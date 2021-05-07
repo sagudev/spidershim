@@ -86,7 +86,6 @@ impl<K: Eq> Eq for KeyRef<K> {}
 // due to conflicting implementations of `Borrow`. The layout of `&Qey<Q>` must be identical to
 // `&Q` in order to support transmuting in the `Qey::from_ref` method.
 #[derive(Hash, PartialEq, Eq)]
-#[repr(transparent)]
 struct Qey<Q: ?Sized>(Q);
 
 impl<Q: ?Sized> Qey<Q> {
@@ -110,15 +109,11 @@ impl<K, V> Node<K, V> {
     }
 }
 
-// drop empty node without dropping its key and value
 unsafe fn drop_empty_node<K, V>(the_box: *mut Node<K, V>) {
-    // Safety:
-    // In this crate all `Node` is allocated via `Box` or `alloc`, and `Box` uses the
-    // Global allocator for its allocation,
-    // (https://doc.rust-lang.org/std/boxed/index.html#memory-layout) so we can safely
-    // deallocate the pointer to `Node` by calling `dealloc` method
-    let layout = std::alloc::Layout::new::<Node<K, V>>();
-    std::alloc::dealloc(the_box as *mut u8, layout);
+    // Prevent compiler from trying to drop the un-initialized key and values in the node.
+    let Node { key, value, .. } = *Box::from_raw(the_box);
+    mem::forget(key);
+    mem::forget(value);
 }
 
 impl<K: Hash + Eq, V> LinkedHashMap<K, V> {
@@ -176,8 +171,7 @@ impl<K, V, S> LinkedHashMap<K, V, S> {
         if self.head.is_null() {
             // allocate the guard node if not present
             unsafe {
-                let node_layout = std::alloc::Layout::new::<Node<K, V>>();
-                self.head =  std::alloc::alloc(node_layout) as *mut Node<K, V>;
+                self.head = Box::into_raw(Box::new(mem::uninitialized()));
                 (*self.head).next = self.head;
                 (*self.head).prev = self.head;
             }
@@ -1140,7 +1134,7 @@ impl<K: Hash + Eq, V, S: BuildHasher> IntoIterator for LinkedHashMap<K, V, S> {
         }
         self.clear_free_list();
         // drop the HashMap but not the LinkedHashMap
-        unsafe { ptr::drop_in_place(&mut self.map); }
+        self.map = unsafe { mem::uninitialized() };
         mem::forget(self);
 
         IntoIter {

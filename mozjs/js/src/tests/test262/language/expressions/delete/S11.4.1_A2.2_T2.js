@@ -3,17 +3,15 @@
 
 /*---
 info: If GetBase(x) doesn't have a property GetPropertyName(x), return true
-esid: sec-delete-operator-runtime-semantics-evaluation
+es5id: 11.4.1_A2.2_T2
 description: Checking Object object and Function object cases
 ---*/
 
 //CHECK#1
-function MyFunction() {}
+function MyFunction(){}
 var MyObject = new MyFunction();
 if (delete MyObject.prop !== true) {
-  $ERROR(
-    '#1: function MyFunction(){}; var MyObject = new MyFunction(); delete MyObject.prop === true'
-  );
+  $ERROR('#1: function MyFunction(){}; var MyObject = new MyFunction(); delete MyObject.prop === true');
 }
 
 //CHECK#2

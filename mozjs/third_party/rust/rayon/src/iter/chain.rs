@@ -25,7 +25,7 @@ where
     A: ParallelIterator,
     B: ParallelIterator<Item = A::Item>,
 {
-    /// Creates a new `Chain` iterator.
+    /// Create a new `Chain` iterator.
     pub(super) fn new(a: A, b: B) -> Self {
         Chain { a, b }
     }

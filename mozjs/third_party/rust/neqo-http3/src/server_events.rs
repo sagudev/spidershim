@@ -4,8 +4,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(clippy::module_name_repetitions)]
-
 use crate::connection::Http3State;
 use crate::connection_server::Http3ServerHandler;
 use crate::{Header, Res};
@@ -36,7 +34,7 @@ impl ::std::fmt::Display for ClientRequestStream {
 }
 
 impl ClientRequestStream {
-    pub(crate) fn new(
+    pub fn new(
         conn: ActiveConnectionRef,
         handler: Rc<RefCell<Http3ServerHandler>>,
         stream_id: u64,
@@ -47,20 +45,13 @@ impl ClientRequestStream {
             stream_id,
         }
     }
-
-    /// Supply a response to a request.
-    /// # Errors
-    /// It may return `InvalidStreamId` if a stream does not exist anymore.
-    pub fn set_response(&mut self, headers: &[Header], data: &[u8]) -> Res<()> {
+    pub fn set_response(&mut self, headers: &[Header], data: Vec<u8>) -> Res<()> {
         qinfo!([self], "Set new response.");
         self.handler
             .borrow_mut()
             .set_response(self.stream_id, headers, data)
     }
 
-    /// Request a peer to stop sending a request.
-    /// # Errors
-    /// It may return `InvalidStreamId` if a stream does not exist anymore.
     pub fn stream_stop_sending(&mut self, app_error: AppError) -> Res<()> {
         qdebug!(
             [self],
@@ -74,9 +65,6 @@ impl ClientRequestStream {
         Ok(())
     }
 
-    /// Reset a stream/request.
-    /// # Errors
-    /// It may return `InvalidStreamId` if a stream does not exist anymore
     pub fn stream_reset(&mut self, app_error: AppError) -> Res<()> {
         qdebug!([self], "reset error:{}.", app_error);
         self.handler.borrow_mut().stream_reset(
@@ -86,22 +74,6 @@ impl ClientRequestStream {
         )
     }
 }
-
-impl std::hash::Hash for ClientRequestStream {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.conn.hash(state);
-        state.write_u64(self.stream_id);
-        state.finish();
-    }
-}
-
-impl PartialEq for ClientRequestStream {
-    fn eq(&self, other: &Self) -> bool {
-        self.conn == other.conn && self.stream_id == other.stream_id
-    }
-}
-
-impl Eq for ClientRequestStream {}
 
 #[derive(Debug, Clone)]
 pub enum Http3ServerEvent {
@@ -134,23 +106,19 @@ impl Http3ServerEvents {
         self.events.borrow_mut().push_back(event);
     }
 
-    /// Take all events
     pub fn events(&self) -> impl Iterator<Item = Http3ServerEvent> {
         self.events.replace(VecDeque::new()).into_iter()
     }
 
-    /// Whether there is request pending.
     pub fn has_events(&self) -> bool {
         !self.events.borrow().is_empty()
     }
 
-    /// Take the next event if present.
     pub fn next_event(&self) -> Option<Http3ServerEvent> {
         self.events.borrow_mut().pop_front()
     }
 
-    /// Insert a `Headers` event.
-    pub(crate) fn headers(&self, request: ClientRequestStream, headers: Vec<Header>, fin: bool) {
+    pub fn headers(&self, request: ClientRequestStream, headers: Vec<Header>, fin: bool) {
         self.insert(Http3ServerEvent::Headers {
             request,
             headers,
@@ -158,13 +126,11 @@ impl Http3ServerEvents {
         });
     }
 
-    /// Insert a `StateChange` event.
-    pub(crate) fn connection_state_change(&self, conn: ActiveConnectionRef, state: Http3State) {
+    pub fn connection_state_change(&self, conn: ActiveConnectionRef, state: Http3State) {
         self.insert(Http3ServerEvent::StateChange { conn, state });
     }
 
-    /// Insert a `Data` event.
-    pub(crate) fn data(&self, request: ClientRequestStream, data: Vec<u8>, fin: bool) {
+    pub fn data(&self, request: ClientRequestStream, data: Vec<u8>, fin: bool) {
         self.insert(Http3ServerEvent::Data { request, data, fin });
     }
 }

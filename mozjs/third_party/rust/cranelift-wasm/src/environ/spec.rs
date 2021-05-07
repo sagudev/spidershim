@@ -6,109 +6,21 @@
 //!
 //! [Wasmtime]: https://github.com/bytecodealliance/wasmtime
 
-use crate::state::FuncTranslationState;
+use crate::state::{FuncTranslationState, ModuleTranslationState};
 use crate::translation_utils::{
-    DataIndex, ElemIndex, EntityType, FuncIndex, Global, GlobalIndex, Memory, MemoryIndex, Table,
-    TableIndex, TypeIndex,
+    DataIndex, ElemIndex, FuncIndex, Global, GlobalIndex, Memory, MemoryIndex, SignatureIndex,
+    Table, TableIndex,
 };
 use core::convert::From;
-use core::convert::TryFrom;
 use cranelift_codegen::cursor::FuncCursor;
 use cranelift_codegen::ir::immediates::Offset32;
 use cranelift_codegen::ir::{self, InstBuilder};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_frontend::FunctionBuilder;
-#[cfg(feature = "enable-serde")]
-use serde::{Deserialize, Serialize};
 use std::boxed::Box;
-use std::string::ToString;
 use thiserror::Error;
-use wasmparser::ValidatorResources;
-use wasmparser::{BinaryReaderError, FuncValidator, FunctionBody, Operator, WasmFeatures};
-
-/// WebAssembly value type -- equivalent of `wasmparser`'s Type.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
-pub enum WasmType {
-    /// I32 type
-    I32,
-    /// I64 type
-    I64,
-    /// F32 type
-    F32,
-    /// F64 type
-    F64,
-    /// V128 type
-    V128,
-    /// FuncRef type
-    FuncRef,
-    /// ExternRef type
-    ExternRef,
-}
-
-impl TryFrom<wasmparser::Type> for WasmType {
-    type Error = WasmError;
-    fn try_from(ty: wasmparser::Type) -> Result<Self, Self::Error> {
-        use wasmparser::Type::*;
-        match ty {
-            I32 => Ok(WasmType::I32),
-            I64 => Ok(WasmType::I64),
-            F32 => Ok(WasmType::F32),
-            F64 => Ok(WasmType::F64),
-            V128 => Ok(WasmType::V128),
-            FuncRef => Ok(WasmType::FuncRef),
-            ExternRef => Ok(WasmType::ExternRef),
-            EmptyBlockType | Func => Err(WasmError::InvalidWebAssembly {
-                message: "unexpected value type".to_string(),
-                offset: 0,
-            }),
-        }
-    }
-}
-
-impl From<WasmType> for wasmparser::Type {
-    fn from(ty: WasmType) -> wasmparser::Type {
-        match ty {
-            WasmType::I32 => wasmparser::Type::I32,
-            WasmType::I64 => wasmparser::Type::I64,
-            WasmType::F32 => wasmparser::Type::F32,
-            WasmType::F64 => wasmparser::Type::F64,
-            WasmType::V128 => wasmparser::Type::V128,
-            WasmType::FuncRef => wasmparser::Type::FuncRef,
-            WasmType::ExternRef => wasmparser::Type::ExternRef,
-        }
-    }
-}
-
-/// WebAssembly function type -- equivalent of `wasmparser`'s FuncType.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
-pub struct WasmFuncType {
-    /// Function params types.
-    pub params: Box<[WasmType]>,
-    /// Returns params types.
-    pub returns: Box<[WasmType]>,
-}
-
-impl TryFrom<wasmparser::FuncType> for WasmFuncType {
-    type Error = WasmError;
-    fn try_from(ty: wasmparser::FuncType) -> Result<Self, Self::Error> {
-        Ok(Self {
-            params: ty
-                .params
-                .into_vec()
-                .into_iter()
-                .map(WasmType::try_from)
-                .collect::<Result<_, Self::Error>>()?,
-            returns: ty
-                .returns
-                .into_vec()
-                .into_iter()
-                .map(WasmType::try_from)
-                .collect::<Result<_, Self::Error>>()?,
-        })
-    }
-}
+use wasmparser::BinaryReaderError;
+use wasmparser::Operator;
 
 /// The value of a WebAssembly global variable.
 #[derive(Clone, Copy)]
@@ -159,7 +71,7 @@ pub enum WasmError {
     /// Cranelift can compile very large and complicated functions, but the [implementation has
     /// limits][limits] that cause compilation to fail when they are exceeded.
     ///
-    /// [limits]: https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/docs/ir.md#implementation-limits
+    /// [limits]: https://github.com/bytecodealliance/wasmtime/blob/master/cranelift/docs/ir.md#implementation-limits
     #[error("Implementation limit exceeded")]
     ImplLimitExceeded,
 
@@ -214,15 +126,10 @@ pub trait TargetEnvironment {
         self.target_config().pointer_bytes()
     }
 
-    /// Get the Cranelift reference type to use for the given Wasm reference
-    /// type.
+    /// Get the Cranelift reference type to use for native references.
     ///
-    /// By default, this returns `R64` for 64-bit architectures and `R32` for
-    /// 32-bit architectures. If you override this, then you should also
-    /// override `FuncEnvironment::{translate_ref_null, translate_ref_is_null}`
-    /// as well.
-    fn reference_type(&self, ty: WasmType) -> ir::Type {
-        let _ = ty;
+    /// This returns `R64` for 64-bit architectures and `R32` for 32-bit architectures.
+    fn reference_type(&self) -> ir::Type {
         match self.pointer_type() {
             ir::types::I32 => ir::types::R32,
             ir::types::I64 => ir::types::R64,
@@ -293,7 +200,7 @@ pub trait FuncEnvironment: TargetEnvironment {
     fn make_indirect_sig(
         &mut self,
         func: &mut ir::Function,
-        index: TypeIndex,
+        index: SignatureIndex,
     ) -> WasmResult<ir::SigRef>;
 
     /// Set up an external function definition in the preamble of `func` that can be used to
@@ -328,7 +235,7 @@ pub trait FuncEnvironment: TargetEnvironment {
         pos: FuncCursor,
         table_index: TableIndex,
         table: ir::Table,
-        sig_index: TypeIndex,
+        sig_index: SignatureIndex,
         sig_ref: ir::SigRef,
         callee: ir::Value,
         call_args: &[ir::Value],
@@ -387,10 +294,8 @@ pub trait FuncEnvironment: TargetEnvironment {
     fn translate_memory_copy(
         &mut self,
         pos: FuncCursor,
-        src_index: MemoryIndex,
-        src_heap: ir::Heap,
-        dst_index: MemoryIndex,
-        dst_heap: ir::Heap,
+        index: MemoryIndex,
+        heap: ir::Heap,
         dst: ir::Value,
         src: ir::Value,
         len: ir::Value,
@@ -442,8 +347,7 @@ pub trait FuncEnvironment: TargetEnvironment {
     fn translate_table_grow(
         &mut self,
         pos: FuncCursor,
-        table_index: TableIndex,
-        table: ir::Table,
+        table_index: u32,
         delta: ir::Value,
         init_value: ir::Value,
     ) -> WasmResult<ir::Value>;
@@ -451,18 +355,16 @@ pub trait FuncEnvironment: TargetEnvironment {
     /// Translate a `table.get` WebAssembly instruction.
     fn translate_table_get(
         &mut self,
-        builder: &mut FunctionBuilder,
-        table_index: TableIndex,
-        table: ir::Table,
+        pos: FuncCursor,
+        table_index: u32,
         index: ir::Value,
     ) -> WasmResult<ir::Value>;
 
     /// Translate a `table.set` WebAssembly instruction.
     fn translate_table_set(
         &mut self,
-        builder: &mut FunctionBuilder,
-        table_index: TableIndex,
-        table: ir::Table,
+        pos: FuncCursor,
+        table_index: u32,
         value: ir::Value,
         index: ir::Value,
     ) -> WasmResult<()>;
@@ -485,7 +387,7 @@ pub trait FuncEnvironment: TargetEnvironment {
     fn translate_table_fill(
         &mut self,
         pos: FuncCursor,
-        table_index: TableIndex,
+        table_index: u32,
         dst: ir::Value,
         val: ir::Value,
         len: ir::Value,
@@ -507,43 +409,8 @@ pub trait FuncEnvironment: TargetEnvironment {
     /// Translate a `elem.drop` WebAssembly instruction.
     fn translate_elem_drop(&mut self, pos: FuncCursor, seg_index: u32) -> WasmResult<()>;
 
-    /// Translate a `ref.null T` WebAssembly instruction.
-    ///
-    /// By default, translates into a null reference type.
-    ///
-    /// Override this if you don't use Cranelift reference types for all Wasm
-    /// reference types (e.g. you use a raw pointer for `funcref`s) or if the
-    /// null sentinel is not a null reference type pointer for your type. If you
-    /// override this method, then you should also override
-    /// `translate_ref_is_null` as well.
-    fn translate_ref_null(&mut self, mut pos: FuncCursor, ty: WasmType) -> WasmResult<ir::Value> {
-        let _ = ty;
-        Ok(pos.ins().null(self.reference_type(ty)))
-    }
-
-    /// Translate a `ref.is_null` WebAssembly instruction.
-    ///
-    /// By default, assumes that `value` is a Cranelift reference type, and that
-    /// a null Cranelift reference type is the null value for all Wasm reference
-    /// types.
-    ///
-    /// If you override this method, you probably also want to override
-    /// `translate_ref_null` as well.
-    fn translate_ref_is_null(
-        &mut self,
-        mut pos: FuncCursor,
-        value: ir::Value,
-    ) -> WasmResult<ir::Value> {
-        let is_null = pos.ins().is_null(value);
-        Ok(pos.ins().bint(ir::types::I32, is_null))
-    }
-
     /// Translate a `ref.func` WebAssembly instruction.
-    fn translate_ref_func(
-        &mut self,
-        pos: FuncCursor,
-        func_index: FuncIndex,
-    ) -> WasmResult<ir::Value>;
+    fn translate_ref_func(&mut self, pos: FuncCursor, func_index: u32) -> WasmResult<ir::Value>;
 
     /// Translate a `global.get` WebAssembly instruction at `pos` for a global
     /// that is custom.
@@ -561,38 +428,6 @@ pub trait FuncEnvironment: TargetEnvironment {
         global_index: GlobalIndex,
         val: ir::Value,
     ) -> WasmResult<()>;
-
-    /// Translate an `i32.atomic.wait` or `i64.atomic.wait` WebAssembly instruction.
-    /// The `index` provided identifies the linear memory containing the value
-    /// to wait on, and `heap` is the heap reference returned by `make_heap`
-    /// for the same index.  Whether the waited-on value is 32- or 64-bit can be
-    /// determined by examining the type of `expected`, which must be only I32 or I64.
-    ///
-    /// Returns an i32, which is negative if the helper call failed.
-    fn translate_atomic_wait(
-        &mut self,
-        pos: FuncCursor,
-        index: MemoryIndex,
-        heap: ir::Heap,
-        addr: ir::Value,
-        expected: ir::Value,
-        timeout: ir::Value,
-    ) -> WasmResult<ir::Value>;
-
-    /// Translate an `atomic.notify` WebAssembly instruction.
-    /// The `index` provided identifies the linear memory containing the value
-    /// to wait on, and `heap` is the heap reference returned by `make_heap`
-    /// for the same index.
-    ///
-    /// Returns an i64, which is negative if the helper call failed.
-    fn translate_atomic_notify(
-        &mut self,
-        pos: FuncCursor,
-        index: MemoryIndex,
-        heap: ir::Heap,
-        addr: ir::Value,
-        count: ir::Value,
-    ) -> WasmResult<ir::Value>;
 
     /// Emit code at the beginning of every wasm loop.
     ///
@@ -630,34 +465,14 @@ pub trait FuncEnvironment: TargetEnvironment {
 /// [`translate_module`](fn.translate_module.html) function. These methods should not be called
 /// by the user, they are only for `cranelift-wasm` internal use.
 pub trait ModuleEnvironment<'data>: TargetEnvironment {
-    /// Provides the number of types up front. By default this does nothing, but
+    /// Provides the number of signatures up front. By default this does nothing, but
     /// implementations can use this to preallocate memory if desired.
-    fn reserve_types(&mut self, _num: u32) -> WasmResult<()> {
+    fn reserve_signatures(&mut self, _num: u32) -> WasmResult<()> {
         Ok(())
     }
 
     /// Declares a function signature to the environment.
-    fn declare_type_func(
-        &mut self,
-        wasm_func_type: WasmFuncType,
-        sig: ir::Signature,
-    ) -> WasmResult<()>;
-
-    /// Declares a module type signature to the environment.
-    fn declare_type_module(
-        &mut self,
-        imports: &[(&'data str, Option<&'data str>, EntityType)],
-        exports: &[(&'data str, EntityType)],
-    ) -> WasmResult<()> {
-        drop((imports, exports));
-        Err(WasmError::Unsupported("module linking".to_string()))
-    }
-
-    /// Declares an instance type signature to the environment.
-    fn declare_type_instance(&mut self, exports: &[(&'data str, EntityType)]) -> WasmResult<()> {
-        drop(exports);
-        Err(WasmError::Unsupported("module linking".to_string()))
-    }
+    fn declare_signature(&mut self, sig: ir::Signature) -> WasmResult<()>;
 
     /// Provides the number of imports up front. By default this does nothing, but
     /// implementations can use this to preallocate memory if desired.
@@ -668,7 +483,7 @@ pub trait ModuleEnvironment<'data>: TargetEnvironment {
     /// Declares a function import to the environment.
     fn declare_func_import(
         &mut self,
-        index: TypeIndex,
+        sig_index: SignatureIndex,
         module: &'data str,
         field: &'data str,
     ) -> WasmResult<()>;
@@ -697,28 +512,6 @@ pub trait ModuleEnvironment<'data>: TargetEnvironment {
         field: &'data str,
     ) -> WasmResult<()>;
 
-    /// Declares a module import to the environment.
-    fn declare_module_import(
-        &mut self,
-        ty_index: TypeIndex,
-        module: &'data str,
-        field: &'data str,
-    ) -> WasmResult<()> {
-        drop((ty_index, module, field));
-        Err(WasmError::Unsupported("module linking".to_string()))
-    }
-
-    /// Declares an instance import to the environment.
-    fn declare_instance_import(
-        &mut self,
-        ty_index: TypeIndex,
-        module: &'data str,
-        field: &'data str,
-    ) -> WasmResult<()> {
-        drop((ty_index, module, field));
-        Err(WasmError::Unsupported("module linking".to_string()))
-    }
-
     /// Notifies the implementation that all imports have been declared.
     fn finish_imports(&mut self) -> WasmResult<()> {
         Ok(())
@@ -731,7 +524,7 @@ pub trait ModuleEnvironment<'data>: TargetEnvironment {
     }
 
     /// Declares the type (signature) of a local function in the module.
-    fn declare_func_type(&mut self, index: TypeIndex) -> WasmResult<()>;
+    fn declare_func_type(&mut self, sig_index: SignatureIndex) -> WasmResult<()>;
 
     /// Provides the number of defined tables up front. By default this does nothing, but
     /// implementations can use this to preallocate memory if desired.
@@ -829,17 +622,15 @@ pub trait ModuleEnvironment<'data>: TargetEnvironment {
     /// Declare a passive data segment.
     fn declare_passive_data(&mut self, data_index: DataIndex, data: &'data [u8]) -> WasmResult<()>;
 
-    /// Indicates how many functions the code section reports and the byte
-    /// offset of where the code sections starts.
-    fn reserve_function_bodies(&mut self, bodies: u32, code_section_offset: u64) {
-        drop((bodies, code_section_offset));
-    }
-
     /// Provides the contents of a function body.
+    ///
+    /// Note there's no `reserve_function_bodies` function because the number of
+    /// functions is already provided by `reserve_func_types`.
     fn define_function_body(
         &mut self,
-        validator: FuncValidator<ValidatorResources>,
-        body: FunctionBody<'data>,
+        module_translation_state: &ModuleTranslationState,
+        body_bytes: &'data [u8],
+        body_offset: usize,
     ) -> WasmResult<()>;
 
     /// Provides the number of data initializers up front. By default this does nothing, but
@@ -861,55 +652,20 @@ pub trait ModuleEnvironment<'data>: TargetEnvironment {
     ///
     /// By default this does nothing, but implementations can use this to read
     /// the module name subsection of the custom name section if desired.
-    fn declare_module_name(&mut self, _name: &'data str) {}
+    fn declare_module_name(&mut self, _name: &'data str) -> WasmResult<()> {
+        Ok(())
+    }
 
     /// Declares the name of a function to the environment.
     ///
     /// By default this does nothing, but implementations can use this to read
     /// the function name subsection of the custom name section if desired.
-    fn declare_func_name(&mut self, _func_index: FuncIndex, _name: &'data str) {}
-
-    /// Declares the name of a function's local to the environment.
-    ///
-    /// By default this does nothing, but implementations can use this to read
-    /// the local name subsection of the custom name section if desired.
-    fn declare_local_name(&mut self, _func_index: FuncIndex, _local_index: u32, _name: &'data str) {
+    fn declare_func_name(&mut self, _func_index: FuncIndex, _name: &'data str) -> WasmResult<()> {
+        Ok(())
     }
 
     /// Indicates that a custom section has been found in the wasm file
     fn custom_section(&mut self, _name: &'data str, _data: &'data [u8]) -> WasmResult<()> {
         Ok(())
-    }
-
-    /// Returns the list of enabled wasm features this translation will be using.
-    fn wasm_features(&self) -> WasmFeatures {
-        WasmFeatures::default()
-    }
-
-    /// Indicates that this module will have `amount` submodules.
-    ///
-    /// Note that this is just child modules of this module, and each child
-    /// module may have yet more submodules.
-    fn reserve_modules(&mut self, amount: u32) {
-        drop(amount);
-    }
-
-    /// Called at the beginning of translating a module.
-    ///
-    /// The `index` argument is a monotonically increasing index which
-    /// corresponds to the nth module that's being translated. This is not the
-    /// 32-bit index in the current module's index space. For example the first
-    /// call to `module_start` will have index 0.
-    ///
-    /// Note that for nested modules this may be called multiple times.
-    fn module_start(&mut self, index: usize) {
-        drop(index);
-    }
-
-    /// Called at the end of translating a module.
-    ///
-    /// Note that for nested modules this may be called multiple times.
-    fn module_end(&mut self, index: usize) {
-        drop(index);
     }
 }

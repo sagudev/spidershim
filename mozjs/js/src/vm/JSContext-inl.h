@@ -15,7 +15,6 @@
 #include "builtin/Object.h"
 #include "gc/Zone.h"
 #include "jit/JitFrames.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
 #include "proxy/Proxy.h"
 #include "util/DiagnosticAssertions.h"
 #include "vm/BigIntType.h"
@@ -191,6 +190,10 @@ class ContextChecks {
     check(desc.value(), argIndex);
   }
 
+  void check(TypeSet::Type type, int argIndex) {
+    check(type.maybeCompartment(), argIndex);
+  }
+
   void check(JS::Handle<mozilla::Maybe<JS::Value>> maybe, int argIndex) {
     if (maybe.get().isSome()) {
       check(maybe.get().ref(), argIndex);
@@ -313,6 +316,10 @@ MOZ_ALWAYS_INLINE bool CheckForInterrupt(JSContext* cx) {
 
 } /* namespace js */
 
+inline js::LifoAlloc& JSContext::typeLifoAlloc() {
+  return zone()->types.typeLifoAlloc();
+}
+
 inline js::Nursery& JSContext::nursery() { return runtime()->gc.nursery(); }
 
 inline void JSContext::minorGC(JS::GCReason reason) {
@@ -374,7 +381,7 @@ inline void JSContext::enterRealmOf(JSScript* target) {
   enterRealm(target->realm());
 }
 
-inline void JSContext::enterRealmOf(js::Shape* target) {
+inline void JSContext::enterRealmOf(js::ObjectGroup* target) {
   JS::AssertCellIsNotGray(target);
   enterRealm(target->realm());
 }

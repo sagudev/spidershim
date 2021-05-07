@@ -74,8 +74,8 @@ class MOZ_STACK_CLASS ExpressionStatementEmitter {
   //   beginPos
   //
   // Can be Nothing() if not available.
-  [[nodiscard]] bool prepareForExpr(const mozilla::Maybe<uint32_t>& beginPos);
-  [[nodiscard]] bool emitEnd();
+  MOZ_MUST_USE bool prepareForExpr(const mozilla::Maybe<uint32_t>& beginPos);
+  MOZ_MUST_USE bool emitEnd();
 };
 
 }  // namespace frontend

@@ -472,17 +472,12 @@ pub enum OptionalChain<'alloc> {
         property: IdentifierName,
         loc: SourceLocation,
     },
-    PrivateFieldExpressionTail {
-        field: PrivateIdentifier,
-        loc: SourceLocation,
-    },
     CallExpressionTail {
         arguments: Arguments<'alloc>,
         loc: SourceLocation,
     },
     ComputedMemberExpression(ComputedMemberExpression<'alloc>),
     StaticMemberExpression(StaticMemberExpression<'alloc>),
-    PrivateFieldExpression(PrivateFieldExpression<'alloc>),
     CallExpression(CallExpression<'alloc>),
 }
 
@@ -615,7 +610,6 @@ pub enum ExpressionOrSuper<'alloc> {
 #[derive(Debug, PartialEq)]
 pub enum MemberAssignmentTarget<'alloc> {
     ComputedMemberAssignmentTarget(ComputedMemberAssignmentTarget<'alloc>),
-    PrivateFieldAssignmentTarget(PrivateFieldAssignmentTarget<'alloc>),
     StaticMemberAssignmentTarget(StaticMemberAssignmentTarget<'alloc>),
 }
 
@@ -623,13 +617,6 @@ pub enum MemberAssignmentTarget<'alloc> {
 pub struct ComputedMemberAssignmentTarget<'alloc> {
     pub object: ExpressionOrSuper<'alloc>,
     pub expression: arena::Box<'alloc, Expression<'alloc>>,
-    pub loc: SourceLocation,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct PrivateFieldAssignmentTarget<'alloc> {
-    pub object: ExpressionOrSuper<'alloc>,
-    pub field: PrivateIdentifier,
     pub loc: SourceLocation,
 }
 
@@ -837,7 +824,7 @@ pub struct ExportLocalSpecifier {
 
 #[derive(Debug, PartialEq)]
 pub struct Method<'alloc> {
-    pub name: ClassElementName<'alloc>,
+    pub name: PropertyName<'alloc>,
     pub is_async: bool,
     pub is_generator: bool,
     pub params: FormalParameters<'alloc>,
@@ -847,14 +834,14 @@ pub struct Method<'alloc> {
 
 #[derive(Debug, PartialEq)]
 pub struct Getter<'alloc> {
-    pub property_name: ClassElementName<'alloc>,
+    pub property_name: PropertyName<'alloc>,
     pub body: FunctionBody<'alloc>,
     pub loc: SourceLocation,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Setter<'alloc> {
-    pub property_name: ClassElementName<'alloc>,
+    pub property_name: PropertyName<'alloc>,
     pub param: Parameter<'alloc>,
     pub body: FunctionBody<'alloc>,
     pub loc: SourceLocation,
@@ -940,7 +927,7 @@ pub struct StaticMemberExpression<'alloc> {
 
 #[derive(Debug, PartialEq)]
 pub struct PrivateFieldExpression<'alloc> {
-    pub object: ExpressionOrSuper<'alloc>,
+    pub object: arena::Box<'alloc, Expression<'alloc>>,
     pub field: PrivateIdentifier,
     pub loc: SourceLocation,
 }

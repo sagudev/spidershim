@@ -19,9 +19,7 @@ inline gc::AllocKind TemplateObject::getAllocKind() const {
   return obj_->asTenured().getAllocKind();
 }
 
-inline bool TemplateObject::isNativeObject() const {
-  return obj_->is<NativeObject>();
-}
+inline bool TemplateObject::isNative() const { return obj_->isNative(); }
 
 inline bool TemplateObject::isArrayObject() const {
   return obj_->is<ArrayObject>();
@@ -47,82 +45,100 @@ inline bool TemplateObject::isPlainObject() const {
   return obj_->is<PlainObject>();
 }
 
+inline gc::Cell* TemplateObject::group() const {
+  MOZ_ASSERT(!obj_->hasLazyGroup());
+  return obj_->group();
+}
+
 inline gc::Cell* TemplateObject::shape() const {
   Shape* shape = obj_->shape();
   MOZ_ASSERT(!shape->inDictionary());
   return shape;
 }
 
-inline const TemplateNativeObject& TemplateObject::asTemplateNativeObject()
+inline uint32_t TemplateObject::getInlineTypedObjectSize() const {
+  return obj_->as<InlineTypedObject>().size();
+}
+
+inline uint8_t* TemplateObject::getInlineTypedObjectMem(
+    const JS::AutoRequireNoGC& nogc) const {
+  return obj_->as<InlineTypedObject>().inlineTypedMem(nogc);
+}
+
+inline const NativeTemplateObject& TemplateObject::asNativeTemplateObject()
     const {
-  MOZ_ASSERT(isNativeObject());
-  return *static_cast<const TemplateNativeObject*>(this);
+  MOZ_ASSERT(isNative());
+  return *static_cast<const NativeTemplateObject*>(this);
 }
 
-inline bool TemplateNativeObject::hasDynamicSlots() const {
-  return asNativeObject().hasDynamicSlots();
+inline bool NativeTemplateObject::hasDynamicSlots() const {
+  return asNative().hasDynamicSlots();
 }
 
-inline uint32_t TemplateNativeObject::numDynamicSlots() const {
-  return asNativeObject().numDynamicSlots();
+inline uint32_t NativeTemplateObject::numDynamicSlots() const {
+  // We can't call numDynamicSlots because that uses shape->base->clasp and
+  // shape->base can change when we create a ShapeTable.
+  return NativeObject::dynamicSlotsCount(numFixedSlots(), slotSpan(),
+                                         obj_->getClass());
 }
 
-inline uint32_t TemplateNativeObject::numUsedFixedSlots() const {
-  return asNativeObject().numUsedFixedSlots();
+inline uint32_t NativeTemplateObject::numUsedFixedSlots() const {
+  return asNative().numUsedFixedSlots();
 }
 
-inline uint32_t TemplateNativeObject::numFixedSlots() const {
-  return asNativeObject().numFixedSlots();
+inline uint32_t NativeTemplateObject::numFixedSlots() const {
+  return asNative().numFixedSlots();
 }
 
-inline uint32_t TemplateNativeObject::slotSpan() const {
+inline uint32_t NativeTemplateObject::slotSpan() const {
   // Don't call NativeObject::slotSpan, it uses shape->base->clasp and the
   // shape's BaseShape can change when we create a ShapeTable for it.
-  return asNativeObject().shape()->slotSpan(obj_->getClass());
+  return asNative().shape()->slotSpan(obj_->getClass());
 }
 
-inline Value TemplateNativeObject::getSlot(uint32_t i) const {
-  return asNativeObject().getSlot(i);
+inline Value NativeTemplateObject::getSlot(uint32_t i) const {
+  return asNative().getSlot(i);
 }
 
-inline const Value* TemplateNativeObject::getDenseElements() const {
-  return asNativeObject().getDenseElements();
+inline const Value* NativeTemplateObject::getDenseElements() const {
+  return asNative().getDenseElementsAllowCopyOnWrite();
 }
 
 #ifdef DEBUG
-inline bool TemplateNativeObject::isSharedMemory() const {
-  return asNativeObject().isSharedMemory();
+inline bool NativeTemplateObject::isSharedMemory() const {
+  return asNative().isSharedMemory();
 }
 #endif
 
-inline uint32_t TemplateNativeObject::getDenseCapacity() const {
-  return asNativeObject().getDenseCapacity();
+inline uint32_t NativeTemplateObject::getDenseCapacity() const {
+  return asNative().getDenseCapacity();
 }
 
-inline uint32_t TemplateNativeObject::getDenseInitializedLength() const {
-  return asNativeObject().getDenseInitializedLength();
+inline uint32_t NativeTemplateObject::getDenseInitializedLength() const {
+  return asNative().getDenseInitializedLength();
 }
 
-inline uint32_t TemplateNativeObject::getArrayLength() const {
+inline uint32_t NativeTemplateObject::getArrayLength() const {
   return obj_->as<ArrayObject>().length();
 }
 
-inline bool TemplateNativeObject::hasDynamicElements() const {
-  return asNativeObject().hasDynamicElements();
+inline bool NativeTemplateObject::hasDynamicElements() const {
+  return asNative().hasDynamicElements();
 }
 
-inline bool TemplateNativeObject::hasPrivate() const {
-  return asNativeObject().hasPrivate();
+inline bool NativeTemplateObject::hasPrivate() const {
+  return asNative().hasPrivate();
 }
 
-inline gc::Cell* TemplateNativeObject::regExpShared() const {
+inline gc::Cell* NativeTemplateObject::regExpShared() const {
   RegExpObject* regexp = &obj_->as<RegExpObject>();
   MOZ_ASSERT(regexp->hasShared());
-  return regexp->getShared();
+  MOZ_ASSERT(regexp->getPrivate() == regexp->sharedRef().get());
+  return regexp->sharedRef().get();
 }
 
-inline void* TemplateNativeObject::getPrivate() const {
-  return asNativeObject().getPrivate();
+inline void* NativeTemplateObject::getPrivate() const {
+  return asNative().getPrivate();
 }
 
 }  // namespace jit

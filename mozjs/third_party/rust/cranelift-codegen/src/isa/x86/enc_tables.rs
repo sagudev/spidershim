@@ -13,7 +13,6 @@ use crate::isa::encoding::base_size;
 use crate::isa::encoding::{Encoding, RecipeSizing};
 use crate::isa::RegUnit;
 use crate::isa::{self, TargetIsa};
-use crate::legalizer::expand_as_libcall;
 use crate::predicates;
 use crate::regalloc::RegDiversions;
 
@@ -244,20 +243,6 @@ fn size_with_inferred_rex_for_inreg0_inreg1(
     // No need to check for REX.W in `needs_rex` because `infer_rex().w()` is not allowed.
     let needs_rex = test_input(0, inst, divert, func, is_extended_reg)
         || test_input(1, inst, divert, func, is_extended_reg);
-    sizing.base_size + if needs_rex { 1 } else { 0 }
-}
-
-/// Infers whether a dynamic REX prefix will be emitted, based on second and third operand.
-fn size_with_inferred_rex_for_inreg1_inreg2(
-    sizing: &RecipeSizing,
-    _enc: Encoding,
-    inst: Inst,
-    divert: &RegDiversions,
-    func: &Function,
-) -> u8 {
-    // No need to check for REX.W in `needs_rex` because `infer_rex().w()` is not allowed.
-    let needs_rex = test_input(1, inst, divert, func, is_extended_reg)
-        || test_input(2, inst, divert, func, is_extended_reg);
     sizing.base_size + if needs_rex { 1 } else { 0 }
 }
 
@@ -596,105 +581,8 @@ fn expand_minmax(
     cfg.recompute_block(pos.func, done);
 }
 
-/// This legalization converts a minimum/maximum operation into a sequence that matches the
-/// non-x86-friendly WebAssembly semantics of NaN handling. This logic is kept separate from
-/// [expand_minmax] above (the scalar version) for code clarity.
-fn expand_minmax_vector(
-    inst: ir::Inst,
-    func: &mut ir::Function,
-    _cfg: &mut ControlFlowGraph,
-    _isa: &dyn TargetIsa,
-) {
-    let ty = func.dfg.ctrl_typevar(inst);
-    debug_assert!(ty.is_vector());
-    let (x, y, x86_opcode, is_max) = match func.dfg[inst] {
-        ir::InstructionData::Binary {
-            opcode: ir::Opcode::Fmin,
-            args,
-        } => (args[0], args[1], ir::Opcode::X86Fmin, false),
-        ir::InstructionData::Binary {
-            opcode: ir::Opcode::Fmax,
-            args,
-        } => (args[0], args[1], ir::Opcode::X86Fmax, true),
-        _ => panic!("Expected fmin/fmax: {}", func.dfg.display_inst(inst, None)),
-    };
-
-    let mut pos = FuncCursor::new(func).at_inst(inst);
-    pos.use_srcloc(inst);
-
-    // This sequence is complex due to how x86 handles NaNs and +0/-0. If x86 finds a NaN in
-    // either lane it returns the second operand; likewise, if both operands are in {+0.0, -0.0}
-    // it returns the second operand. To match the behavior of "return the minimum of the
-    // operands or a canonical NaN if either operand is NaN," we must compare in both
-    // directions.
-    let (forward_inst, dfg) = pos.ins().Binary(x86_opcode, ty, x, y);
-    let forward = dfg.first_result(forward_inst);
-    let (backward_inst, dfg) = pos.ins().Binary(x86_opcode, ty, y, x);
-    let backward = dfg.first_result(backward_inst);
-
-    let (value, mask) = if is_max {
-        // For maximum:
-        // Find any differences between the forward and backward `max` operation.
-        let difference = pos.ins().bxor(forward, backward);
-        // Merge in the differences.
-        let propagate_nans_and_plus_zero = pos.ins().bor(backward, difference);
-        let value = pos.ins().fsub(propagate_nans_and_plus_zero, difference);
-        // Discover which lanes have NaNs in them.
-        let find_nan_lanes_mask = pos.ins().fcmp(FloatCC::Unordered, difference, value);
-        (value, find_nan_lanes_mask)
-    } else {
-        // For minimum:
-        // If either lane is a NaN, we want to use these bits, not the second operand bits.
-        let propagate_nans = pos.ins().bor(backward, forward);
-        // Find which lanes contain a NaN with an unordered comparison, filling the mask with
-        // 1s.
-        let find_nan_lanes_mask = pos.ins().fcmp(FloatCC::Unordered, forward, propagate_nans);
-        let bitcast_find_nan_lanes_mask = pos.ins().raw_bitcast(ty, find_nan_lanes_mask);
-        // Then flood the value lane with all 1s if that lane is a NaN. This causes all NaNs
-        // along this code path to be quieted and negative: after the upcoming shift and and_not,
-        // all upper bits (sign, exponent, and payload MSB) will be 1s.
-        let tmp = pos.ins().bor(propagate_nans, bitcast_find_nan_lanes_mask);
-        (tmp, bitcast_find_nan_lanes_mask)
-    };
-
-    // During this lowering we will need to know how many bits to shift by and what type to
-    // convert to when using an integer shift. Recall that an IEEE754 number looks like:
-    // `[sign bit] [exponent bits] [significand bits]`
-    // A quiet NaN has all exponent bits set to 1 and the most significant bit of the
-    // significand set to 1; a signaling NaN has the same exponent but the MSB of the
-    // significand is set to 0. The payload of the NaN is the remaining significand bits, and
-    // WebAssembly assumes a canonical NaN is quiet and has 0s in its payload. To compute this
-    // canonical NaN, we create a mask for the top 10 bits on F32X4 (1 sign + 8 exp. + 1 MSB
-    // sig.) and the top 13 bits on F64X2 (1 sign + 11 exp. + 1 MSB sig.). This means that all
-    // NaNs produced with the mask will be negative (`-NaN`) which is allowed by the sign
-    // non-determinism in the spec: https://webassembly.github.io/spec/core/bikeshed/index.html#nan-propagation%E2%91%A0
-    let (shift_by, ty_as_int) = match ty {
-        F32X4 => (10, I32X4),
-        F64X2 => (13, I64X2),
-        _ => unimplemented!("this legalization only understands 128-bit floating point types"),
-    };
-
-    // In order to clear the NaN payload for canonical NaNs, we shift right the NaN lanes (all
-    // 1s) leaving 0s in the top bits. Remember that non-NaN lanes are all 0s so this has
-    // little effect.
-    let mask_as_int = pos.ins().raw_bitcast(ty_as_int, mask);
-    let shift_mask = pos.ins().ushr_imm(mask_as_int, shift_by);
-    let shift_mask_as_float = pos.ins().raw_bitcast(ty, shift_mask);
-
-    // Finally, we replace the value with `value & ~shift_mask`. For non-NaN lanes, this is
-    // equivalent to `... & 1111...` but for NaN lanes this will only have 1s in the top bits,
-    // clearing the payload.
-    pos.func
-        .dfg
-        .replace(inst)
-        .band_not(value, shift_mask_as_float);
-}
-
 /// x86 has no unsigned-to-float conversions. We handle the easy case of zero-extending i32 to
 /// i64 with a pattern, the rest needs more code.
-///
-/// Note that this is the scalar implementation; for the vector implemenation see
-/// [expand_fcvt_from_uint_vector].
 fn expand_fcvt_from_uint(
     inst: ir::Inst,
     func: &mut ir::Function,
@@ -774,56 +662,6 @@ fn expand_fcvt_from_uint(
     cfg.recompute_block(pos.func, poszero_block);
     cfg.recompute_block(pos.func, neg_block);
     cfg.recompute_block(pos.func, done);
-}
-
-/// To convert packed unsigned integers to their float equivalents, we must legalize to a special
-/// AVX512 instruction (using MCSR rounding) or use a long sequence of instructions. This logic is
-/// separate from [expand_fcvt_from_uint] above (the scalar version), only due to how the transform
-/// groups are set up; TODO if we change the SIMD legalization groups, then this logic could be
-/// merged into [expand_fcvt_from_uint] (see https://github.com/bytecodealliance/wasmtime/issues/1745).
-fn expand_fcvt_from_uint_vector(
-    inst: ir::Inst,
-    func: &mut ir::Function,
-    _cfg: &mut ControlFlowGraph,
-    isa: &dyn TargetIsa,
-) {
-    let mut pos = FuncCursor::new(func).at_inst(inst);
-    pos.use_srcloc(inst);
-
-    if let ir::InstructionData::Unary {
-        opcode: ir::Opcode::FcvtFromUint,
-        arg,
-    } = pos.func.dfg[inst]
-    {
-        let controlling_type = pos.func.dfg.ctrl_typevar(inst);
-        if controlling_type == F32X4 {
-            debug_assert_eq!(pos.func.dfg.value_type(arg), I32X4);
-            let x86_isa = isa
-                .as_any()
-                .downcast_ref::<isa::x86::Isa>()
-                .expect("the target ISA must be x86 at this point");
-            if x86_isa.isa_flags.use_avx512vl_simd() || x86_isa.isa_flags.use_avx512f_simd() {
-                // If we have certain AVX512 features, we can lower this instruction simply.
-                pos.func.dfg.replace(inst).x86_vcvtudq2ps(arg);
-            } else {
-                // Otherwise, we default to a very lengthy SSE4.1-compatible sequence: PXOR,
-                // PBLENDW, PSUB, CVTDQ2PS, PSRLD, CVTDQ2PS, ADDPS, ADDPS
-                let bitcast_arg = pos.ins().raw_bitcast(I16X8, arg);
-                let zero_constant = pos.func.dfg.constants.insert(vec![0; 16].into());
-                let zero = pos.ins().vconst(I16X8, zero_constant);
-                let low = pos.ins().x86_pblendw(zero, bitcast_arg, 0x55);
-                let bitcast_low = pos.ins().raw_bitcast(I32X4, low);
-                let high = pos.ins().isub(arg, bitcast_low);
-                let convert_low = pos.ins().fcvt_from_sint(F32X4, bitcast_low);
-                let shift_high = pos.ins().ushr_imm(high, 1);
-                let convert_high = pos.ins().fcvt_from_sint(F32X4, shift_high);
-                let double_high = pos.ins().fadd(convert_high, convert_high);
-                pos.func.dfg.replace(inst).fadd(double_high, convert_low);
-            }
-        } else {
-            unimplemented!("cannot legalize {}", pos.func.dfg.display_inst(inst, None))
-        }
-    }
 }
 
 fn expand_fcvt_to_sint(
@@ -1058,61 +896,6 @@ fn expand_fcvt_to_sint_sat(
     cfg.recompute_block(pos.func, done_block);
 }
 
-/// This legalization converts a vector of 32-bit floating point lanes to signed integer lanes
-/// using CVTTPS2DQ (see encoding of `x86_cvtt2si`). This logic is separate from [expand_fcvt_to_sint_sat]
-/// above (the scalar version), only due to how the transform groups are set up; TODO if we change
-/// the SIMD legalization groups, then this logic could be merged into [expand_fcvt_to_sint_sat]
-/// (see https://github.com/bytecodealliance/wasmtime/issues/1745).
-fn expand_fcvt_to_sint_sat_vector(
-    inst: ir::Inst,
-    func: &mut ir::Function,
-    _cfg: &mut ControlFlowGraph,
-    _isa: &dyn TargetIsa,
-) {
-    let mut pos = FuncCursor::new(func).at_inst(inst);
-    pos.use_srcloc(inst);
-
-    if let ir::InstructionData::Unary {
-        opcode: ir::Opcode::FcvtToSintSat,
-        arg,
-    } = pos.func.dfg[inst]
-    {
-        let controlling_type = pos.func.dfg.ctrl_typevar(inst);
-        if controlling_type == I32X4 {
-            debug_assert_eq!(pos.func.dfg.value_type(arg), F32X4);
-            // We must both quiet any NaNs--setting that lane to 0--and saturate any
-            // lanes that might overflow during conversion to the highest/lowest signed integer
-            // allowed in that lane.
-
-            // Saturate NaNs: `fcmp eq` will not match if a lane contains a NaN. We use ANDPS to
-            // avoid doing the comparison twice (we need the zeroed lanes to find differences).
-            let zeroed_nans = pos.ins().fcmp(FloatCC::Equal, arg, arg);
-            let zeroed_nans_bitcast = pos.ins().raw_bitcast(F32X4, zeroed_nans);
-            let zeroed_nans_copy = pos.ins().band(arg, zeroed_nans_bitcast);
-
-            // Find differences with the zeroed lanes (we will only use the MSB: 1 if positive or
-            // NaN, 0 otherwise).
-            let differences = pos.ins().bxor(zeroed_nans_bitcast, arg);
-            let differences_bitcast = pos.ins().raw_bitcast(I32X4, differences);
-
-            // Convert the numeric lanes. CVTTPS2DQ will mark overflows with 0x80000000 (MSB set).
-            let converted = pos.ins().x86_cvtt2si(I32X4, zeroed_nans_copy);
-
-            // Create a mask of all 1s only on positive overflow, 0s otherwise. This uses the MSB
-            // of `differences` (1 when positive or NaN) and the MSB of `converted` (1 on positive
-            // overflow).
-            let tmp = pos.ins().band(differences_bitcast, converted);
-            let mask = pos.ins().sshr_imm(tmp, 31);
-
-            // Apply the mask to create 0x7FFFFFFF for positive overflow. XOR of all 0s (all other
-            // cases) has no effect.
-            pos.func.dfg.replace(inst).bxor(converted, mask);
-        } else {
-            unimplemented!("cannot legalize {}", pos.func.dfg.display_inst(inst, None))
-        }
-    }
-}
-
 fn expand_fcvt_to_uint(
     inst: ir::Inst,
     func: &mut ir::Function,
@@ -1313,79 +1096,6 @@ fn expand_fcvt_to_uint_sat(
     cfg.recompute_block(pos.func, done);
 }
 
-// Lanes of an I32x4 filled with the max signed integer values converted to an F32x4.
-static MAX_SIGNED_I32X4S_AS_F32X4S: [u8; 16] = [
-    0x00, 0x00, 0x00, 0x4f, 0x00, 0x00, 0x00, 0x4f, 0x00, 0x00, 0x00, 0x4f, 0x00, 0x00, 0x00, 0x4f,
-];
-
-/// This legalization converts a vector of 32-bit floating point lanes to unsigned integer lanes
-/// using a long sequence of NaN quieting and truncation. This logic is separate from
-/// [expand_fcvt_to_uint_sat] above (the scalar version), only due to how the transform groups are
-/// set up; TODO if we change the SIMD legalization groups, then this logic could be merged into
-/// [expand_fcvt_to_uint_sat] (see https://github.com/bytecodealliance/wasmtime/issues/1745).
-fn expand_fcvt_to_uint_sat_vector(
-    inst: ir::Inst,
-    func: &mut ir::Function,
-    _cfg: &mut ControlFlowGraph,
-    _isa: &dyn TargetIsa,
-) {
-    let mut pos = FuncCursor::new(func).at_inst(inst);
-    pos.use_srcloc(inst);
-
-    if let ir::InstructionData::Unary {
-        opcode: ir::Opcode::FcvtToUintSat,
-        arg,
-    } = pos.func.dfg[inst]
-    {
-        let controlling_type = pos.func.dfg.ctrl_typevar(inst);
-        if controlling_type == I32X4 {
-            debug_assert_eq!(pos.func.dfg.value_type(arg), F32X4);
-            // We must both quiet any NaNs--setting that lane to 0--and saturate any
-            // lanes that might overflow during conversion to the highest/lowest integer
-            // allowed in that lane.
-            let zeroes_constant = pos.func.dfg.constants.insert(vec![0x00; 16].into());
-            let max_signed_constant = pos
-                .func
-                .dfg
-                .constants
-                .insert(MAX_SIGNED_I32X4S_AS_F32X4S.as_ref().into());
-            let zeroes = pos.ins().vconst(F32X4, zeroes_constant);
-            let max_signed = pos.ins().vconst(F32X4, max_signed_constant);
-            // Clamp the input to 0 for negative floating point numbers. TODO we need to
-            // convert NaNs to 0 but this doesn't do that?
-            let ge_zero = pos.ins().x86_fmax(arg, zeroes);
-            // Find lanes that exceed the max signed value that CVTTPS2DQ knows how to convert.
-            // For floating point numbers above this, CVTTPS2DQ returns the undefined value
-            // 0x80000000.
-            let minus_max_signed = pos.ins().fsub(ge_zero, max_signed);
-            let le_max_signed =
-                pos.ins()
-                    .fcmp(FloatCC::LessThanOrEqual, max_signed, minus_max_signed);
-            // Identify lanes that have minus_max_signed > max_signed || minus_max_signed < 0.
-            // These lanes have the MSB set to 1 after the XOR. We are trying to calculate a
-            // valid, in-range addend.
-            let minus_max_signed_as_int = pos.ins().x86_cvtt2si(I32X4, minus_max_signed);
-            let le_max_signed_as_int = pos.ins().raw_bitcast(I32X4, le_max_signed);
-            let difference = pos
-                .ins()
-                .bxor(minus_max_signed_as_int, le_max_signed_as_int);
-            // Calculate amount to add above 0x7FFFFFF, zeroing out any lanes identified
-            // previously (MSB set to 1).
-            let zeroes_as_int = pos.ins().raw_bitcast(I32X4, zeroes);
-            let addend = pos.ins().x86_pmaxs(difference, zeroes_as_int);
-            // Convert the original clamped number to an integer and add back in the addend
-            // (the part of the value above 0x7FFFFFF, since CVTTPS2DQ overflows with these).
-            let converted = pos.ins().x86_cvtt2si(I32X4, ge_zero);
-            pos.func.dfg.replace(inst).iadd(converted, addend);
-        } else {
-            unreachable!(
-                "{} should not be legalized in expand_fcvt_to_uint_sat_vector",
-                pos.func.dfg.display_inst(inst, None)
-            )
-        }
-    }
-}
-
 /// Convert shuffle instructions.
 fn convert_shuffle(
     inst: ir::Inst,
@@ -1471,10 +1181,10 @@ fn convert_extractlane(
     let mut pos = FuncCursor::new(func).at_inst(inst);
     pos.use_srcloc(inst);
 
-    if let ir::InstructionData::BinaryImm8 {
+    if let ir::InstructionData::ExtractLane {
         opcode: ir::Opcode::Extractlane,
         arg,
-        imm: lane,
+        lane,
     } = pos.func.dfg[inst]
     {
         // NOTE: the following legalization assumes that the upper bits of the XMM register do
@@ -1527,10 +1237,10 @@ fn convert_insertlane(
     let mut pos = FuncCursor::new(func).at_inst(inst);
     pos.use_srcloc(inst);
 
-    if let ir::InstructionData::TernaryImm8 {
+    if let ir::InstructionData::InsertLane {
         opcode: ir::Opcode::Insertlane,
         args: [vector, replacement],
-        imm: lane,
+        lane,
     } = pos.func.dfg[inst]
     {
         let value_type = pos.func.dfg.value_type(vector);
@@ -1545,7 +1255,7 @@ fn convert_insertlane(
                     pos.func
                         .dfg
                         .replace(inst)
-                        .x86_insertps(vector, replacement, immediate)
+                        .x86_insertps(vector, immediate, replacement)
                 }
                 F64X2 => {
                     let replacement_as_vector = pos.ins().raw_bitcast(F64X2, replacement); // only necessary due to SSA types
@@ -1573,7 +1283,7 @@ fn convert_insertlane(
             pos.func
                 .dfg
                 .replace(inst)
-                .x86_pinsr(vector, replacement, lane);
+                .x86_pinsr(vector, lane, replacement);
         }
     }
 }
@@ -1605,39 +1315,6 @@ fn convert_ineg(
         pos.func.dfg.replace(inst).isub(zero_value, arg);
     } else {
         unreachable!()
-    }
-}
-
-fn expand_dword_to_xmm<'f>(
-    pos: &mut FuncCursor<'_>,
-    arg: ir::Value,
-    arg_type: ir::Type,
-) -> ir::Value {
-    if arg_type == I64 {
-        let (arg_lo, arg_hi) = pos.ins().isplit(arg);
-        let arg = pos.ins().scalar_to_vector(I32X4, arg_lo);
-        let arg = pos.ins().insertlane(arg, arg_hi, 1);
-        let arg = pos.ins().raw_bitcast(I64X2, arg);
-        arg
-    } else {
-        pos.ins().bitcast(I64X2, arg)
-    }
-}
-
-fn contract_dword_from_xmm<'f>(
-    pos: &mut FuncCursor<'f>,
-    inst: ir::Inst,
-    ret: ir::Value,
-    ret_type: ir::Type,
-) {
-    if ret_type == I64 {
-        let ret = pos.ins().raw_bitcast(I32X4, ret);
-        let ret_lo = pos.ins().extractlane(ret, 0);
-        let ret_hi = pos.ins().extractlane(ret, 1);
-        pos.func.dfg.replace(inst).iconcat(ret_lo, ret_hi);
-    } else {
-        let ret = pos.ins().extractlane(ret, 0);
-        pos.func.dfg.replace(inst).ireduce(ret_type, ret);
     }
 }
 
@@ -1702,24 +1379,7 @@ fn convert_ushr(
         } else if arg0_type.is_vector() {
             // x86 has encodings for these shifts.
             pos.func.dfg.replace(inst).x86_psrl(arg0, shift_index);
-        } else if arg0_type == I64 {
-            // 64 bit shifts need to be legalized on x86_32.
-            let x86_isa = isa
-                .as_any()
-                .downcast_ref::<isa::x86::Isa>()
-                .expect("the target ISA must be x86 at this point");
-            if x86_isa.isa_flags.has_sse41() {
-                // if we have pinstrq/pextrq (SSE 4.1), legalize to that
-                let value = expand_dword_to_xmm(&mut pos, arg0, arg0_type);
-                let amount = expand_dword_to_xmm(&mut pos, arg1, arg1_type);
-                let shifted = pos.ins().x86_psrl(value, amount);
-                contract_dword_from_xmm(&mut pos, inst, shifted, arg0_type);
-            } else {
-                // otherwise legalize to libcall
-                expand_as_libcall(inst, func, isa);
-            }
         } else {
-            // Everything else should be already legal.
             unreachable!()
         }
     }
@@ -1786,72 +1446,8 @@ fn convert_ishl(
         } else if arg0_type.is_vector() {
             // x86 has encodings for these shifts.
             pos.func.dfg.replace(inst).x86_psll(arg0, shift_index);
-        } else if arg0_type == I64 {
-            // 64 bit shifts need to be legalized on x86_32.
-            let x86_isa = isa
-                .as_any()
-                .downcast_ref::<isa::x86::Isa>()
-                .expect("the target ISA must be x86 at this point");
-            if x86_isa.isa_flags.has_sse41() {
-                // if we have pinstrq/pextrq (SSE 4.1), legalize to that
-                let value = expand_dword_to_xmm(&mut pos, arg0, arg0_type);
-                let amount = expand_dword_to_xmm(&mut pos, arg1, arg1_type);
-                let shifted = pos.ins().x86_psll(value, amount);
-                contract_dword_from_xmm(&mut pos, inst, shifted, arg0_type);
-            } else {
-                // otherwise legalize to libcall
-                expand_as_libcall(inst, func, isa);
-            }
         } else {
-            // Everything else should be already legal.
             unreachable!()
-        }
-    }
-}
-
-/// Convert an imul.i64x2 to a valid code sequence on x86, first with AVX512 and then with SSE2.
-fn convert_i64x2_imul(
-    inst: ir::Inst,
-    func: &mut ir::Function,
-    _cfg: &mut ControlFlowGraph,
-    isa: &dyn TargetIsa,
-) {
-    let mut pos = FuncCursor::new(func).at_inst(inst);
-    pos.use_srcloc(inst);
-
-    if let ir::InstructionData::Binary {
-        opcode: ir::Opcode::Imul,
-        args: [arg0, arg1],
-    } = pos.func.dfg[inst]
-    {
-        let ty = pos.func.dfg.ctrl_typevar(inst);
-        if ty == I64X2 {
-            let x86_isa = isa
-                .as_any()
-                .downcast_ref::<isa::x86::Isa>()
-                .expect("the target ISA must be x86 at this point");
-            if x86_isa.isa_flags.use_avx512dq_simd() || x86_isa.isa_flags.use_avx512vl_simd() {
-                // If we have certain AVX512 features, we can lower this instruction simply.
-                pos.func.dfg.replace(inst).x86_pmullq(arg0, arg1);
-            } else {
-                // Otherwise, we default to a very lengthy SSE2-compatible sequence. It splits each
-                // 64-bit lane into 32-bit high and low sections using shifting and then performs
-                // the following arithmetic per lane: with arg0 = concat(high0, low0) and arg1 =
-                // concat(high1, low1), calculate (high0 * low1) + (high1 * low0) + (low0 * low1).
-                let high0 = pos.ins().ushr_imm(arg0, 32);
-                let mul0 = pos.ins().x86_pmuludq(high0, arg1);
-                let high1 = pos.ins().ushr_imm(arg1, 32);
-                let mul1 = pos.ins().x86_pmuludq(high1, arg0);
-                let addhigh = pos.ins().iadd(mul0, mul1);
-                let high = pos.ins().ishl_imm(addhigh, 32);
-                let low = pos.ins().x86_pmuludq(arg0, arg1);
-                pos.func.dfg.replace(inst).iadd(low, high);
-            }
-        } else {
-            unreachable!(
-                "{} should be encodable; it cannot be legalized by convert_i64x2_imul",
-                pos.func.dfg.display_inst(inst, None)
-            );
         }
     }
 }
@@ -1891,32 +1487,4 @@ fn expand_tls_value(
     } else {
         unreachable!();
     }
-}
-
-fn expand_load_splat(
-    inst: ir::Inst,
-    func: &mut ir::Function,
-    _cfg: &mut ControlFlowGraph,
-    _isa: &dyn TargetIsa,
-) {
-    let mut pos = FuncCursor::new(func).at_inst(inst);
-
-    pos.use_srcloc(inst);
-
-    let (ptr, offset, flags) = match pos.func.dfg[inst] {
-        ir::InstructionData::Load {
-            opcode: ir::Opcode::LoadSplat,
-            arg,
-            offset,
-            flags,
-        } => (arg, offset, flags),
-        _ => panic!(
-            "Expected load_splat: {}",
-            pos.func.dfg.display_inst(inst, None)
-        ),
-    };
-    let ty = pos.func.dfg.ctrl_typevar(inst);
-    let load = pos.ins().load(ty.lane_type(), flags, ptr, offset);
-
-    pos.func.dfg.replace(inst).splat(ty, load);
 }

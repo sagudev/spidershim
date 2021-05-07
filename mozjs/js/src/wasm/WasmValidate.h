@@ -23,7 +23,6 @@
 
 #include "ds/Bitmap.h"
 
-#include "wasm/WasmCompile.h"
 #include "wasm/WasmTypes.h"
 
 namespace js {
@@ -70,6 +69,11 @@ struct CompilerEnvironment {
       Tier tier_;
       OptimizedBackend optimizedBackend_;
       DebugEnabled debug_;
+      bool refTypes_;
+      bool gcTypes_;
+      bool multiValues_;
+      bool hugeMemory_;
+      bool v128_;
     };
   };
 
@@ -83,7 +87,9 @@ struct CompilerEnvironment {
   // final value of gcTypes/refTypes.
   CompilerEnvironment(CompileMode mode, Tier tier,
                       OptimizedBackend optimizedBackend,
-                      DebugEnabled debugEnabled);
+                      DebugEnabled debugEnabled, bool multiValueConfigured,
+                      bool refTypesConfigured, bool gcTypesConfigured,
+                      bool hugeMemory, bool v128Configured);
 
   // Compute any remaining compilation parameters.
   void computeParameters(Decoder& d);
@@ -110,7 +116,26 @@ struct CompilerEnvironment {
     MOZ_ASSERT(isComputed());
     return debug_;
   }
-  bool debugEnabled() const { return debug() == DebugEnabled::True; }
+  bool gcTypes() const {
+    MOZ_ASSERT(isComputed());
+    return gcTypes_;
+  }
+  bool refTypes() const {
+    MOZ_ASSERT(isComputed());
+    return refTypes_;
+  }
+  bool multiValues() const {
+    MOZ_ASSERT(isComputed());
+    return multiValues_;
+  }
+  bool hugeMemory() const {
+    MOZ_ASSERT(isComputed());
+    return hugeMemory_;
+  }
+  bool v128() const {
+    MOZ_ASSERT(isComputed());
+    return v128_;
+  }
 };
 
 // ModuleEnvironment contains all the state necessary to process or render
@@ -127,23 +152,20 @@ struct CompilerEnvironment {
 struct ModuleEnvironment {
   // Constant parameters for the entire compilation:
   const ModuleKind kind;
-  const FeatureArgs features;
+  const Shareable sharedMemoryEnabled;
+  CompilerEnvironment* const compilerEnv;
 
   // Module fields decoded from the module environment (or initialized while
   // validating an asm.js module) and immutable during compilation:
   Maybe<uint32_t> dataCount;
   MemoryUsage memoryUsage;
-  uint64_t minMemoryLength;
-  Maybe<uint64_t> maxMemoryLength;
-  TypeContext types;
-  TypeIdDescVector typeIds;
-  FuncDescVector funcs;
+  uint32_t minMemoryLength;
+  Maybe<uint32_t> maxMemoryLength;
+  uint32_t numStructTypes;
+  TypeDefVector types;
+  FuncTypeWithIdPtrVector funcTypes;
   Uint32Vector funcImportGlobalDataOffsets;
-
   GlobalDescVector globals;
-#ifdef ENABLE_WASM_EXCEPTIONS
-  EventDescVector events;
-#endif
   TableDescVector tables;
   Uint32Vector asmJSSigToTableIndex;
   ImportVector imports;
@@ -152,7 +174,6 @@ struct ModuleEnvironment {
   ElemSegmentVector elemSegments;
   MaybeSectionRange codeSection;
   SparseBitmap validForRefFunc;
-  bool usesDuplicateImports;
 
   // Fields decoded as part of the wasm module tail:
   DataSegmentEnvVector dataSegments;
@@ -161,40 +182,77 @@ struct ModuleEnvironment {
   Maybe<Name> moduleName;
   NameVector funcNames;
 
-  explicit ModuleEnvironment(FeatureArgs features,
+  explicit ModuleEnvironment(CompilerEnvironment* compilerEnv,
+                             Shareable sharedMemoryEnabled,
                              ModuleKind kind = ModuleKind::Wasm)
       : kind(kind),
-        features(features),
+        sharedMemoryEnabled(sharedMemoryEnabled),
+        compilerEnv(compilerEnv),
         memoryUsage(MemoryUsage::None),
         minMemoryLength(0),
-        types(features, TypeDefVector()),
-        usesDuplicateImports(false) {}
+        numStructTypes(0) {}
 
+  Tier tier() const { return compilerEnv->tier(); }
+  OptimizedBackend optimizedBackend() const {
+    return compilerEnv->optimizedBackend();
+  }
+  CompileMode mode() const { return compilerEnv->mode(); }
+  DebugEnabled debug() const { return compilerEnv->debug(); }
   size_t numTables() const { return tables.length(); }
   size_t numTypes() const { return types.length(); }
-  size_t numFuncs() const { return funcs.length(); }
+  size_t numFuncs() const { return funcTypes.length(); }
   size_t numFuncImports() const { return funcImportGlobalDataOffsets.length(); }
   size_t numFuncDefs() const {
-    return funcs.length() - funcImportGlobalDataOffsets.length();
+    return funcTypes.length() - funcImportGlobalDataOffsets.length();
   }
-  Shareable sharedMemoryEnabled() const { return features.sharedMemory; }
-  bool refTypesEnabled() const { return features.refTypes; }
-  bool functionReferencesEnabled() const { return features.functionReferences; }
-  bool gcTypesEnabled() const { return features.gcTypes; }
-  bool multiValueEnabled() const { return features.multiValue; }
-  bool v128Enabled() const { return features.v128; }
-  bool simdWormholeEnabled() const { return features.simdWormhole; }
-  bool hugeMemoryEnabled() const { return !isAsmJS() && features.hugeMemory; }
-  bool exceptionsEnabled() const { return features.exceptions; }
+  bool gcTypesEnabled() const { return compilerEnv->gcTypes(); }
+  bool refTypesEnabled() const { return compilerEnv->refTypes(); }
+  bool multiValuesEnabled() const { return compilerEnv->multiValues(); }
+  bool v128Enabled() const { return compilerEnv->v128(); }
   bool usesMemory() const { return memoryUsage != MemoryUsage::None; }
   bool usesSharedMemory() const { return memoryUsage == MemoryUsage::Shared; }
   bool isAsmJS() const { return kind == ModuleKind::AsmJS; }
-
+  bool debugEnabled() const {
+    return compilerEnv->debug() == DebugEnabled::True;
+  }
+  bool hugeMemoryEnabled() const {
+    return !isAsmJS() && compilerEnv->hugeMemory();
+  }
   uint32_t funcMaxResults() const {
-    return multiValueEnabled() ? MaxResults : 1;
+    return multiValuesEnabled() ? MaxResults : 1;
   }
   bool funcIsImport(uint32_t funcIndex) const {
     return funcIndex < funcImportGlobalDataOffsets.length();
+  }
+  bool isRefSubtypeOf(ValType one, ValType two) const {
+    MOZ_ASSERT(one.isReference());
+    MOZ_ASSERT(two.isReference());
+    // Anything's a subtype of itself.
+    if (one == two) {
+      return true;
+    }
+#if defined(ENABLE_WASM_GC)
+    if (gcTypesEnabled()) {
+      // Structs are subtypes of AnyRef.
+      if (isStructType(one) && two.isAnyRef()) {
+        return true;
+      }
+      // Struct One is a subtype of struct Two if Two is a prefix of One.
+      if (isStructType(one) && isStructType(two)) {
+        return isStructPrefixOf(two, one);
+      }
+    }
+#endif
+    return false;
+  }
+  bool isStructType(ValType t) const {
+    return t.isTypeIndex() && types[t.refType().typeIndex()].isStructType();
+  }
+
+ private:
+  bool isStructPrefixOf(ValType a, ValType b) const {
+    const StructType& other = types[a.refType().typeIndex()].structType();
+    return types[b.refType().typeIndex()].structType().hasPrefix(other);
   }
 };
 
@@ -247,12 +305,12 @@ class Encoder {
   Bytes& bytes_;
 
   template <class T>
-  [[nodiscard]] bool write(const T& v) {
+  MOZ_MUST_USE bool write(const T& v) {
     return bytes_.append(reinterpret_cast<const uint8_t*>(&v), sizeof(T));
   }
 
   template <typename UInt>
-  [[nodiscard]] bool writeVarU(UInt i) {
+  MOZ_MUST_USE bool writeVarU(UInt i) {
     do {
       uint8_t byte = i & 0x7f;
       i >>= 7;
@@ -267,7 +325,7 @@ class Encoder {
   }
 
   template <typename SInt>
-  [[nodiscard]] bool writeVarS(SInt i) {
+  MOZ_MUST_USE bool writeVarS(SInt i) {
     bool done;
     do {
       uint8_t byte = i & 0x7f;
@@ -326,32 +384,32 @@ class Encoder {
   // Fixed-size encoding operations simply copy the literal bytes (without
   // attempting to align).
 
-  [[nodiscard]] bool writeFixedU7(uint8_t i) {
+  MOZ_MUST_USE bool writeFixedU7(uint8_t i) {
     MOZ_ASSERT(i <= uint8_t(INT8_MAX));
     return writeFixedU8(i);
   }
-  [[nodiscard]] bool writeFixedU8(uint8_t i) { return write<uint8_t>(i); }
-  [[nodiscard]] bool writeFixedU32(uint32_t i) { return write<uint32_t>(i); }
-  [[nodiscard]] bool writeFixedF32(float f) { return write<float>(f); }
-  [[nodiscard]] bool writeFixedF64(double d) { return write<double>(d); }
+  MOZ_MUST_USE bool writeFixedU8(uint8_t i) { return write<uint8_t>(i); }
+  MOZ_MUST_USE bool writeFixedU32(uint32_t i) { return write<uint32_t>(i); }
+  MOZ_MUST_USE bool writeFixedF32(float f) { return write<float>(f); }
+  MOZ_MUST_USE bool writeFixedF64(double d) { return write<double>(d); }
 
   // Variable-length encodings that all use LEB128.
 
-  [[nodiscard]] bool writeVarU32(uint32_t i) { return writeVarU<uint32_t>(i); }
-  [[nodiscard]] bool writeVarS32(int32_t i) { return writeVarS<int32_t>(i); }
-  [[nodiscard]] bool writeVarU64(uint64_t i) { return writeVarU<uint64_t>(i); }
-  [[nodiscard]] bool writeVarS64(int64_t i) { return writeVarS<int64_t>(i); }
-  [[nodiscard]] bool writeValType(ValType type) {
+  MOZ_MUST_USE bool writeVarU32(uint32_t i) { return writeVarU<uint32_t>(i); }
+  MOZ_MUST_USE bool writeVarS32(int32_t i) { return writeVarS<int32_t>(i); }
+  MOZ_MUST_USE bool writeVarU64(uint64_t i) { return writeVarU<uint64_t>(i); }
+  MOZ_MUST_USE bool writeVarS64(int64_t i) { return writeVarS<int64_t>(i); }
+  MOZ_MUST_USE bool writeValType(ValType type) {
     static_assert(size_t(TypeCode::Limit) <= UINT8_MAX, "fits");
     if (type.isTypeIndex()) {
-      return writeFixedU8(uint8_t(TypeCode::NullableRef)) &&
+      return writeFixedU8(uint8_t(TypeCode::OptRef)) &&
              writeVarU32(type.refType().typeIndex());
     }
-    TypeCode tc = type.packed().typeCode();
+    TypeCode tc = UnpackTypeCodeType(type.packed());
     MOZ_ASSERT(size_t(tc) < size_t(TypeCode::Limit));
     return writeFixedU8(uint8_t(tc));
   }
-  [[nodiscard]] bool writeOp(Opcode opcode) {
+  MOZ_MUST_USE bool writeOp(Opcode opcode) {
     // The Opcode constructor has asserted that `opcode` is meaningful, so no
     // further correctness checking is necessary here.
     uint32_t bits = opcode.bits();
@@ -366,7 +424,7 @@ class Encoder {
 
   // Fixed-length encodings that allow back-patching.
 
-  [[nodiscard]] bool writePatchableFixedU7(size_t* offset) {
+  MOZ_MUST_USE bool writePatchableFixedU7(size_t* offset) {
     *offset = bytes_.length();
     return writeFixedU8(UINT8_MAX);
   }
@@ -376,7 +434,7 @@ class Encoder {
 
   // Variable-length encodings that allow back-patching.
 
-  [[nodiscard]] bool writePatchableVarU32(size_t* offset) {
+  MOZ_MUST_USE bool writePatchableVarU32(size_t* offset) {
     *offset = bytes_.length();
     return writeVarU32(UINT32_MAX);
   }
@@ -387,7 +445,7 @@ class Encoder {
   // Byte ranges start with an LEB128 length followed by an arbitrary sequence
   // of bytes. When used for strings, bytes are to be interpreted as utf8.
 
-  [[nodiscard]] bool writeBytes(const void* bytes, uint32_t numBytes) {
+  MOZ_MUST_USE bool writeBytes(const void* bytes, uint32_t numBytes) {
     return writeVarU32(numBytes) &&
            bytes_.append(reinterpret_cast<const uint8_t*>(bytes), numBytes);
   }
@@ -398,7 +456,7 @@ class Encoder {
   // end while the size's varU32 must be stored at the beginning. Immediately
   // after the section length is the string id of the section.
 
-  [[nodiscard]] bool startSection(SectionId id, size_t* offset) {
+  MOZ_MUST_USE bool startSection(SectionId id, size_t* offset) {
     MOZ_ASSERT(uint32_t(id) < 128);
     return writeVarU32(uint32_t(id)) && writePatchableVarU32(offset);
   }
@@ -422,7 +480,7 @@ class Decoder {
   bool resilientMode_;
 
   template <class T>
-  [[nodiscard]] bool read(T* out) {
+  MOZ_MUST_USE bool read(T* out) {
     if (bytesRemain() < sizeof(T)) {
       return false;
     }
@@ -448,7 +506,7 @@ class Decoder {
   }
 
   template <typename UInt>
-  [[nodiscard]] bool readVarU(UInt* out) {
+  MOZ_MUST_USE bool readVarU(UInt* out) {
     DebugOnly<const uint8_t*> before = cur_;
     const unsigned numBits = sizeof(UInt) * CHAR_BIT;
     const unsigned remainderBits = numBits % 7;
@@ -477,7 +535,7 @@ class Decoder {
   }
 
   template <typename SInt>
-  [[nodiscard]] bool readVarS(SInt* out) {
+  MOZ_MUST_USE bool readVarS(SInt* out) {
     using UInt = std::make_unsigned_t<SInt>;
     const unsigned numBits = sizeof(SInt) * CHAR_BIT;
     const unsigned remainderBits = numBits % 7;
@@ -580,12 +638,12 @@ class Decoder {
   // Fixed-size encoding operations simply copy the literal bytes (without
   // attempting to align).
 
-  [[nodiscard]] bool readFixedU8(uint8_t* i) { return read<uint8_t>(i); }
-  [[nodiscard]] bool readFixedU32(uint32_t* u) { return read<uint32_t>(u); }
-  [[nodiscard]] bool readFixedF32(float* f) { return read<float>(f); }
-  [[nodiscard]] bool readFixedF64(double* d) { return read<double>(d); }
+  MOZ_MUST_USE bool readFixedU8(uint8_t* i) { return read<uint8_t>(i); }
+  MOZ_MUST_USE bool readFixedU32(uint32_t* u) { return read<uint32_t>(u); }
+  MOZ_MUST_USE bool readFixedF32(float* f) { return read<float>(f); }
+  MOZ_MUST_USE bool readFixedF64(double* d) { return read<double>(d); }
 #ifdef ENABLE_WASM_SIMD
-  [[nodiscard]] bool readFixedV128(V128* d) {
+  MOZ_MUST_USE bool readFixedV128(V128* d) {
     for (unsigned i = 0; i < 16; i++) {
       if (!read<uint8_t>(d->bytes + i)) {
         return false;
@@ -597,268 +655,129 @@ class Decoder {
 
   // Variable-length encodings that all use LEB128.
 
-  [[nodiscard]] bool readVarU32(uint32_t* out) {
+  MOZ_MUST_USE bool readVarU32(uint32_t* out) {
     return readVarU<uint32_t>(out);
   }
-  [[nodiscard]] bool readVarS32(int32_t* out) { return readVarS<int32_t>(out); }
-  [[nodiscard]] bool readVarU64(uint64_t* out) {
+  MOZ_MUST_USE bool readVarS32(int32_t* out) { return readVarS<int32_t>(out); }
+  MOZ_MUST_USE bool readVarU64(uint64_t* out) {
     return readVarU<uint64_t>(out);
   }
-  [[nodiscard]] bool readVarS64(int64_t* out) { return readVarS<int64_t>(out); }
+  MOZ_MUST_USE bool readVarS64(int64_t* out) { return readVarS<int64_t>(out); }
 
-  [[nodiscard]] ValType uncheckedReadValType() {
+  MOZ_MUST_USE ValType uncheckedReadValType() {
     uint8_t code = uncheckedReadFixedU8();
     switch (code) {
+      case uint8_t(TypeCode::OptRef):
+        return RefType::fromTypeIndex(uncheckedReadVarU32());
+      case uint8_t(TypeCode::AnyRef):
       case uint8_t(TypeCode::FuncRef):
-      case uint8_t(TypeCode::ExternRef):
-        return RefType::fromTypeCode(TypeCode(code), true);
-      case uint8_t(TypeCode::Rtt): {
-        uint32_t rttDepth = uncheckedReadVarU32();
-        int32_t typeIndex = uncheckedReadVarS32();
-        return ValType::fromRtt(typeIndex, rttDepth);
-      }
-      case uint8_t(TypeCode::Ref):
-      case uint8_t(TypeCode::NullableRef): {
-        bool nullable = code == uint8_t(TypeCode::NullableRef);
-
-        uint8_t nextByte;
-        peekByte(&nextByte);
-
-        if ((nextByte & SLEB128SignMask) == SLEB128SignBit) {
-          uint8_t code = uncheckedReadFixedU8();
-          return RefType::fromTypeCode(TypeCode(code), nullable);
-        }
-
-        int32_t x = uncheckedReadVarS32();
-        return RefType::fromTypeIndex(x, nullable);
-      }
+        return RefType::fromTypeCode(TypeCode(code));
       default:
         return ValType::fromNonRefTypeCode(TypeCode(code));
     }
   }
-
-  template <class T>
-  [[nodiscard]] bool readPackedType(uint32_t numTypes,
-                                    const FeatureArgs& features, T* type) {
+  MOZ_MUST_USE bool readValType(uint32_t numTypes, bool refTypesEnabled,
+                                bool gcTypesEnabled, ValType* type) {
     static_assert(uint8_t(TypeCode::Limit) <= UINT8_MAX, "fits");
     uint8_t code;
     if (!readFixedU8(&code)) {
-      return fail("expected type code");
+      return false;
     }
     switch (code) {
-      case uint8_t(TypeCode::V128): {
+      case uint8_t(TypeCode::I32):
+      case uint8_t(TypeCode::F32):
+      case uint8_t(TypeCode::F64):
+      case uint8_t(TypeCode::I64):
 #ifdef ENABLE_WASM_SIMD
-        if (!features.v128) {
-          return fail("v128 not enabled");
-        }
-        *type = T::fromNonRefTypeCode(TypeCode(code));
-        return true;
-#else
-        break;
+      case uint8_t(TypeCode::V128):
 #endif
-      }
-      case uint8_t(TypeCode::FuncRef):
-      case uint8_t(TypeCode::ExternRef): {
+        *type = ValType::fromNonRefTypeCode(TypeCode(code));
+        return true;
 #ifdef ENABLE_WASM_REFTYPES
-        if (!features.refTypes) {
+      case uint8_t(TypeCode::FuncRef):
+      case uint8_t(TypeCode::AnyRef):
+        if (!refTypesEnabled) {
           return fail("reference types not enabled");
         }
-        *type = RefType::fromTypeCode(TypeCode(code), true);
+        *type = RefType::fromTypeCode(TypeCode(code));
         return true;
-#else
-        break;
-#endif
-      }
-      case uint8_t(TypeCode::Ref):
-      case uint8_t(TypeCode::NullableRef): {
-#ifdef ENABLE_WASM_FUNCTION_REFERENCES
-        if (!features.functionReferences) {
-          return fail("(ref T) types not enabled");
+#  ifdef ENABLE_WASM_GC
+      case uint8_t(TypeCode::OptRef): {
+        if (!gcTypesEnabled) {
+          return fail("(optref T) types not enabled");
         }
-        bool nullable = code == uint8_t(TypeCode::NullableRef);
-        RefType refType;
-        if (!readHeapType(numTypes, features, nullable, &refType)) {
+        uint32_t typeIndex;
+        if (!readVarU32(&typeIndex)) {
           return false;
         }
-        *type = refType;
+        if (typeIndex >= numTypes) {
+          return fail("ref index out of range");
+        }
+        *type = RefType::fromTypeIndex(typeIndex);
         return true;
-#else
-        break;
+      }
+#  endif
 #endif
-      }
-      case uint8_t(TypeCode::Rtt): {
-#ifdef ENABLE_WASM_GC
-        if (!features.gcTypes) {
-          return fail("gc types not enabled");
-        }
-
-        uint32_t rttDepth;
-        if (!readVarU32(&rttDepth) || uint32_t(rttDepth) >= MaxRttDepth) {
-          return fail("invalid rtt depth");
-        }
-
-        RefType heapType;
-        if (!readHeapType(numTypes, features, true, &heapType)) {
-          return false;
-        }
-
-        if (!heapType.isTypeIndex()) {
-          return fail("invalid heap type for rtt");
-        }
-
-        *type = T::fromRtt(heapType.typeIndex(), rttDepth);
-        return true;
-#else
-        break;
-#endif
-      }
-      case uint8_t(TypeCode::EqRef): {
-#ifdef ENABLE_WASM_GC
-        if (!features.gcTypes) {
-          return fail("gc types not enabled");
-        }
-        *type = RefType::fromTypeCode(TypeCode(code), true);
-        return true;
-#else
-        break;
-#endif
-      }
-      default: {
-        if (!T::isValidTypeCode(TypeCode(code))) {
-          break;
-        }
-        *type = T::fromNonRefTypeCode(TypeCode(code));
-        return true;
-      }
+      default:
+        return fail("bad type");
     }
-    return fail("bad type");
   }
-  template <class T>
-  [[nodiscard]] bool readPackedType(const TypeContext& types,
-                                    const FeatureArgs& features, T* type) {
-    if (!readPackedType(types.length(), features, type)) {
+  MOZ_MUST_USE bool readValType(const TypeDefVector& types,
+                                bool refTypesEnabled, bool gcTypesEnabled,
+                                ValType* type) {
+    if (!readValType(types.length(), refTypesEnabled, gcTypesEnabled, type)) {
       return false;
     }
     if (type->isTypeIndex() &&
-        !validateTypeIndex(types, features, type->refType())) {
-      return false;
+        !types[type->refType().typeIndex()].isStructType()) {
+      return fail("type index does not reference a struct type");
     }
     return true;
   }
-
-  [[nodiscard]] bool readValType(uint32_t numTypes, const FeatureArgs& features,
-                                 ValType* type) {
-    return readPackedType<ValType>(numTypes, features, type);
-  }
-  [[nodiscard]] bool readValType(const TypeContext& types,
-                                 const FeatureArgs& features, ValType* type) {
-    return readPackedType<ValType>(types, features, type);
-  }
-
-  [[nodiscard]] bool readFieldType(uint32_t numTypes,
-                                   const FeatureArgs& features,
-                                   FieldType* type) {
-    return readPackedType<FieldType>(numTypes, features, type);
-  }
-  [[nodiscard]] bool readFieldType(const TypeContext& types,
-                                   const FeatureArgs& features,
-                                   FieldType* type) {
-    return readPackedType<FieldType>(types, features, type);
-  }
-
-  [[nodiscard]] bool readHeapType(uint32_t numTypes,
-                                  const FeatureArgs& features, bool nullable,
-                                  RefType* type) {
-    uint8_t nextByte;
-    if (!peekByte(&nextByte)) {
-      return fail("expected heap type code");
+  MOZ_MUST_USE bool readRefType(uint32_t numTypes, bool gcTypesEnabled,
+                                RefType* type) {
+    static_assert(uint8_t(TypeCode::Limit) <= UINT8_MAX, "fits");
+    uint8_t code;
+    if (!readFixedU8(&code)) {
+      return false;
     }
-
-    if ((nextByte & SLEB128SignMask) == SLEB128SignBit) {
-      uint8_t code;
-      if (!readFixedU8(&code)) {
-        return false;
-      }
-
-      switch (code) {
-        case uint8_t(TypeCode::FuncRef):
-        case uint8_t(TypeCode::ExternRef):
-          *type = RefType::fromTypeCode(TypeCode(code), nullable);
-          return true;
+    switch (code) {
+      case uint8_t(TypeCode::FuncRef):
+      case uint8_t(TypeCode::AnyRef):
+        *type = RefType::fromTypeCode(TypeCode(code));
+        return true;
 #ifdef ENABLE_WASM_GC
-        case uint8_t(TypeCode::EqRef):
-          if (!features.gcTypes) {
-            return fail("gc types not enabled");
-          }
-          *type = RefType::fromTypeCode(TypeCode(code), nullable);
-          return true;
-#endif
-        default:
-          return fail("invalid heap type");
+      case uint8_t(TypeCode::OptRef): {
+        if (!gcTypesEnabled) {
+          return fail("(optref T) types not enabled");
+        }
+        uint32_t typeIndex;
+        if (!readVarU32(&typeIndex)) {
+          return false;
+        }
+        if (typeIndex >= numTypes) {
+          return fail("ref index out of range");
+        }
+        *type = RefType::fromTypeIndex(typeIndex);
+        return true;
       }
-    }
-
-#ifdef ENABLE_WASM_FUNCTION_REFERENCES
-    if (features.functionReferences) {
-      int32_t x;
-      if (!readVarS32(&x) || x < 0 || uint32_t(x) >= numTypes ||
-          uint32_t(x) >= MaxTypeIndex) {
-        return fail("invalid heap type index");
-      }
-      *type = RefType::fromTypeIndex(x, nullable);
-      return true;
-    }
 #endif
-    return fail("invalid heap type");
+      default:
+        return fail("bad type");
+    }
   }
-  [[nodiscard]] bool readHeapType(const TypeContext& types,
-                                  const FeatureArgs& features, bool nullable,
-                                  RefType* type) {
-    if (!readHeapType(types.length(), features, nullable, type)) {
+  MOZ_MUST_USE bool readRefType(const TypeDefVector& types, bool gcTypesEnabled,
+                                RefType* type) {
+    if (!readRefType(types.length(), gcTypesEnabled, type)) {
       return false;
     }
-
-    if (type->isTypeIndex() && !validateTypeIndex(types, features, *type)) {
-      return false;
+    if (type->kind() == RefType::TypeIndex &&
+        !types[type->typeIndex()].isStructType()) {
+      return fail("type index does not reference a struct type");
     }
     return true;
   }
-  [[nodiscard]] bool readRefType(uint32_t numTypes, const FeatureArgs& features,
-                                 RefType* type) {
-    ValType valType;
-    if (!readValType(numTypes, features, &valType)) {
-      return false;
-    }
-    if (!valType.isReference()) {
-      return fail("bad type");
-    }
-    *type = valType.refType();
-    return true;
-  }
-  [[nodiscard]] bool readRefType(const TypeContext& types,
-                                 const FeatureArgs& features, RefType* type) {
-    ValType valType;
-    if (!readValType(types, features, &valType)) {
-      return false;
-    }
-    if (!valType.isReference()) {
-      return fail("bad type");
-    }
-    *type = valType.refType();
-    return true;
-  }
-  [[nodiscard]] bool validateTypeIndex(const TypeContext& types,
-                                       const FeatureArgs& features,
-                                       RefType type) {
-    MOZ_ASSERT(type.isTypeIndex());
-
-    if (features.gcTypes && (types[type.typeIndex()].isStructType() ||
-                             types[type.typeIndex()].isArrayType())) {
-      return true;
-    }
-    return fail("type index references an invalid type");
-  }
-  [[nodiscard]] bool readOp(OpBytes* op) {
+  MOZ_MUST_USE bool readOp(OpBytes* op) {
     static_assert(size_t(Op::Limit) == 256, "fits");
     uint8_t u8;
     if (!readFixedU8(&u8)) {
@@ -868,13 +787,16 @@ class Decoder {
     if (MOZ_LIKELY(!IsPrefixByte(u8))) {
       return true;
     }
-    return readVarU32(&op->b1);
+    if (!readVarU32(&op->b1)) {
+      return false;
+    }
+    return true;
   }
 
   // See writeBytes comment.
 
-  [[nodiscard]] bool readBytes(uint32_t numBytes,
-                               const uint8_t** bytes = nullptr) {
+  MOZ_MUST_USE bool readBytes(uint32_t numBytes,
+                              const uint8_t** bytes = nullptr) {
     if (bytes) {
       *bytes = cur_;
     }
@@ -887,26 +809,26 @@ class Decoder {
 
   // See "section" description in Encoder.
 
-  [[nodiscard]] bool readSectionHeader(uint8_t* id, SectionRange* range);
+  MOZ_MUST_USE bool readSectionHeader(uint8_t* id, SectionRange* range);
 
-  [[nodiscard]] bool startSection(SectionId id, ModuleEnvironment* env,
-                                  MaybeSectionRange* range,
+  MOZ_MUST_USE bool startSection(SectionId id, ModuleEnvironment* env,
+                                 MaybeSectionRange* range,
+                                 const char* sectionName);
+  MOZ_MUST_USE bool finishSection(const SectionRange& range,
                                   const char* sectionName);
-  [[nodiscard]] bool finishSection(const SectionRange& range,
-                                   const char* sectionName);
 
   // Custom sections do not cause validation errors unless the error is in
   // the section header itself.
 
-  [[nodiscard]] bool startCustomSection(const char* expected,
-                                        size_t expectedLength,
-                                        ModuleEnvironment* env,
-                                        MaybeSectionRange* range);
+  MOZ_MUST_USE bool startCustomSection(const char* expected,
+                                       size_t expectedLength,
+                                       ModuleEnvironment* env,
+                                       MaybeSectionRange* range);
 
   template <size_t NameSizeWith0>
-  [[nodiscard]] bool startCustomSection(const char (&name)[NameSizeWith0],
-                                        ModuleEnvironment* env,
-                                        MaybeSectionRange* range) {
+  MOZ_MUST_USE bool startCustomSection(const char (&name)[NameSizeWith0],
+                                       ModuleEnvironment* env,
+                                       MaybeSectionRange* range) {
     MOZ_ASSERT(name[NameSizeWith0 - 1] == '\0');
     return startCustomSection(name, NameSizeWith0 - 1, env, range);
   }
@@ -914,14 +836,14 @@ class Decoder {
   void finishCustomSection(const char* name, const SectionRange& range);
   void skipAndFinishCustomSection(const SectionRange& range);
 
-  [[nodiscard]] bool skipCustomSection(ModuleEnvironment* env);
+  MOZ_MUST_USE bool skipCustomSection(ModuleEnvironment* env);
 
   // The Name section has its own optional subsections.
 
-  [[nodiscard]] bool startNameSubsection(NameType nameType,
-                                         Maybe<uint32_t>* endOffset);
-  [[nodiscard]] bool finishNameSubsection(uint32_t endOffset);
-  [[nodiscard]] bool skipNameSubsection();
+  MOZ_MUST_USE bool startNameSubsection(NameType nameType,
+                                        Maybe<uint32_t>* endOffset);
+  MOZ_MUST_USE bool finishNameSubsection(uint32_t endOffset);
+  MOZ_MUST_USE bool skipNameSubsection();
 
   // The infallible "unchecked" decoding functions can be used when we are
   // sure that the bytes are well-formed (by construction or due to previous
@@ -969,28 +891,22 @@ class Decoder {
   }
 };
 
-// Shared subtyping function across validation.
-
-[[nodiscard]] bool CheckIsSubtypeOf(Decoder& d, const ModuleEnvironment& env,
-                                    size_t opcodeOffset, ValType actual,
-                                    ValType expected, TypeCache* cache);
-
 // The local entries are part of function bodies and thus serialized by both
 // wasm and asm.js and decoded as part of both validation and compilation.
 
-[[nodiscard]] bool EncodeLocalEntries(Encoder& e, const ValTypeVector& locals);
+MOZ_MUST_USE bool EncodeLocalEntries(Encoder& d, const ValTypeVector& locals);
 
 // This performs no validation; the local entries must already have been
 // validated by an earlier pass.
 
-[[nodiscard]] bool DecodeValidatedLocalEntries(Decoder& d,
-                                               ValTypeVector* locals);
+MOZ_MUST_USE bool DecodeValidatedLocalEntries(Decoder& d,
+                                              ValTypeVector* locals);
 
 // This validates the entries.
 
-[[nodiscard]] bool DecodeLocalEntries(Decoder& d, const TypeContext& types,
-                                      const FeatureArgs& features,
-                                      ValTypeVector* locals);
+MOZ_MUST_USE bool DecodeLocalEntries(Decoder& d, const TypeDefVector& types,
+                                     bool refTypesEnabled, bool gcTypesEnabled,
+                                     ValTypeVector* locals);
 
 // Returns whether the given [begin, end) prefix of a module's bytecode starts a
 // code section and, if so, returns the SectionRange of that code section.
@@ -999,8 +915,8 @@ class Decoder {
 // code section is not present. Such modules can be valid so the caller must
 // handle this special case.
 
-[[nodiscard]] bool StartsCodeSection(const uint8_t* begin, const uint8_t* end,
-                                     SectionRange* codeSection);
+MOZ_MUST_USE bool StartsCodeSection(const uint8_t* begin, const uint8_t* end,
+                                    SectionRange* range);
 
 // Calling DecodeModuleEnvironment decodes all sections up to the code section
 // and performs full validation of all those sections. The client must then
@@ -1008,13 +924,13 @@ class Decoder {
 // and finally call DecodeModuleTail to decode all remaining sections after the
 // code section (again, performing full validation).
 
-[[nodiscard]] bool DecodeModuleEnvironment(Decoder& d, ModuleEnvironment* env);
+MOZ_MUST_USE bool DecodeModuleEnvironment(Decoder& d, ModuleEnvironment* env);
 
-[[nodiscard]] bool ValidateFunctionBody(const ModuleEnvironment& env,
-                                        uint32_t funcIndex, uint32_t bodySize,
-                                        Decoder& d);
+MOZ_MUST_USE bool ValidateFunctionBody(const ModuleEnvironment& env,
+                                       uint32_t funcIndex, uint32_t bodySize,
+                                       Decoder& d);
 
-[[nodiscard]] bool DecodeModuleTail(Decoder& d, ModuleEnvironment* env);
+MOZ_MUST_USE bool DecodeModuleTail(Decoder& d, ModuleEnvironment* env);
 
 void ConvertMemoryPagesToBytes(Limits* memory);
 
@@ -1023,8 +939,8 @@ void ConvertMemoryPagesToBytes(Limits* memory);
 //  - if *error is null, the caller should report out-of-memory
 //  - otherwise, there was a legitimate error described by *error
 
-[[nodiscard]] bool Validate(JSContext* cx, const ShareableBytes& bytecode,
-                            const FeatureOptions& options, UniqueChars* error);
+MOZ_MUST_USE bool Validate(JSContext* cx, const ShareableBytes& bytecode,
+                           UniqueChars* error);
 
 }  // namespace wasm
 }  // namespace js

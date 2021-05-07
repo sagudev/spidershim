@@ -1,11 +1,8 @@
 //! Sealed traits
 
-/// A sealed trait, this is logically private to the crate
-/// and will prevent implementations from outside the crate
-pub trait Seal<T = ()> {}
-
 /// Trait implemented by arrays that can be SIMD types.
-pub trait SimdArray: Seal {
+#[doc(hidden)]
+pub trait SimdArray {
     /// The type of the #[repr(simd)] type.
     type Tuple: Copy + Clone;
     /// The element type of the vector.
@@ -19,7 +16,7 @@ pub trait SimdArray: Seal {
 /// This traits is used to constraint the arguments
 /// and result type of the portable shuffles.
 #[doc(hidden)]
-pub trait Shuffle<Lanes>: Seal<Lanes> {
+pub trait Shuffle<Lanes> {
     // Lanes is a `[u32; N]` where `N` is the number of vector lanes
 
     /// The result type of the shuffle.
@@ -27,7 +24,8 @@ pub trait Shuffle<Lanes>: Seal<Lanes> {
 }
 
 /// This trait is implemented by all SIMD vector types.
-pub trait Simd: Seal {
+#[doc(hidden)]
+pub trait Simd {
     /// Element type of the SIMD vector
     type Element;
     /// The number of elements in the SIMD vector.
@@ -37,6 +35,7 @@ pub trait Simd: Seal {
 }
 
 /// This trait is implemented by all mask types
-pub trait Mask: Seal {
+#[doc(hidden)]
+pub trait Mask {
     fn test(&self) -> bool;
 }

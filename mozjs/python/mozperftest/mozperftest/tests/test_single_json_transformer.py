@@ -48,7 +48,7 @@ def test_merge(data):
 
 
 def test_process(files):
-    files = files["resources"]
+    files, _, _ = files
     file_1 = files["file_1"]
     file_2 = files["file_2"]
 

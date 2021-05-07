@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmDebuggingEnabled()
+// |jit-test| skip-if: !wasmDebuggingIsSupported()
 
 // Tests that JavaScript scripts have a "js" format and wasm scripts have a
 // "wasm" format.

@@ -7,6 +7,8 @@
 #ifndef jit_ProcessExecutableMemory_h
 #define jit_ProcessExecutableMemory_h
 
+#include "mozilla/Attributes.h"
+
 #include "util/Poison.h"
 
 namespace js {
@@ -68,23 +70,15 @@ enum class ProtectionSetting {
   Executable,
 };
 
-/// Whether the instruction cache must be flushed:
-//- No means no flushing will happen.
-//- LocalThreadOnly means only the local thread's icache will be flushed.
-//- AllThreads means all the threads' icaches will be flushed; this must be used
-// when the compiling thread and the executing thread might be different.
+enum class MustFlushICache { No, Yes };
 
-enum class MustFlushICache { No, LocalThreadOnly, AllThreads };
-
-enum class FlushICacheSpec { LocalThreadOnly, AllThreads };
-
-[[nodiscard]] extern bool ReprotectRegion(void* start, size_t size,
-                                          ProtectionSetting protection,
-                                          MustFlushICache flushICache);
+extern MOZ_MUST_USE bool ReprotectRegion(void* start, size_t size,
+                                         ProtectionSetting protection,
+                                         MustFlushICache flushICache);
 
 // Functions called at process start-up/shutdown to initialize/release the
 // executable memory region.
-[[nodiscard]] extern bool InitProcessExecutableMemory();
+extern MOZ_MUST_USE bool InitProcessExecutableMemory();
 extern void ReleaseProcessExecutableMemory();
 
 // Allocate/deallocate executable pages.
@@ -105,9 +99,6 @@ extern bool CanLikelyAllocateMoreExecutableMemory();
 // rounded down to MB limit.  Note this can fluctuate as other threads within
 // the process allocate executable memory.
 extern size_t LikelyAvailableExecutableMemory();
-
-// Returns whether |p| is stored in the executable code buffer.
-extern bool AddressIsInExecutableMemory(const void* p);
 
 }  // namespace jit
 }  // namespace js

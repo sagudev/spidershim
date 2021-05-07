@@ -5,7 +5,7 @@
 
 function interceptThen() {
   const intercepted = [];
-  let callCount = 0;
+  const callCount = 0;
   Object.prototype.then = function(resolver) {
     if (!this.done) {
       intercepted.push(this.value);
@@ -21,7 +21,7 @@ function interceptThen() {
   return intercepted;
 }
 
-promise_test(async t => {
+promise_test(async () => {
   const rs = new ReadableStream({
     start(controller) {
       controller.enqueue('a');
@@ -31,9 +31,6 @@ promise_test(async t => {
   const ws = recordingWritableStream();
 
   const intercepted = interceptThen();
-  t.add_cleanup(() => {
-    delete Object.prototype.then;
-  });
 
   await rs.pipeTo(ws);
   delete Object.prototype.then;
@@ -43,7 +40,7 @@ promise_test(async t => {
   assert_array_equals(ws.events, ['write', 'a', 'close'], 'written chunk should be "a"');
 }, 'piping should not be observable');
 
-promise_test(async t => {
+promise_test(async () => {
   const rs = new ReadableStream({
     start(controller) {
       controller.enqueue('a');
@@ -55,9 +52,6 @@ promise_test(async t => {
   const [ branch1, branch2 ] = rs.tee();
 
   const intercepted = interceptThen();
-  t.add_cleanup(() => {
-    delete Object.prototype.then;
-  });
 
   await branch1.pipeTo(ws);
   delete Object.prototype.then;

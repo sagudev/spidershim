@@ -6,7 +6,7 @@
 description: Rest element (nested object pattern) does not support initializer (class expression method)
 esid: sec-class-definitions-runtime-semantics-evaluation
 features: [async-iteration]
-flags: [generated]
+flags: [generated, async]
 negative:
   phase: parse
   type: SyntaxError

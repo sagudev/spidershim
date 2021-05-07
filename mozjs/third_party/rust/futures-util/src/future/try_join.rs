@@ -1,24 +1,22 @@
 #![allow(non_snake_case)]
 
-use crate::future::{TryMaybeDone, try_maybe_done};
+use crate::future::{MaybeDone, maybe_done, TryFutureExt, IntoFuture};
 use core::fmt;
 use core::pin::Pin;
 use futures_core::future::{Future, TryFuture};
 use futures_core::task::{Context, Poll};
-use pin_project_lite::pin_project;
+use pin_utils::unsafe_pinned;
 
 macro_rules! generate {
     ($(
         $(#[$doc:meta])*
         ($Join:ident, <Fut1, $($Fut:ident),*>),
     )*) => ($(
-        pin_project! {
-            $(#[$doc])*
-            #[must_use = "futures do nothing unless you `.await` or poll them"]
-            pub struct $Join<Fut1: TryFuture, $($Fut: TryFuture),*> {
-                #[pin] Fut1: TryMaybeDone<Fut1>,
-                $(#[pin] $Fut: TryMaybeDone<$Fut>,)*
-            }
+        $(#[$doc])*
+        #[must_use = "futures do nothing unless you `.await` or poll them"]
+        pub struct $Join<Fut1: TryFuture, $($Fut: TryFuture),*> {
+            Fut1: MaybeDone<IntoFuture<Fut1>>,
+            $($Fut: MaybeDone<IntoFuture<$Fut>>,)*
         }
 
         impl<Fut1, $($Fut),*> fmt::Debug for $Join<Fut1, $($Fut),*>
@@ -47,12 +45,17 @@ macro_rules! generate {
                 $Fut: TryFuture<Error=Fut1::Error>
             ),*
         {
-            fn new(Fut1: Fut1, $($Fut: $Fut),*) -> Self {
-                Self {
-                    Fut1: try_maybe_done(Fut1),
-                    $($Fut: try_maybe_done($Fut)),*
+            fn new(Fut1: Fut1, $($Fut: $Fut),*) -> $Join<Fut1, $($Fut),*> {
+                $Join {
+                    Fut1: maybe_done(TryFutureExt::into_future(Fut1)),
+                    $($Fut: maybe_done(TryFutureExt::into_future($Fut))),*
                 }
             }
+
+            unsafe_pinned!(Fut1: MaybeDone<IntoFuture<Fut1>>);
+            $(
+                unsafe_pinned!($Fut: MaybeDone<IntoFuture<$Fut>>);
+            )*
         }
 
         impl<Fut1, $($Fut),*> Future for $Join<Fut1, $($Fut),*>
@@ -65,20 +68,29 @@ macro_rules! generate {
             type Output = Result<(Fut1::Ok, $($Fut::Ok),*), Fut1::Error>;
 
             fn poll(
-                self: Pin<&mut Self>, cx: &mut Context<'_>
+                mut self: Pin<&mut Self>, cx: &mut Context<'_>
             ) -> Poll<Self::Output> {
                 let mut all_done = true;
-                let mut futures = self.project();
-                all_done &= futures.Fut1.as_mut().poll(cx)?.is_ready();
+                if self.as_mut().Fut1().poll(cx).is_pending() {
+                    all_done = false;
+                } else if self.as_mut().Fut1().output_mut().unwrap().is_err() {
+                    return Poll::Ready(Err(
+                        self.as_mut().Fut1().take_output().unwrap().err().unwrap()));
+                }
                 $(
-                    all_done &= futures.$Fut.as_mut().poll(cx)?.is_ready();
+                    if self.as_mut().$Fut().poll(cx).is_pending() {
+                        all_done = false;
+                    } else if self.as_mut().$Fut().output_mut().unwrap().is_err() {
+                        return Poll::Ready(Err(
+                            self.as_mut().$Fut().take_output().unwrap().err().unwrap()));
+                    }
                 )*
 
                 if all_done {
                     Poll::Ready(Ok((
-                        futures.Fut1.take_output().unwrap(),
+                        self.as_mut().Fut1().take_output().unwrap().ok().unwrap(),
                         $(
-                            futures.$Fut.take_output().unwrap()
+                            self.as_mut().$Fut().take_output().unwrap().ok().unwrap()
                         ),*
                     )))
                 } else {

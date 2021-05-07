@@ -82,4 +82,4 @@ c.m().next().then(function(v) {
   }
 
   return Promise.resolve(assertions());
-}).then($DONE, $DONE);
+}, $DONE).then($DONE, $DONE);

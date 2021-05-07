@@ -4,12 +4,11 @@
 
 use std::collections::HashSet;
 use std::hash::{BuildHasher, Hash};
-use std::marker::PhantomData;
 
-use crate::iter::plumbing::*;
-use crate::iter::*;
+use iter::plumbing::*;
+use iter::*;
 
-use crate::vec;
+use vec;
 
 /// Parallel iterator over a hash set
 #[derive(Debug)] // std doesn't Clone
@@ -29,7 +28,7 @@ delegate_iterator! {
 
 /// Parallel iterator over an immutable reference to a hash set
 #[derive(Debug)]
-pub struct Iter<'a, T: Hash + Eq + Sync> {
+pub struct Iter<'a, T: Hash + Eq + Sync + 'a> {
     inner: vec::IntoIter<&'a T>,
 }
 
@@ -52,29 +51,3 @@ delegate_iterator! {
 }
 
 // `HashSet` doesn't have a mutable `Iterator`
-
-/// Draining parallel iterator that moves out of a hash set,
-/// but keeps the total capacity.
-#[derive(Debug)]
-pub struct Drain<'a, T: Hash + Eq + Send> {
-    inner: vec::IntoIter<T>,
-    marker: PhantomData<&'a mut HashSet<T>>,
-}
-
-impl<'a, T: Hash + Eq + Send, S: BuildHasher> ParallelDrainFull for &'a mut HashSet<T, S> {
-    type Iter = Drain<'a, T>;
-    type Item = T;
-
-    fn par_drain(self) -> Self::Iter {
-        let vec: Vec<_> = self.drain().collect();
-        Drain {
-            inner: vec.into_par_iter(),
-            marker: PhantomData,
-        }
-    }
-}
-
-delegate_iterator! {
-    Drain<'_, T> => T,
-    impl<T: Hash + Eq + Send>
-}

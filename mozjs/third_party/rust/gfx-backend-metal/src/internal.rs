@@ -1,9 +1,10 @@
-use crate::{conversions as conv, FastHashMap, PrivateCapabilities, MAX_COLOR_ATTACHMENTS};
+use crate::{conversions as conv, PrivateCapabilities};
 
+use auxil::FastHashMap;
 use hal::{
     command::ClearColor,
     format::{Aspects, ChannelType},
-    image::{Filter, NumSamples},
+    image::Filter,
     pso,
 };
 
@@ -256,9 +257,8 @@ impl DepthStencilStates {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ClearKey {
     pub framebuffer_aspects: Aspects,
-    pub color_formats: [metal::MTLPixelFormat; MAX_COLOR_ATTACHMENTS],
+    pub color_formats: [metal::MTLPixelFormat; 1],
     pub depth_stencil_format: metal::MTLPixelFormat,
-    pub sample_count: NumSamples,
     pub target_index: Option<(u8, Channel)>,
 }
 
@@ -309,9 +309,6 @@ impl ImageClearPipes {
         if key.framebuffer_aspects.contains(Aspects::STENCIL) {
             pipeline.set_stencil_attachment_pixel_format(key.depth_stencil_format);
         }
-        if key.sample_count > 1 {
-            pipeline.set_sample_count(key.sample_count as u64);
-        }
 
         if let Some((index, channel)) = key.target_index {
             assert!(key.framebuffer_aspects.contains(Aspects::COLOR));
@@ -329,7 +326,7 @@ impl ImageClearPipes {
         let vertex_descriptor = metal::VertexDescriptor::new();
         let mtl_buffer_desc = vertex_descriptor.layouts().object_at(0).unwrap();
         mtl_buffer_desc.set_stride(mem::size_of::<ClearVertex>() as _);
-        for i in 0..1 {
+        for i in 0 .. 1 {
             let mtl_attribute_desc = vertex_descriptor
                 .attributes()
                 .object_at(i)
@@ -425,7 +422,7 @@ impl ImageBlitPipes {
         let vertex_descriptor = metal::VertexDescriptor::new();
         let mtl_buffer_desc = vertex_descriptor.layouts().object_at(0).unwrap();
         mtl_buffer_desc.set_stride(mem::size_of::<BlitVertex>() as _);
-        for i in 0..2 {
+        for i in 0 .. 2 {
             let mtl_attribute_desc = vertex_descriptor
                 .attributes()
                 .object_at(i)
@@ -455,10 +452,8 @@ impl ServicePipes {
     pub fn new(device: &metal::DeviceRef) -> Self {
         let data = if cfg!(target_os = "macos") {
             &include_bytes!("./../shaders/gfx-shaders-macos.metallib")[..]
-        } else if cfg!(target_arch = "aarch64") {
-            &include_bytes!("./../shaders/gfx-shaders-ios.metallib")[..]
         } else {
-            &include_bytes!("./../shaders/gfx-shaders-ios-simulator.metallib")[..]
+            &include_bytes!("./../shaders/gfx-shaders-ios.metallib")[..]
         };
         let library = device.new_library_with_data(data).unwrap();
 
@@ -497,7 +492,7 @@ impl ServicePipes {
             buffers.object_at(2).unwrap().set_mutability(metal::MTLMutability::Immutable);
         }*/
 
-        device.new_compute_pipeline_state(&pipeline).unwrap()
+        unsafe { device.new_compute_pipeline_state(&pipeline) }.unwrap()
     }
 
     fn create_fill_buffer(
@@ -516,6 +511,62 @@ impl ServicePipes {
             buffers.object_at(1).unwrap().set_mutability(metal::MTLMutability::Immutable);
         }*/
 
-        device.new_compute_pipeline_state(&pipeline).unwrap()
+        unsafe { device.new_compute_pipeline_state(&pipeline) }.unwrap()
+    }
+
+    pub(crate) fn simple_blit(
+        &self,
+        device: &Mutex<metal::Device>,
+        cmd_buffer: &metal::CommandBufferRef,
+        src: &metal::TextureRef,
+        dst: &metal::TextureRef,
+        private_caps: &PrivateCapabilities,
+    ) {
+        let key = (
+            metal::MTLTextureType::D2,
+            dst.pixel_format(),
+            Aspects::COLOR,
+            Channel::Float,
+        );
+        let pso = self.blits.get(key, &self.library, device, private_caps);
+        let vertices = [
+            BlitVertex {
+                uv: [0.0, 1.0, 0.0, 0.0],
+                pos: [0.0, 0.0, 0.0, 0.0],
+            },
+            BlitVertex {
+                uv: [0.0, 0.0, 0.0, 0.0],
+                pos: [0.0, 1.0, 0.0, 0.0],
+            },
+            BlitVertex {
+                uv: [1.0, 1.0, 0.0, 0.0],
+                pos: [1.0, 0.0, 0.0, 0.0],
+            },
+            BlitVertex {
+                uv: [1.0, 0.0, 0.0, 0.0],
+                pos: [1.0, 1.0, 0.0, 0.0],
+            },
+        ];
+
+        let descriptor = metal::RenderPassDescriptor::new();
+        if private_caps.layered_rendering {
+            descriptor.set_render_target_array_length(1);
+        }
+        let attachment = descriptor.color_attachments().object_at(0).unwrap();
+        attachment.set_texture(Some(dst));
+        attachment.set_load_action(metal::MTLLoadAction::DontCare);
+        attachment.set_store_action(metal::MTLStoreAction::Store);
+
+        let encoder = cmd_buffer.new_render_command_encoder(descriptor);
+        encoder.set_render_pipeline_state(pso.as_ref());
+        encoder.set_fragment_sampler_state(0, Some(&self.sampler_states.linear));
+        encoder.set_fragment_texture(0, Some(src));
+        encoder.set_vertex_bytes(
+            0,
+            (vertices.len() * mem::size_of::<BlitVertex>()) as u64,
+            vertices.as_ptr() as *const _,
+        );
+        encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
+        encoder.end_encoding();
     }
 }

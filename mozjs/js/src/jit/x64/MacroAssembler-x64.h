@@ -7,11 +7,11 @@
 #ifndef jit_x64_MacroAssembler_x64_h
 #define jit_x64_MacroAssembler_x64_h
 
+#include "jit/JitFrames.h"
 #include "jit/MoveResolver.h"
 #include "jit/x86-shared/MacroAssembler-x86-shared.h"
 #include "js/HeapAPI.h"
 #include "vm/BigIntType.h"  // JS::BigInt
-#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
@@ -68,10 +68,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   const MacroAssembler& asMasm() const;
 
   void bindOffsets(const MacroAssemblerX86Shared::UsesVector&);
-
-  void vpRiprOpSimd128(const SimdConstant& v, FloatRegister reg,
-                       JmpSrc (X86Encoding::BaseAssemblerX64::*op)(
-                           X86Encoding::XMMRegisterID id));
 
  public:
   using MacroAssemblerX86Shared::load32;
@@ -148,6 +144,20 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
       movl(Imm32(Upper32Of(GetShiftedTag(type))), ToUpper32(Operand(dest)));
     } else {
       ScratchRegisterScope scratch(asMasm());
+#ifdef NIGHTLY_BUILD
+      // Bug 1485209 - Diagnostic assert for constructing Values with
+      // nullptr or misaligned (eg poisoned) JSObject/JSString pointers.
+      if (type == JSVAL_TYPE_OBJECT || type == JSVAL_TYPE_STRING) {
+        Label crash, ok;
+        testPtr(reg, Imm32(js::gc::CellAlignMask));
+        j(Assembler::NonZero, &crash);
+        testPtr(reg, reg);
+        j(Assembler::NonZero, &ok);
+        bind(&crash);
+        breakpoint();
+        bind(&ok);
+      }
+#endif
       boxValue(type, reg, scratch);
       movq(scratch, Operand(dest));
     }
@@ -561,9 +571,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
       load32(Address(scratch, 0x0), dest);
     }
   }
-  void load64(const Operand& address, Register64 dest) {
-    movq(address, dest.reg);
-  }
   void load64(const Address& address, Register64 dest) {
     movq(Operand(address), dest.reg);
   }
@@ -599,9 +606,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   }
   void store64(Register src, const Address& address) {
     movq(src, Operand(address));
-  }
-  void store64(Register64 src, const Operand& address) {
-    movq(src.reg, address);
   }
   void storePtr(Register src, const BaseIndex& address) {
     movq(src, Operand(address));
@@ -873,44 +877,44 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   // Extended unboxing API. If the payload is already in a register, returns
   // that register. Otherwise, provides a move to the given scratch register,
   // and returns that.
-  [[nodiscard]] Register extractObject(const Address& address,
-                                       Register scratch) {
+  MOZ_MUST_USE Register extractObject(const Address& address,
+                                      Register scratch) {
     MOZ_ASSERT(scratch != ScratchReg);
     unboxObject(address, scratch);
     return scratch;
   }
-  [[nodiscard]] Register extractObject(const ValueOperand& value,
-                                       Register scratch) {
+  MOZ_MUST_USE Register extractObject(const ValueOperand& value,
+                                      Register scratch) {
     MOZ_ASSERT(scratch != ScratchReg);
     unboxObject(value, scratch);
     return scratch;
   }
-  [[nodiscard]] Register extractSymbol(const ValueOperand& value,
-                                       Register scratch) {
+  MOZ_MUST_USE Register extractSymbol(const ValueOperand& value,
+                                      Register scratch) {
     MOZ_ASSERT(scratch != ScratchReg);
     unboxSymbol(value, scratch);
     return scratch;
   }
-  [[nodiscard]] Register extractInt32(const ValueOperand& value,
-                                      Register scratch) {
+  MOZ_MUST_USE Register extractInt32(const ValueOperand& value,
+                                     Register scratch) {
     MOZ_ASSERT(scratch != ScratchReg);
     unboxInt32(value, scratch);
     return scratch;
   }
-  [[nodiscard]] Register extractBoolean(const ValueOperand& value,
-                                        Register scratch) {
+  MOZ_MUST_USE Register extractBoolean(const ValueOperand& value,
+                                       Register scratch) {
     MOZ_ASSERT(scratch != ScratchReg);
     unboxBoolean(value, scratch);
     return scratch;
   }
-  [[nodiscard]] Register extractTag(const Address& address, Register scratch) {
+  MOZ_MUST_USE Register extractTag(const Address& address, Register scratch) {
     MOZ_ASSERT(scratch != ScratchReg);
     loadPtr(address, scratch);
     splitTag(scratch, scratch);
     return scratch;
   }
-  [[nodiscard]] Register extractTag(const ValueOperand& value,
-                                    Register scratch) {
+  MOZ_MUST_USE Register extractTag(const ValueOperand& value,
+                                   Register scratch) {
     MOZ_ASSERT(scratch != ScratchReg);
     splitTag(value, scratch);
     return scratch;
@@ -939,68 +943,8 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
 
   void loadConstantSimd128Int(const SimdConstant& v, FloatRegister dest);
   void loadConstantSimd128Float(const SimdConstant& v, FloatRegister dest);
-  void vpaddbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpaddwSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpadddSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpaddqSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpsubbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpsubwSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpsubdSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpsubqSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpmullwSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpmulldSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpaddsbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpaddusbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpaddswSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpadduswSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpsubsbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpsubusbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpsubswSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpsubuswSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpminsbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpminubSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpminswSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpminuwSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpminsdSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpminudSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpmaxsbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpmaxubSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpmaxswSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpmaxuwSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpmaxsdSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpmaxudSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpandSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpxorSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vporSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vaddpsSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vaddpdSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vsubpsSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vsubpdSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vdivpsSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vdivpdSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vmulpsSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vmulpdSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpacksswbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpackuswbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpackssdwSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpackusdwSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vpshufbSimd128(const SimdConstant& v, FloatRegister srcDest);
-  void vptestSimd128(const SimdConstant& v, FloatRegister src);
-  void vpmaddwdSimd128(const SimdConstant& v, FloatRegister src);
-  void vpcmpeqbSimd128(const SimdConstant& v, FloatRegister src);
-  void vpcmpgtbSimd128(const SimdConstant& v, FloatRegister src);
-  void vpcmpeqwSimd128(const SimdConstant& v, FloatRegister src);
-  void vpcmpgtwSimd128(const SimdConstant& v, FloatRegister src);
-  void vpcmpeqdSimd128(const SimdConstant& v, FloatRegister src);
-  void vpcmpgtdSimd128(const SimdConstant& v, FloatRegister src);
-  void vcmpeqpsSimd128(const SimdConstant& v, FloatRegister src);
-  void vcmpneqpsSimd128(const SimdConstant& v, FloatRegister src);
-  void vcmpltpsSimd128(const SimdConstant& v, FloatRegister src);
-  void vcmplepsSimd128(const SimdConstant& v, FloatRegister src);
-  void vcmpeqpdSimd128(const SimdConstant& v, FloatRegister src);
-  void vcmpneqpdSimd128(const SimdConstant& v, FloatRegister src);
-  void vcmpltpdSimd128(const SimdConstant& v, FloatRegister src);
-  void vcmplepdSimd128(const SimdConstant& v, FloatRegister src);
+  void vpandSimd128(const SimdConstant& v, FloatRegister dest);
+  void rightShiftInt64x2(Imm32 count, FloatRegister src, FloatRegister dest);
 
   void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
     loadPtr(Address(WasmTlsReg,
@@ -1036,6 +980,8 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   void loadUnboxedValue(const T& src, MIRType type, AnyRegister dest) {
     if (dest.isFloat()) {
       loadInt32OrDouble(src, dest.fpu());
+    } else if (type == MIRType::ObjectOrNull) {
+      unboxObjectOrNull(src, dest.gpr());
     } else {
       unboxNonDouble(Operand(src), dest.gpr(), ValueTypeFromMIRType(type));
     }
@@ -1073,12 +1019,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     loadPtr(Address(StackPointer, 0x0), dest);
   }
 
-  // Checks whether a double is representable as a 64-bit integer. If so, the
-  // integer is written to the output register. Otherwise, a bailout is taken to
-  // the given snapshot. This function overwrites the scratch float register.
-  void convertDoubleToPtr(FloatRegister src, Register dest, Label* fail,
-                          bool negativeZeroCheck = true);
-
   void convertUInt32ToDouble(Register src, FloatRegister dest) {
     // Zero the output register to break dependencies, see convertInt32ToDouble.
     zeroDouble(dest);
@@ -1099,7 +1039,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
                            Label* failure);
 
  public:
-  void handleFailureWithHandlerTail(Label* profilerExitTail);
+  void handleFailureWithHandlerTail(void* handler, Label* profilerExitTail);
 
   // Instrumentation for entering and leaving the profiler.
   void profilerEnterFrame(Register framePtr, Register scratch);

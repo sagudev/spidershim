@@ -2,11 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ArrayUtils.h"
+
 #include "jsapi-tests/tests.h"
-#include "util/Text.h"
+
+using mozilla::ArrayEqual;
+using mozilla::ArrayLength;
 
 static const char16_t arr[] = u"hi, don't delete me";
-static const size_t arrlen = js_strlen(arr);
+static const size_t arrlen = ArrayLength(arr) - 1;
 
 static int finalized1 = 0;
 static int finalized2 = 0;

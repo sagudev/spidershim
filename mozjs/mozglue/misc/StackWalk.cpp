@@ -376,7 +376,7 @@ static void WalkStackMain64(struct WalkStackData* aData) {
  * whose in memory address doesn't match its in-file address.
  */
 
-static void DoMozStackWalkThread(MozWalkStackCallback aCallback,
+MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
                                  uint32_t aSkipFrames, uint32_t aMaxFrames,
                                  void* aClosure, HANDLE aThread,
                                  CONTEXT* aContext) {
@@ -425,17 +425,10 @@ static void DoMozStackWalkThread(MozWalkStackCallback aCallback,
   }
 }
 
-MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
-                                 uint32_t aMaxFrames, void* aClosure,
-                                 HANDLE aThread, CONTEXT* aContext) {
-  DoMozStackWalkThread(aCallback, /* aSkipFrames = */ 0, aMaxFrames, aClosure,
-                       aThread, aContext);
-}
-
 MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
                            uint32_t aMaxFrames, void* aClosure) {
-  DoMozStackWalkThread(aCallback, aSkipFrames, aMaxFrames, aClosure, nullptr,
-                       nullptr);
+  MozStackWalkThread(aCallback, aSkipFrames, aMaxFrames, aClosure, nullptr,
+                     nullptr);
 }
 
 static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
@@ -683,11 +676,6 @@ void DemangleSymbol(const char* aSymbol, char* aBuffer, int aBufLen) {
 #  if ((defined(__i386) || defined(PPC) || defined(__ppc__)) && \
        (MOZ_STACKWALK_SUPPORTS_MACOSX || MOZ_STACKWALK_SUPPORTS_LINUX))
 
-static void DoFramePointerStackWalk(MozWalkStackCallback aCallback,
-                                    uint32_t aSkipFrames, uint32_t aMaxFrames,
-                                    void* aClosure, void** aBp,
-                                    void* aStackEnd);
-
 MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
                            uint32_t aMaxFrames, void* aClosure) {
   // Get the frame pointer
@@ -726,8 +714,8 @@ MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
 #    else
 #      error Unsupported configuration
 #    endif
-  DoFramePointerStackWalk(aCallback, aSkipFrames, aMaxFrames, aClosure, bp,
-                          stackEnd);
+  FramePointerStackWalk(aCallback, aSkipFrames, aMaxFrames, aClosure, bp,
+                        stackEnd);
 }
 
 #  elif defined(HAVE__UNWIND_BACKTRACE)
@@ -850,11 +838,11 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
 #endif
 
 #if defined(XP_WIN) || defined(XP_MACOSX) || defined(XP_LINUX)
+namespace mozilla {
 MOZ_ASAN_BLACKLIST
-static void DoFramePointerStackWalk(MozWalkStackCallback aCallback,
-                                    uint32_t aSkipFrames, uint32_t aMaxFrames,
-                                    void* aClosure, void** aBp,
-                                    void* aStackEnd) {
+void FramePointerStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
+                           uint32_t aMaxFrames, void* aClosure, void** aBp,
+                           void* aStackEnd) {
   // Stack walking code courtesy Kipp's "leaky".
 
   int32_t skip = aSkipFrames;
@@ -892,23 +880,15 @@ static void DoFramePointerStackWalk(MozWalkStackCallback aCallback,
     aBp = next;
   }
 }
-
-namespace mozilla {
-
-void FramePointerStackWalk(MozWalkStackCallback aCallback, uint32_t aMaxFrames,
-                           void* aClosure, void** aBp, void* aStackEnd) {
-  DoFramePointerStackWalk(aCallback, /* aSkipFrames = */ 0, aMaxFrames,
-                          aClosure, aBp, aStackEnd);
-}
-
 }  // namespace mozilla
 
 #else
 
 namespace mozilla {
 MFBT_API void FramePointerStackWalk(MozWalkStackCallback aCallback,
-                                    uint32_t aMaxFrames, void* aClosure,
-                                    void** aBp, void* aStackEnd) {}
+                                    uint32_t aSkipFrames, uint32_t aMaxFrames,
+                                    void* aClosure, void** aBp,
+                                    void* aStackEnd) {}
 }  // namespace mozilla
 
 #endif

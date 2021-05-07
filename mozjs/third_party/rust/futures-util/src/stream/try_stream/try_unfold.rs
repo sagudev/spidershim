@@ -1,10 +1,9 @@
 use core::fmt;
 use core::pin::Pin;
 use futures_core::future::TryFuture;
-use futures_core::ready;
 use futures_core::stream::Stream;
 use futures_core::task::{Context, Poll};
-use pin_project_lite::pin_project;
+use pin_utils::{unsafe_pinned, unsafe_unpinned};
 
 /// Creates a `TryStream` from a seed and a closure returning a `TryFuture`.
 ///
@@ -67,16 +66,15 @@ where
     }
 }
 
-pin_project! {
-    /// Stream for the [`try_unfold`] function.
-    #[must_use = "streams do nothing unless polled"]
-    pub struct TryUnfold<T, F, Fut> {
-        f: F,
-        state: Option<T>,
-        #[pin]
-        fut: Option<Fut>,
-    }
+/// Stream for the [`try_unfold`] function.
+#[must_use = "streams do nothing unless polled"]
+pub struct TryUnfold<T, F, Fut> {
+    f: F,
+    state: Option<T>,
+    fut: Option<Fut>,
 }
+
+impl<T, F, Fut: Unpin> Unpin for TryUnfold<T, F, Fut> {}
 
 impl<T, F, Fut> fmt::Debug for TryUnfold<T, F, Fut>
 where
@@ -91,6 +89,12 @@ where
     }
 }
 
+impl<T, F, Fut> TryUnfold<T, F, Fut> {
+    unsafe_unpinned!(f: F);
+    unsafe_unpinned!(state: Option<T>);
+    unsafe_pinned!(fut: Option<Fut>);
+}
+
 impl<T, F, Fut, Item> Stream for TryUnfold<T, F, Fut>
 where
     F: FnMut(T) -> Fut,
@@ -99,27 +103,26 @@ where
     type Item = Result<Item, Fut::Error>;
 
     fn poll_next(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let mut this = self.project();
-
-        if let Some(state) = this.state.take() {
-            this.fut.set(Some((this.f)(state)));
+    ) -> Poll<Option<Result<Item, Fut::Error>>> {
+        if let Some(state) = self.as_mut().state().take() {
+            let fut = (self.as_mut().f())(state);
+            self.as_mut().fut().set(Some(fut));
         }
 
-        match this.fut.as_mut().as_pin_mut() {
+        match self.as_mut().fut().as_pin_mut() {
             None => {
                 // The future previously errored
                 Poll::Ready(None)
             }
-            Some(future) => {
-                let step = ready!(future.try_poll(cx));
-                this.fut.set(None);
+            Some(fut) => {
+                let step = ready!(fut.try_poll(cx));
+                self.as_mut().fut().set(None);
 
                 match step {
                     Ok(Some((item, next_state))) => {
-                        *this.state = Some(next_state);
+                        *self.as_mut().state() = Some(next_state);
                         Poll::Ready(Some(Ok(item)))
                     }
                     Ok(None) => Poll::Ready(None),

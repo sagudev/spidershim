@@ -1,10 +1,10 @@
-use crate::scope;
+use scope;
 use std::any::Any;
 use std::sync::mpsc::channel;
 use std::sync::Mutex;
 
 use super::{spawn, spawn_fifo};
-use crate::ThreadPoolBuilder;
+use ThreadPoolBuilder;
 
 #[test]
 fn spawn_then_join_in_worker() {

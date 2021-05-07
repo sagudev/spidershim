@@ -1,3 +1,4 @@
+// |reftest| skip-if(release_or_beta) -- Promise.any is not released yet
 // Copyright (C) 2019 Sergey Rubanov. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -20,6 +21,30 @@ assert.sameValue(typeof Promise.any, 'function');
 
 assert.throws(TypeError, function() {
   Promise.any.call(eval);
+});
+
+assert.throws(TypeError, function() {
+  Promise.any.call(undefined, []);
+});
+
+assert.throws(TypeError, function() {
+  Promise.any.call(null, []);
+});
+
+assert.throws(TypeError, function() {
+  Promise.any.call(86, []);
+});
+
+assert.throws(TypeError, function() {
+  Promise.any.call('string', []);
+});
+
+assert.throws(TypeError, function() {
+  Promise.any.call(true, []);
+});
+
+assert.throws(TypeError, function() {
+  Promise.any.call(Symbol(), []);
 });
 
 reportCompare(0, 0);

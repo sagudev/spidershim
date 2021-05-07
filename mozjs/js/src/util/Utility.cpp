@@ -51,7 +51,7 @@ void FailureSimulator::simulateFailureAfter(Kind kind, uint64_t checks,
   Maybe<AutoLockHelperThreadState> lock;
   if (IsHelperThreadType(targetThread_) || IsHelperThreadType(thread)) {
     lock.emplace();
-    WaitForAllHelperThreads(lock.ref());
+    HelperThreadState().waitForAllThreadsLocked(lock.ref());
   }
 
   MOZ_ASSERT(counter_ + checks > counter_);
@@ -66,7 +66,7 @@ void FailureSimulator::reset() {
   Maybe<AutoLockHelperThreadState> lock;
   if (IsHelperThreadType(targetThread_)) {
     lock.emplace();
-    WaitForAllHelperThreads(lock.ref());
+    HelperThreadState().waitForAllThreadsLocked(lock.ref());
   }
 
   targetThread_ = THREAD_TYPE_NONE;
@@ -93,13 +93,7 @@ void InitLargeAllocLimit() {
 }  // namespace js
 #endif
 
-#if defined(JS_GC_ALLOW_EXTRA_POISONING)
-#  if defined(DEBUG)
-bool js::gExtraPoisoningEnabled = true;
-#  else
-bool js::gExtraPoisoningEnabled = false;
-#  endif
-#endif
+bool js::gDisablePoisoning = false;
 
 JS_PUBLIC_DATA arena_id_t js::MallocArena;
 JS_PUBLIC_DATA arena_id_t js::ArrayBufferContentsArena;

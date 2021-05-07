@@ -40,24 +40,54 @@ def flat(data, parent_dir):
 
     :return dict: {subtest: value}
     """
-    result = {}
+    ret = {}
 
-    if not data:
-        return result
+    def _helper(data, parent_dir):
+        if isinstance(data, list):
+            for item in data:
+                _helper(item, parent_dir)
+        elif isinstance(data, dict):
+            for k, v in data.items():
+                current_dir = parent_dir + (k,)
+                subtest = ".".join(current_dir)
+                if isinstance(v, Iterable) and not isinstance(v, str):
+                    _helper(v, current_dir)
+                elif v or v == 0:
+                    ret.setdefault(subtest, []).append(v)
 
-    if isinstance(data, list):
-        for item in data:
-            for k, v in flat(item, parent_dir).items():
-                result.setdefault(k, []).extend(v)
+    _helper(data, parent_dir)
+    return ret
 
-    if isinstance(data, dict):
-        for k, v in data.items():
-            current_dir = parent_dir + (k,)
-            subtest = ".".join(current_dir)
-            if isinstance(v, Iterable) and not isinstance(v, str):
-                for x, y in flat(v, current_dir).items():
-                    result.setdefault(x, []).extend(y)
-            elif v or v == 0:
-                result.setdefault(subtest, []).append(v)
 
-    return result
+def get_nested_values(nested_obj, nested_keys=None):
+    """
+    This function returns the items found from a nested object by a nested key list.
+    If nested_keys=None, then return all existed values.
+
+    :param Iterable nested_obj: nested data object.
+    :param list nested_keys: nested keys.
+
+    :return list: the values found by nested keys.
+    """
+    ret = []
+
+    def _helper(nested_obj, nested_keys):
+        if nested_keys:
+            if isinstance(nested_obj, list):
+                for entry in nested_obj:
+                    _helper(entry, nested_keys)
+            elif isinstance(nested_obj, dict) and len(nested_keys) == 1:
+                ret.append(nested_obj[nested_keys[0]])
+            else:
+                _helper(nested_obj[nested_keys[0]], nested_keys[1:])
+        elif type(nested_obj) == dict:
+            _helper(list(nested_obj.values()), nested_keys)
+        elif type(nested_obj) == list:
+            for entry in nested_obj:
+                _helper(entry, nested_keys)
+        elif nested_obj:
+            ret.append(nested_obj)
+
+    _helper(nested_obj, nested_keys)
+
+    return ret

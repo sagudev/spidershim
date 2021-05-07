@@ -8,7 +8,11 @@ description: Checking if varying the length property fails
 includes: [propertyHelper.js]
 ---*/
 
-assert.sameValue(parseInt.length, 2, 'The value of parseInt.length is 2');
+//CHECK#1
+var x = parseInt.length;
 verifyNotWritable(parseInt, "length", null, Infinity);
+if (parseInt.length !== x) {
+  $ERROR('#1: x = parseInt.length; parseInt.length = Infinity; parseInt.length === x. Actual: ' + (parseInt.length));
+}
 
 reportCompare(0, 0);

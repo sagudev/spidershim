@@ -10,7 +10,6 @@
 //! describing each scope, binding, and function in the AST.
 
 mod builder;
-pub mod data;
 pub mod free_name_tracker;
 mod pass;
 
@@ -19,8 +18,7 @@ extern crate jsparagus_stencil as stencil;
 
 use ast::visit::Pass;
 
-pub use builder::ScopeBuildError;
-pub use pass::ScopePassResult;
+pub use pass::ScopeDataMapAndFunctionMap;
 
 /// Visit all nodes in the AST, and create a scope data.
 ///
@@ -29,7 +27,7 @@ pub use pass::ScopePassResult;
 /// `let` variable.
 pub fn generate_scope_data<'alloc, 'a>(
     ast: &'alloc ast::types::Program<'alloc>,
-) -> ScopePassResult {
+) -> ScopeDataMapAndFunctionMap {
     let mut scope_pass = pass::ScopePass::new();
     scope_pass.visit_program(ast);
     scope_pass.into()

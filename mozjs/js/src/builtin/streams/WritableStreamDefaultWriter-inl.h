@@ -12,6 +12,7 @@
 #include "builtin/streams/WritableStreamDefaultWriter.h"
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
 #include "builtin/streams/WritableStream.h"  // js::WritableStream
 #include "js/RootingAPI.h"                   // JS::Handle
@@ -27,7 +28,7 @@ namespace js {
 /**
  * Returns the stream associated with the given reader.
  */
-[[nodiscard]] inline WritableStream* UnwrapStreamFromWriter(
+inline MOZ_MUST_USE WritableStream* UnwrapStreamFromWriter(
     JSContext* cx, JS::Handle<WritableStreamDefaultWriter*> unwrappedWriter) {
   MOZ_ASSERT(unwrappedWriter->hasStream());
   return UnwrapInternalSlot<WritableStream>(

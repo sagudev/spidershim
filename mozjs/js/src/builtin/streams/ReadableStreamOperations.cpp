@@ -9,6 +9,9 @@
 #include "builtin/streams/ReadableStreamOperations.h"
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT{,_IF}
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
+
+#include "jsapi.h"  // JS_SetPrivate
 
 #include "builtin/Array.h"                // js::NewDenseFullyAllocatedArray
 #include "builtin/Promise.h"              // js::RejectPromiseWithPendingError
@@ -28,13 +31,12 @@
 #include "vm/ObjectOperations.h"  // js::GetProperty
 #include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseResolvedWithUndefined
 
-#include "builtin/HandlerFunction-inl.h"  // js::NewHandler, js::TargetFromHandler
+#include "builtin/streams/HandlerFunction-inl.h"  // js::NewHandler, js::TargetFromHandler
 #include "builtin/streams/MiscellaneousOperations-inl.h"  // js::ResolveUnwrappedPromiseWithValue
 #include "builtin/streams/ReadableStreamReader-inl.h"  // js::UnwrapReaderFromStream
 #include "vm/Compartment-inl.h"  // JS::Compartment::wrap, js::Unwrap{Callee,Internal}Slot
-#include "vm/JSContext-inl.h"  // JSContext::check
-#include "vm/JSObject-inl.h"   // js::IsCallable, js::NewObjectWithClassProto
-#include "vm/Realm-inl.h"      // js::AutoRealm
+#include "vm/JSObject-inl.h"  // js::IsCallable, js::NewObjectWithClassProto
+#include "vm/Realm-inl.h"     // js::AutoRealm
 
 using js::IsCallable;
 using js::NewHandler;
@@ -76,7 +78,7 @@ using JS::Value;
  * arguments: sourceAlgorithms, underlyingSource, pullMethod, cancelMethod.
  * See the comment on SetUpReadableStreamDefaultController.
  */
-[[nodiscard]] static ReadableStream* CreateReadableStream(
+static MOZ_MUST_USE ReadableStream* CreateReadableStream(
     JSContext* cx, SourceAlgorithms sourceAlgorithms,
     Handle<Value> underlyingSource,
     Handle<Value> pullMethod = UndefinedHandleValue,
@@ -124,7 +126,7 @@ using JS::Value;
 /**
  * Streams spec, 3.4.5. InitializeReadableStream ( stream )
  */
-/* static */ [[nodiscard]] ReadableStream* ReadableStream::create(
+/* static */ MOZ_MUST_USE ReadableStream* ReadableStream::create(
     JSContext* cx, void* nsISupportsObject_alreadyAddreffed /* = nullptr */,
     Handle<JSObject*> proto /* = nullptr */) {
   // In the spec, InitializeReadableStream is always passed a newly created
@@ -135,7 +137,7 @@ using JS::Value;
     return nullptr;
   }
 
-  stream->setPrivate(nsISupportsObject_alreadyAddreffed);
+  JS_SetPrivate(stream, nsISupportsObject_alreadyAddreffed);
 
   // Step 1: Set stream.[[state]] to "readable".
   stream->initStateBits(Readable);
@@ -295,7 +297,7 @@ static bool TeeReaderReadHandler(JSContext* cx, unsigned argc, Value* vp) {
  * Streams spec, 3.4.10. ReadableStreamTee step 12, "Let pullAlgorithm be the
  * following steps:"
  */
-[[nodiscard]] PromiseObject* js::ReadableStreamTee_Pull(
+MOZ_MUST_USE PromiseObject* js::ReadableStreamTee_Pull(
     JSContext* cx, JS::Handle<TeeState*> unwrappedTeeState) {
   // Combine step 12.a/12.e far below, and handle steps 12.b-12.d after
   // inverting step 12.a's "If reading is true" condition.
@@ -377,7 +379,7 @@ static bool TeeReaderReadHandler(JSContext* cx, unsigned argc, Value* vp) {
  * cancel1Algorithm/cancel2Algorithm be the following steps, taking a reason
  * argument:"
  */
-[[nodiscard]] JSObject* js::ReadableStreamTee_Cancel(
+MOZ_MUST_USE JSObject* js::ReadableStreamTee_Cancel(
     JSContext* cx, JS::Handle<TeeState*> unwrappedTeeState,
     JS::Handle<ReadableStreamDefaultController*> unwrappedBranch,
     JS::Handle<Value> reason) {
@@ -505,7 +507,7 @@ static bool TeeReaderErroredHandler(JSContext* cx, unsigned argc,
 /**
  * Streams spec, 3.4.10. ReadableStreamTee ( stream, cloneForBranch2 )
  */
-[[nodiscard]] bool js::ReadableStreamTee(
+MOZ_MUST_USE bool js::ReadableStreamTee(
     JSContext* cx, JS::Handle<ReadableStream*> unwrappedStream,
     bool cloneForBranch2, JS::MutableHandle<ReadableStream*> branch1Stream,
     JS::MutableHandle<ReadableStream*> branch2Stream) {
@@ -617,8 +619,6 @@ PromiseObject* js::ReadableStreamPipeTo(JSContext* cx,
                                         bool preventClose, bool preventAbort,
                                         bool preventCancel,
                                         Handle<JSObject*> signal) {
-  cx->check(signal);
-
   // Step 1. Assert: ! IsReadableStream(source) is true.
   // Step 2. Assert: ! IsWritableStream(dest) is true.
   // Step 3. Assert: Type(preventClose) is Boolean, Type(preventAbort) is

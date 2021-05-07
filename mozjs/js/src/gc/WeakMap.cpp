@@ -45,7 +45,7 @@ void WeakMapBase::unmarkZone(JS::Zone* zone) {
 }
 
 void WeakMapBase::traceZone(JS::Zone* zone, JSTracer* tracer) {
-  MOZ_ASSERT(tracer->weakMapAction() != JS::WeakMapTraceAction::Skip);
+  MOZ_ASSERT(tracer->weakMapAction() != DoNotTraceWeakMaps);
   for (WeakMapBase* m : zone->gcWeakMapList()) {
     m->trace(tracer);
     TraceNullableEdge(tracer, &m->memberOf, "memberOf");
@@ -140,6 +140,29 @@ void WeakMapBase::restoreMarkedWeakMaps(WeakMapColors& markedWeakMaps) {
 size_t ObjectValueWeakMap::sizeOfIncludingThis(
     mozilla::MallocSizeOf mallocSizeOf) {
   return mallocSizeOf(this) + shallowSizeOfExcludingThis(mallocSizeOf);
+}
+
+bool ObjectValueWeakMap::findSweepGroupEdges() {
+  // For weakmap keys with delegates in a different zone, add a zone edge to
+  // ensure that the delegate zone finishes marking before the key zone.
+  JS::AutoSuppressGCAnalysis nogc;
+  for (Range r = all(); !r.empty(); r.popFront()) {
+    JSObject* key = r.front().key();
+    JSObject* delegate = gc::detail::GetDelegate(key);
+    if (!delegate) {
+      continue;
+    }
+
+    // Marking a WeakMap key's delegate will mark the key, so process the
+    // delegate zone no later than the key zone.
+    Zone* delegateZone = delegate->zone();
+    if (delegateZone != zone() && delegateZone->isGCMarking()) {
+      if (!delegateZone->addSweepGroupEdgeTo(key->zone())) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 ObjectWeakMap::ObjectWeakMap(JSContext* cx) : map(cx, nullptr) {}

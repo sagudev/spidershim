@@ -12,13 +12,20 @@
 #![no_std]
 #![cfg_attr(
     feature = "nightly",
-    feature(test, core_intrinsics, dropck_eyepatch, min_specialization, extend_one)
+    feature(
+        alloc_layout_extra,
+        allocator_api,
+        ptr_offset_from,
+        test,
+        core_intrinsics,
+        dropck_eyepatch,
+        specialization,
+    )
 )]
 #![allow(
     clippy::doc_markdown,
     clippy::module_name_repetitions,
-    clippy::must_use_candidate,
-    clippy::option_if_let_else
+    clippy::must_use_candidate
 )]
 #![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
@@ -27,8 +34,11 @@
 #[macro_use]
 extern crate std;
 
+#[cfg(has_extern_crate_alloc)]
 #[cfg_attr(test, macro_use)]
 extern crate alloc;
+#[cfg(not(has_extern_crate_alloc))]
+extern crate std as alloc;
 
 #[cfg(feature = "nightly")]
 #[cfg(doctest)]
@@ -97,15 +107,14 @@ pub mod hash_set {
 pub use crate::map::HashMap;
 pub use crate::set::HashSet;
 
-/// The error type for `try_reserve` methods.
+/// Augments `AllocErr` with a `CapacityOverflow` variant.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum TryReserveError {
+pub enum CollectionAllocErr {
     /// Error due to the computed capacity exceeding the collection's maximum
     /// (usually `isize::MAX` bytes).
     CapacityOverflow,
-
-    /// The memory allocator returned an error
-    AllocError {
+    /// Error due to the allocator.
+    AllocErr {
         /// The layout of the allocation request that failed.
         layout: alloc::alloc::Layout,
     },

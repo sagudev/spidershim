@@ -9,20 +9,29 @@
 
 #include "mozilla/Maybe.h"
 
-#include "jstypes.h"  // for JS_FRIEND_API, JS_FRIEND_DATA
+#include "jsfriendapi.h"
 
 #include "js/Array.h"  // JS::IsArrayAnswer
 #include "js/CallNonGenericMethod.h"
 #include "js/Class.h"
-#include "js/HeapAPI.h"        // for ObjectIsMarkedBlack
-#include "js/Id.h"             // for jsid
-#include "js/Object.h"         // JS::GetClass
-#include "js/RootingAPI.h"     // for Handle, MutableHandle (ptr only)
-#include "js/shadow/Object.h"  // JS::shadow::Object
-#include "js/TypeDecls.h"  // for HandleObject, HandleId, HandleValue, MutableHandleIdVector, MutableHandleValue, MutableHand...
-#include "js/Value.h"  // for Value, AssertValueIsNotGray, UndefinedValue, ObjectOrNullValue
 
 namespace js {
+
+using JS::CallArgs;
+using JS::Handle;
+using JS::HandleId;
+using JS::HandleObject;
+using JS::HandleValue;
+using JS::IsAcceptableThis;
+using JS::MutableHandle;
+using JS::MutableHandleIdVector;
+using JS::MutableHandleObject;
+using JS::MutableHandleValue;
+using JS::NativeImpl;
+using JS::ObjectOpResult;
+using JS::PrivateValue;
+using JS::PropertyDescriptor;
+using JS::Value;
 
 class RegExpShared;
 
@@ -210,7 +219,7 @@ class JS_FRIEND_API BaseProxyHandler {
   inline const void* family() const { return mFamily; }
   static size_t offsetOfFamily() { return offsetof(BaseProxyHandler, mFamily); }
 
-  virtual bool finalizeInBackground(const JS::Value& priv) const {
+  virtual bool finalizeInBackground(const Value& priv) const {
     /*
      * Called on creation of a proxy to determine whether its finalize
      * method can be finalized on the background thread.
@@ -253,21 +262,20 @@ class JS_FRIEND_API BaseProxyHandler {
     GET_PROPERTY_DESCRIPTOR = 0x10
   };
 
-  virtual bool enter(JSContext* cx, JS::HandleObject wrapper, JS::HandleId id,
+  virtual bool enter(JSContext* cx, HandleObject wrapper, HandleId id,
                      Action act, bool mayThrow, bool* bp) const;
 
   /* Standard internal methods. */
   virtual bool getOwnPropertyDescriptor(
-      JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-      JS::MutableHandle<JS::PropertyDescriptor> desc) const = 0;
-  virtual bool defineProperty(JSContext* cx, JS::HandleObject proxy,
-                              JS::HandleId id,
-                              JS::Handle<JS::PropertyDescriptor> desc,
-                              JS::ObjectOpResult& result) const = 0;
-  virtual bool ownPropertyKeys(JSContext* cx, JS::HandleObject proxy,
-                               JS::MutableHandleIdVector props) const = 0;
-  virtual bool delete_(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-                       JS::ObjectOpResult& result) const = 0;
+      JSContext* cx, HandleObject proxy, HandleId id,
+      MutableHandle<PropertyDescriptor> desc) const = 0;
+  virtual bool defineProperty(JSContext* cx, HandleObject proxy, HandleId id,
+                              Handle<PropertyDescriptor> desc,
+                              ObjectOpResult& result) const = 0;
+  virtual bool ownPropertyKeys(JSContext* cx, HandleObject proxy,
+                               MutableHandleIdVector props) const = 0;
+  virtual bool delete_(JSContext* cx, HandleObject proxy, HandleId id,
+                       ObjectOpResult& result) const = 0;
 
   /*
    * These methods are standard, but the engine does not normally call them.
@@ -275,22 +283,21 @@ class JS_FRIEND_API BaseProxyHandler {
    *
    * getPrototype() crashes if called. setPrototype() throws a TypeError.
    */
-  virtual bool getPrototype(JSContext* cx, JS::HandleObject proxy,
-                            JS::MutableHandleObject protop) const;
-  virtual bool setPrototype(JSContext* cx, JS::HandleObject proxy,
-                            JS::HandleObject proto,
-                            JS::ObjectOpResult& result) const;
+  virtual bool getPrototype(JSContext* cx, HandleObject proxy,
+                            MutableHandleObject protop) const;
+  virtual bool setPrototype(JSContext* cx, HandleObject proxy,
+                            HandleObject proto, ObjectOpResult& result) const;
 
   /* Non-standard but conceptual kin to {g,s}etPrototype, so these live here. */
-  virtual bool getPrototypeIfOrdinary(JSContext* cx, JS::HandleObject proxy,
+  virtual bool getPrototypeIfOrdinary(JSContext* cx, HandleObject proxy,
                                       bool* isOrdinary,
-                                      JS::MutableHandleObject protop) const = 0;
-  virtual bool setImmutablePrototype(JSContext* cx, JS::HandleObject proxy,
+                                      MutableHandleObject protop) const = 0;
+  virtual bool setImmutablePrototype(JSContext* cx, HandleObject proxy,
                                      bool* succeeded) const;
 
-  virtual bool preventExtensions(JSContext* cx, JS::HandleObject proxy,
-                                 JS::ObjectOpResult& result) const = 0;
-  virtual bool isExtensible(JSContext* cx, JS::HandleObject proxy,
+  virtual bool preventExtensions(JSContext* cx, HandleObject proxy,
+                                 ObjectOpResult& result) const = 0;
+  virtual bool isExtensible(JSContext* cx, HandleObject proxy,
                             bool* extensible) const = 0;
 
   /*
@@ -302,18 +309,13 @@ class JS_FRIEND_API BaseProxyHandler {
    * follows what is defined for Ordinary Objects in the ES spec.
    * They do not follow any standard. When in doubt, override them.
    */
-  virtual bool has(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
+  virtual bool has(JSContext* cx, HandleObject proxy, HandleId id,
                    bool* bp) const;
-  virtual bool get(JSContext* cx, JS::HandleObject proxy,
-                   JS::HandleValue receiver, JS::HandleId id,
-                   JS::MutableHandleValue vp) const;
-  virtual bool set(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-                   JS::HandleValue v, JS::HandleValue receiver,
-                   JS::ObjectOpResult& result) const;
-
-  // Use the ProxyExpando object for private fields, rather than taking the
-  // normal get/set/defineField paths.
-  virtual bool useProxyExpandoObjectForPrivateFields() const { return true; }
+  virtual bool get(JSContext* cx, HandleObject proxy, HandleValue receiver,
+                   HandleId id, MutableHandleValue vp) const;
+  virtual bool set(JSContext* cx, HandleObject proxy, HandleId id,
+                   HandleValue v, HandleValue receiver,
+                   ObjectOpResult& result) const;
 
   /*
    * [[Call]] and [[Construct]] are standard internal methods but according
@@ -327,34 +329,33 @@ class JS_FRIEND_API BaseProxyHandler {
    * creating a kind of that is never callable, you don't have to override
    * anything, but otherwise you probably want to override all four.
    */
-  virtual bool call(JSContext* cx, JS::HandleObject proxy,
-                    const JS::CallArgs& args) const;
-  virtual bool construct(JSContext* cx, JS::HandleObject proxy,
-                         const JS::CallArgs& args) const;
+  virtual bool call(JSContext* cx, HandleObject proxy,
+                    const CallArgs& args) const;
+  virtual bool construct(JSContext* cx, HandleObject proxy,
+                         const CallArgs& args) const;
 
   /* SpiderMonkey extensions. */
-  virtual bool enumerate(JSContext* cx, JS::HandleObject proxy,
-                         JS::MutableHandleIdVector props) const;
-  virtual bool hasOwn(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
+  virtual bool enumerate(JSContext* cx, HandleObject proxy,
+                         MutableHandleIdVector props) const;
+  virtual bool hasOwn(JSContext* cx, HandleObject proxy, HandleId id,
                       bool* bp) const;
-  virtual bool getOwnEnumerablePropertyKeys(
-      JSContext* cx, JS::HandleObject proxy,
-      JS::MutableHandleIdVector props) const;
-  virtual bool nativeCall(JSContext* cx, JS::IsAcceptableThis test,
-                          JS::NativeImpl impl, const JS::CallArgs& args) const;
-  virtual bool hasInstance(JSContext* cx, JS::HandleObject proxy,
-                           JS::MutableHandleValue v, bool* bp) const;
-  virtual bool getBuiltinClass(JSContext* cx, JS::HandleObject proxy,
+  virtual bool getOwnEnumerablePropertyKeys(JSContext* cx, HandleObject proxy,
+                                            MutableHandleIdVector props) const;
+  virtual bool nativeCall(JSContext* cx, IsAcceptableThis test, NativeImpl impl,
+                          const CallArgs& args) const;
+  virtual bool hasInstance(JSContext* cx, HandleObject proxy,
+                           MutableHandleValue v, bool* bp) const;
+  virtual bool getBuiltinClass(JSContext* cx, HandleObject proxy,
                                ESClass* cls) const;
-  virtual bool isArray(JSContext* cx, JS::HandleObject proxy,
+  virtual bool isArray(JSContext* cx, HandleObject proxy,
                        JS::IsArrayAnswer* answer) const;
-  virtual const char* className(JSContext* cx, JS::HandleObject proxy) const;
-  virtual JSString* fun_toString(JSContext* cx, JS::HandleObject proxy,
+  virtual const char* className(JSContext* cx, HandleObject proxy) const;
+  virtual JSString* fun_toString(JSContext* cx, HandleObject proxy,
                                  bool isToSource) const;
   virtual RegExpShared* regexp_toShared(JSContext* cx,
-                                        JS::HandleObject proxy) const;
-  virtual bool boxedValue_unbox(JSContext* cx, JS::HandleObject proxy,
-                                JS::MutableHandleValue vp) const;
+                                        HandleObject proxy) const;
+  virtual bool boxedValue_unbox(JSContext* cx, HandleObject proxy,
+                                MutableHandleValue vp) const;
   virtual void trace(JSTracer* trc, JSObject* proxy) const;
   virtual void finalize(JSFreeOp* fop, JSObject* proxy) const;
   virtual size_t objectMoved(JSObject* proxy, JSObject* old) const;
@@ -366,9 +367,8 @@ class JS_FRIEND_API BaseProxyHandler {
   virtual bool isCallable(JSObject* obj) const;
   virtual bool isConstructor(JSObject* obj) const;
 
-  virtual bool getElements(JSContext* cx, JS::HandleObject proxy,
-                           uint32_t begin, uint32_t end,
-                           ElementAdder* adder) const;
+  virtual bool getElements(JSContext* cx, HandleObject proxy, uint32_t begin,
+                           uint32_t end, ElementAdder* adder) const;
 
   virtual bool isScripted() const { return false; }
 };
@@ -376,7 +376,7 @@ class JS_FRIEND_API BaseProxyHandler {
 extern JS_FRIEND_DATA const JSClass ProxyClass;
 
 inline bool IsProxy(const JSObject* obj) {
-  return JS::GetClass(obj)->isProxyObject();
+  return GetObjectClass(obj)->isProxy();
 }
 
 namespace detail {
@@ -386,8 +386,6 @@ namespace detail {
 //
 // Every proxy has a ProxyValueArray that contains the following Values:
 //
-// - The expando slot. This is used to hold private fields should they be
-//   stamped into a non-forwarding proxy type.
 // - The private slot.
 // - The reserved slots. The number of slots is determined by the proxy's Class.
 //
@@ -396,18 +394,18 @@ namespace detail {
 // ProxyValueArray::fromReservedSlots or ProxyDataLayout::values.
 //
 // Storing a pointer to ProxyReservedSlots instead of ProxyValueArray has a
-// number of advantages. In particular, it means JS::GetReservedSlot and
-// JS::SetReservedSlot can be used with both proxies and native objects. This
+// number of advantages. In particular, it means js::GetReservedSlot and
+// js::SetReservedSlot can be used with both proxies and native objects. This
 // works because the ProxyReservedSlots* pointer is stored where native objects
 // store their dynamic slots pointer.
 
 struct ProxyReservedSlots {
-  JS::Value slots[1];
+  Value slots[1];
 
   static inline int offsetOfPrivateSlot();
 
   static inline int offsetOfSlot(size_t slot) {
-    return offsetof(ProxyReservedSlots, slots[0]) + slot * sizeof(JS::Value);
+    return offsetof(ProxyReservedSlots, slots[0]) + slot * sizeof(Value);
   }
 
   void init(size_t nreserved) {
@@ -421,18 +419,16 @@ struct ProxyReservedSlots {
 };
 
 struct ProxyValueArray {
-  JS::Value expandoSlot;
-  JS::Value privateSlot;
+  Value privateSlot;
   ProxyReservedSlots reservedSlots;
 
   void init(size_t nreserved) {
-    expandoSlot = JS::ObjectOrNullValue(nullptr);
     privateSlot = JS::UndefinedValue();
     reservedSlots.init(nreserved);
   }
 
   static size_t sizeOf(size_t nreserved) {
-    return offsetOfReservedSlots() + nreserved * sizeof(JS::Value);
+    return offsetOfReservedSlots() + nreserved * sizeof(Value);
   }
   static MOZ_ALWAYS_INLINE ProxyValueArray* fromReservedSlots(
       ProxyReservedSlots* slots) {
@@ -469,11 +465,7 @@ struct ProxyDataLayout {
   }
 };
 
-#ifdef JS_64BIT
-constexpr uint32_t ProxyDataOffset = 1 * sizeof(void*);
-#else
-constexpr uint32_t ProxyDataOffset = 2 * sizeof(void*);
-#endif
+const uint32_t ProxyDataOffset = 2 * sizeof(void*);
 
 inline ProxyDataLayout* GetProxyDataLayout(JSObject* obj) {
   MOZ_ASSERT(IsProxy(obj));
@@ -487,13 +479,13 @@ inline const ProxyDataLayout* GetProxyDataLayout(const JSObject* obj) {
       reinterpret_cast<const uint8_t*>(obj) + ProxyDataOffset);
 }
 
-JS_FRIEND_API void SetValueInProxy(JS::Value* slot, const JS::Value& value);
+JS_FRIEND_API void SetValueInProxy(Value* slot, const Value& value);
 
 inline void SetProxyReservedSlotUnchecked(JSObject* obj, size_t n,
-                                          const JS::Value& extra) {
-  MOZ_ASSERT(n < JSCLASS_RESERVED_SLOTS(JS::GetClass(obj)));
+                                          const Value& extra) {
+  MOZ_ASSERT(n < JSCLASS_RESERVED_SLOTS(GetObjectClass(obj)));
 
-  JS::Value* vp = &GetProxyDataLayout(obj)->reservedSlots->slots[n];
+  Value* vp = &GetProxyDataLayout(obj)->reservedSlots->slots[n];
 
   // Trigger a barrier before writing the slot.
   if (vp->isGCThing() || extra.isGCThing()) {
@@ -509,20 +501,16 @@ inline const BaseProxyHandler* GetProxyHandler(const JSObject* obj) {
   return detail::GetProxyDataLayout(obj)->handler;
 }
 
-inline const JS::Value& GetProxyPrivate(const JSObject* obj) {
+inline const Value& GetProxyPrivate(const JSObject* obj) {
   return detail::GetProxyDataLayout(obj)->values()->privateSlot;
-}
-
-inline const JS::Value& GetProxyExpando(const JSObject* obj) {
-  return detail::GetProxyDataLayout(obj)->values()->expandoSlot;
 }
 
 inline JSObject* GetProxyTargetObject(JSObject* obj) {
   return GetProxyPrivate(obj).toObjectOrNull();
 }
 
-inline const JS::Value& GetProxyReservedSlot(const JSObject* obj, size_t n) {
-  MOZ_ASSERT(n < JSCLASS_RESERVED_SLOTS(JS::GetClass(obj)));
+inline const Value& GetProxyReservedSlot(const JSObject* obj, size_t n) {
+  MOZ_ASSERT(n < JSCLASS_RESERVED_SLOTS(GetObjectClass(obj)));
   return detail::GetProxyDataLayout(obj)->reservedSlots->slots[n];
 }
 
@@ -530,8 +518,7 @@ inline void SetProxyHandler(JSObject* obj, const BaseProxyHandler* handler) {
   detail::GetProxyDataLayout(obj)->handler = handler;
 }
 
-inline void SetProxyReservedSlot(JSObject* obj, size_t n,
-                                 const JS::Value& extra) {
+inline void SetProxyReservedSlot(JSObject* obj, size_t n, const Value& extra) {
 #ifdef DEBUG
   if (gc::detail::ObjectIsMarkedBlack(obj)) {
     JS::AssertValueIsNotGray(extra);
@@ -541,14 +528,14 @@ inline void SetProxyReservedSlot(JSObject* obj, size_t n,
   detail::SetProxyReservedSlotUnchecked(obj, n, extra);
 }
 
-inline void SetProxyPrivate(JSObject* obj, const JS::Value& value) {
+inline void SetProxyPrivate(JSObject* obj, const Value& value) {
 #ifdef DEBUG
   if (gc::detail::ObjectIsMarkedBlack(obj)) {
     JS::AssertValueIsNotGray(value);
   }
 #endif
 
-  JS::Value* vp = &detail::GetProxyDataLayout(obj)->values()->privateSlot;
+  Value* vp = &detail::GetProxyDataLayout(obj)->values()->privateSlot;
 
   // Trigger a barrier before writing the slot.
   if (vp->isGCThing() || value.isGCThing()) {
@@ -589,18 +576,21 @@ class MOZ_STACK_CLASS ProxyOptions {
 };
 
 JS_FRIEND_API JSObject* NewProxyObject(
-    JSContext* cx, const BaseProxyHandler* handler, JS::HandleValue priv,
+    JSContext* cx, const BaseProxyHandler* handler, HandleValue priv,
+    JSObject* proto, const ProxyOptions& options = ProxyOptions());
+
+JS_FRIEND_API JSObject* NewSingletonProxyObject(
+    JSContext* cx, const BaseProxyHandler* handler, HandleValue priv,
     JSObject* proto, const ProxyOptions& options = ProxyOptions());
 
 JSObject* RenewProxyObject(JSContext* cx, JSObject* obj,
-                           BaseProxyHandler* handler, const JS::Value& priv);
+                           BaseProxyHandler* handler, const Value& priv);
 
 class JS_FRIEND_API AutoEnterPolicy {
  public:
   typedef BaseProxyHandler::Action Action;
   AutoEnterPolicy(JSContext* cx, const BaseProxyHandler* handler,
-                  JS::HandleObject wrapper, JS::HandleId id, Action act,
-                  bool mayThrow)
+                  HandleObject wrapper, HandleId id, Action act, bool mayThrow)
 #ifdef JS_DEBUG
       : context(nullptr)
 #endif
@@ -635,22 +625,21 @@ class JS_FRIEND_API AutoEnterPolicy {
 #endif
   {
   }
-  void reportErrorIfExceptionIsNotPending(JSContext* cx, JS::HandleId id);
+  void reportErrorIfExceptionIsNotPending(JSContext* cx, HandleId id);
   bool allow;
   bool rv;
 
 #ifdef JS_DEBUG
   JSContext* context;
-  mozilla::Maybe<JS::HandleObject> enteredProxy;
-  mozilla::Maybe<JS::HandleId> enteredId;
+  mozilla::Maybe<HandleObject> enteredProxy;
+  mozilla::Maybe<HandleId> enteredId;
   Action enteredAction;
 
   // NB: We explicitly don't track the entered action here, because sometimes
   // set() methods do an implicit get() during their implementation, leading
   // to spurious assertions.
   AutoEnterPolicy* prev;
-  void recordEnter(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-                   Action act);
+  void recordEnter(JSContext* cx, HandleObject proxy, HandleId id, Action act);
   void recordLeave();
 
   friend JS_FRIEND_API void assertEnteredPolicy(JSContext* cx, JSObject* proxy,
@@ -675,7 +664,7 @@ class JS_FRIEND_API AutoEnterPolicy {
 #ifdef JS_DEBUG
 class JS_FRIEND_API AutoWaivePolicy : public AutoEnterPolicy {
  public:
-  AutoWaivePolicy(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
+  AutoWaivePolicy(JSContext* cx, HandleObject proxy, HandleId id,
                   BaseProxyHandler::Action act) {
     allow = true;
     recordEnter(cx, proxy, id, act);
@@ -684,7 +673,7 @@ class JS_FRIEND_API AutoWaivePolicy : public AutoEnterPolicy {
 #else
 class JS_FRIEND_API AutoWaivePolicy {
  public:
-  AutoWaivePolicy(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
+  AutoWaivePolicy(JSContext* cx, HandleObject proxy, HandleId id,
                   BaseProxyHandler::Action act) {}
 };
 #endif
@@ -704,22 +693,21 @@ extern JS_FRIEND_DATA const js::ObjectOps ProxyObjectOps;
 
 template <unsigned Flags>
 constexpr unsigned CheckProxyFlags() {
-  constexpr size_t reservedSlots =
-      (Flags >> JSCLASS_RESERVED_SLOTS_SHIFT) & JSCLASS_RESERVED_SLOTS_MASK;
-
   // For now assert each Proxy Class has at least 1 reserved slot. This is
   // not a hard requirement, but helps catch Classes that need an explicit
   // JSCLASS_HAS_RESERVED_SLOTS since bug 1360523.
-  static_assert(reservedSlots > 0,
+  static_assert(((Flags >> JSCLASS_RESERVED_SLOTS_SHIFT) &
+                 JSCLASS_RESERVED_SLOTS_MASK) > 0,
                 "Proxy Classes must have at least 1 reserved slot");
-
-  constexpr size_t numSlots =
-      offsetof(js::detail::ProxyValueArray, reservedSlots) / sizeof(JS::Value);
 
   // ProxyValueArray must fit inline in the object, so assert the number of
   // slots does not exceed MAX_FIXED_SLOTS.
-  static_assert(numSlots + reservedSlots <= JS::shadow::Object::MAX_FIXED_SLOTS,
-                "ProxyValueArray size must not exceed max JSObject size");
+  static_assert(
+      (offsetof(js::detail::ProxyValueArray, reservedSlots) / sizeof(Value)) +
+              ((Flags >> JSCLASS_RESERVED_SLOTS_SHIFT) &
+               JSCLASS_RESERVED_SLOTS_MASK) <=
+          shadow::Object::MAX_FIXED_SLOTS,
+      "ProxyValueArray size must not exceed max JSObject size");
 
   // Proxies must not have the JSCLASS_SKIP_NURSERY_FINALIZE flag set: they
   // always have finalizers, and whether they can be nursery allocated is
@@ -745,7 +733,7 @@ constexpr unsigned CheckProxyFlags() {
 // Converts a proxy into a DeadObjectProxy that will throw exceptions on all
 // access. This will run the proxy's finalizer to perform clean-up before the
 // conversion happens.
-JS_FRIEND_API void NukeNonCCWProxy(JSContext* cx, JS::HandleObject proxy);
+JS_FRIEND_API void NukeNonCCWProxy(JSContext* cx, HandleObject proxy);
 
 // This is a variant of js::NukeNonCCWProxy() for CCWs. It should only be called
 // on CCWs that have been removed from CCW tables.

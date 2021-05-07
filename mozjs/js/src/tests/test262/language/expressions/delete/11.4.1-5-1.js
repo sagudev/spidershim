@@ -2,19 +2,22 @@
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
-esid: sec-delete-operator-runtime-semantics-evaluation
+es5id: 11.4.1-5-1
 description: >
     delete operator returns false when deleting a direct reference to
     a var
 flags: [noStrict]
 ---*/
 
-var x = 1;
+function testcase() {
+  var x = 1;
 
-// Now, deleting 'x' directly should fail;
-var d = delete x;
+  // Now, deleting 'x' directly should fail;
+  var d = delete x;
 
-assert.sameValue(d, false, 'd');
-assert.sameValue(x, 1, 'x');
+  assert.sameValue(d, false, 'd');
+  assert.sameValue(x, 1, 'x');
+ }
+testcase();
 
 reportCompare(0, 0);

@@ -1,9 +1,9 @@
-// CanSkipAwait with primitive values when attaching onEnterFrame
+// JSOP_TRYSKIPAWAIT with primitive values when attaching onEnterFrame
 // after the initial call into the async function.
 
 load(libdir + "array-compare.js");
 
-let g = newGlobal({ newCompartment: true });
+let g = newGlobal({newCompartment: true});
 let dbg = new Debugger(g);
 
 let log = [];

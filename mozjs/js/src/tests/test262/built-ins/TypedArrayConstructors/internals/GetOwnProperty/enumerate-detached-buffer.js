@@ -10,13 +10,13 @@ info: |
     3. If Type(P) is String, then
       a. Let numericIndex be ! CanonicalNumericIndexString(P).
       b. If numericIndex is not undefined, then
-        i. Let value be ! IntegerIndexedElementGet(O, numericIndex).
+        i. Let value be ? IntegerIndexedElementGet(O, numericIndex).
     ...
 
-  IntegerIndexedElementGet ( O, index )
+  9.4.5.8 IntegerIndexedElementGet ( O, index )
     ...
-    Let buffer be O.[[ViewedArrayBuffer]].
-    If IsDetachedBuffer(buffer) is true, return undefined.
+    3. Let buffer be O.[[ViewedArrayBuffer]].
+    4. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
     ...
 
   13.7.5.15 EnumerateObjectProperties (O)
@@ -27,18 +27,18 @@ info: |
     calling its [[GetOwnProperty]] internal method.
 
 includes: [testTypedArray.js, detachArrayBuffer.js]
-features: [align-detached-buffer-semantics-with-web-reality, TypedArray]
+features: [TypedArray]
 ---*/
 
 testWithTypedArrayConstructors(function(TA) {
   var sample = new TA(42);
   $DETACHBUFFER(sample.buffer);
 
-  let count = 0;
-  for (var key in sample) {
-    count++;
-  }
-  assert.sameValue(count, 0, 'The value of `count` is 0');
+  assert.throws(TypeError, function() {
+    for (var key in sample) {
+      throw new Test262Error();
+    }
+  });
 });
 
 reportCompare(0, 0);

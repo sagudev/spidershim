@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, TryLockError};
 use std::thread::yield_now;
 
-use crate::current_num_threads;
-use crate::iter::plumbing::{bridge_unindexed, Folder, UnindexedConsumer, UnindexedProducer};
-use crate::iter::ParallelIterator;
+use current_num_threads;
+use iter::plumbing::{bridge_unindexed, Folder, UnindexedConsumer, UnindexedProducer};
+use iter::ParallelIterator;
 
 /// Conversion trait to convert an `Iterator` to a `ParallelIterator`.
 ///
@@ -44,7 +44,7 @@ use crate::iter::ParallelIterator;
 /// assert_eq!(&*output, &["one!", "three!", "two!"]);
 /// ```
 pub trait ParallelBridge: Sized {
-    /// Creates a bridge from this type to a `ParallelIterator`.
+    /// Create a bridge from this type to a `ParallelIterator`.
     fn par_bridge(self) -> IterBridge<Self>;
 }
 
@@ -96,7 +96,7 @@ where
     }
 }
 
-struct IterParallelProducer<'a, Iter: Iterator> {
+struct IterParallelProducer<'a, Iter: Iterator + 'a> {
     split_count: &'a AtomicUsize,
     done: &'a AtomicBool,
     iter: &'a Mutex<(Iter, Worker<Iter::Item>)>,

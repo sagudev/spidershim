@@ -9,17 +9,16 @@ use std::io;
 use std::io::{Read, Write};
 use std::os::unix::prelude::*;
 
-use crate::consts::{CID_BROADCAST, MAX_HID_RPT_SIZE};
-use crate::platform::uhid;
-use crate::u2ftypes::{U2FDevice, U2FDeviceInfo};
-use crate::util::from_unix_result;
+use consts::CID_BROADCAST;
+use platform::uhid;
+use u2ftypes::U2FDevice;
+use util::from_unix_result;
 
 #[derive(Debug)]
 pub struct Device {
     path: OsString,
     fd: libc::c_int,
     cid: [u8; 4],
-    dev_info: Option<U2FDeviceInfo>,
 }
 
 impl Device {
@@ -31,7 +30,6 @@ impl Device {
             path,
             fd,
             cid: CID_BROADCAST,
-            dev_info: None,
         })
     }
 
@@ -86,27 +84,5 @@ impl U2FDevice for Device {
 
     fn set_cid(&mut self, cid: [u8; 4]) {
         self.cid = cid;
-    }
-
-    fn in_rpt_size(&self) -> usize {
-        MAX_HID_RPT_SIZE
-    }
-
-    fn out_rpt_size(&self) -> usize {
-        MAX_HID_RPT_SIZE
-    }
-
-    fn get_property(&self, _prop_name: &str) -> io::Result<String> {
-        Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
-    }
-
-    fn get_device_info(&self) -> U2FDeviceInfo {
-        // unwrap is okay, as dev_info must have already been set, else
-        // a programmer error
-        self.dev_info.clone().unwrap()
-    }
-
-    fn set_device_info(&mut self, dev_info: U2FDeviceInfo) {
-        self.dev_info = Some(dev_info);
     }
 }

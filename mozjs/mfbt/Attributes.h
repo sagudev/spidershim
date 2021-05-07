@@ -361,6 +361,43 @@
 #endif
 
 /**
+ * MOZ_MUST_USE tells the compiler to emit a warning if a function's
+ * return value is not used by the caller.
+ *
+ * Place this attribute at the very beginning of a function declaration. For
+ * example, write
+ *
+ *   MOZ_MUST_USE int foo();
+ * or
+ *   MOZ_MUST_USE int foo() { return 42; }
+ *
+ * MOZ_MUST_USE is most appropriate for functions where the return value is
+ * some kind of success/failure indicator -- often |nsresult|, |bool| or |int|
+ * -- because these functions are most commonly the ones that have missing
+ * checks. There are three cases of note.
+ *
+ * - Fallible functions whose return values should always be checked. For
+ *   example, a function that opens a file should always be checked because any
+ *   subsequent operations on the file will fail if opening it fails. Such
+ *   functions should be given a MOZ_MUST_USE annotation.
+ *
+ * - Fallible functions whose return value need not always be checked. For
+ *   example, a function that closes a file might not be checked because it's
+ *   common that no further operations would be performed on the file. Such
+ *   functions do not need a MOZ_MUST_USE annotation.
+ *
+ * - Infallible functions, i.e. ones that always return a value indicating
+ *   success. These do not need a MOZ_MUST_USE annotation. Ideally, they would
+ *   be converted to not return a success/failure indicator, though sometimes
+ *   interface constraints prevent this.
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#  define MOZ_MUST_USE __attribute__((warn_unused_result))
+#else
+#  define MOZ_MUST_USE
+#endif
+
+/**
  * MOZ_MAYBE_UNUSED suppresses compiler warnings about functions that are
  * never called (in this build configuration, at least).
  *
@@ -683,9 +720,6 @@
  * MOZ_MAY_CALL_AFTER_MUST_RETURN: Applies to function or method declarations.
  *   Calls to these methods may be made in functions after calls a
  *   MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG method.
- * MOZ_LIFETIME_BOUND: Applies to method declarations.
- *   The result of calling these functions on temporaries may not be returned as
- * a reference or bound to a reference variable.
  */
 
 // gcc emits a nuisance warning -Wignored-attributes because attributes do not
@@ -741,9 +775,9 @@
 #    define MOZ_IS_REFPTR MOZ_IS_SMARTPTR_TO_REFCOUNTED
 #    define MOZ_NO_ARITHMETIC_EXPR_IN_ARGUMENT \
       __attribute__((annotate("moz_no_arith_expr_in_arg")))
-#    define MOZ_OWNING_REF __attribute__((annotate("moz_owning_ref")))
-#    define MOZ_NON_OWNING_REF __attribute__((annotate("moz_non_owning_ref")))
-#    define MOZ_UNSAFE_REF(reason) __attribute__((annotate("moz_unsafe_ref")))
+#    define MOZ_OWNING_REF
+#    define MOZ_NON_OWNING_REF
+#    define MOZ_UNSAFE_REF(reason)
 #    define MOZ_NO_ADDREF_RELEASE_ON_RETURN \
       __attribute__((annotate("moz_no_addref_release_on_return")))
 #    define MOZ_MUST_USE_TYPE __attribute__((annotate("moz_must_use_type")))
@@ -769,9 +803,6 @@
       __attribute__((annotate("moz_must_return_from_caller_if_this_is_arg")))
 #    define MOZ_MAY_CALL_AFTER_MUST_RETURN \
       __attribute__((annotate("moz_may_call_after_must_return")))
-#    define MOZ_LIFETIME_BOUND __attribute__((annotate("moz_lifetime_bound")))
-#    define MOZ_KNOWN_LIVE __attribute__((annotate("moz_known_live")))
-
 /*
  * It turns out that clang doesn't like void func() __attribute__ {} without a
  * warning, so use pragmas to disable the warning.
@@ -823,8 +854,6 @@
 #    define MOZ_REQUIRED_BASE_METHOD                        /* nothing */
 #    define MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG      /* nothing */
 #    define MOZ_MAY_CALL_AFTER_MUST_RETURN                  /* nothing */
-#    define MOZ_LIFETIME_BOUND                              /* nothing */
-#    define MOZ_KNOWN_LIVE                                  /* nothing */
 #  endif /* defined(MOZ_CLANG_PLUGIN) || defined(XGILL_PLUGIN) */
 
 #  define MOZ_RAII MOZ_NON_TEMPORARY_CLASS MOZ_STACK_CLASS

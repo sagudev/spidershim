@@ -21,10 +21,9 @@
 use log::{debug, info};
 use std::fmt;
 use std::mem;
-use std::rc::Rc;
 
 use cranelift_codegen::binemit::{
-    Addend, CodeInfo, CodeOffset, NullStackMapSink, Reloc, RelocSink, TrapSink,
+    Addend, CodeInfo, CodeOffset, NullStackmapSink, Reloc, RelocSink, Stackmap, TrapSink,
 };
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::{
@@ -32,11 +31,9 @@ use cranelift_codegen::ir::{
     TrapCode,
 };
 use cranelift_codegen::isa::TargetIsa;
-use cranelift_codegen::machinst::MachStackMap;
 use cranelift_codegen::CodegenResult;
 use cranelift_codegen::Context;
-use cranelift_wasm::wasmparser::{FuncValidator, WasmFeatures};
-use cranelift_wasm::{FuncIndex, FuncTranslator, WasmResult};
+use cranelift_wasm::{FuncIndex, FuncTranslator, ModuleTranslationState, WasmResult};
 
 use crate::bindings;
 use crate::isa::make_isa;
@@ -93,14 +90,13 @@ impl CompiledFunc {
 /// compilations.
 pub struct BatchCompiler<'static_env, 'module_env> {
     // Attributes that are constant accross multiple compilations.
-    static_env: &'static_env bindings::StaticEnvironment,
-
-    module_env: Rc<bindings::ModuleEnvironment<'module_env>>,
-
+    static_environ: &'static_env bindings::StaticEnvironment,
+    environ: bindings::ModuleEnvironment<'module_env>,
     isa: Box<dyn TargetIsa>,
 
     // Stateless attributes.
     func_translator: FuncTranslator,
+    dummy_module_state: ModuleTranslationState,
 
     // Mutable attributes.
     /// Cranelift overall context.
@@ -118,17 +114,18 @@ pub struct BatchCompiler<'static_env, 'module_env> {
 
 impl<'static_env, 'module_env> BatchCompiler<'static_env, 'module_env> {
     pub fn new(
-        static_env: &'static_env bindings::StaticEnvironment,
-        module_env: bindings::ModuleEnvironment<'module_env>,
+        static_environ: &'static_env bindings::StaticEnvironment,
+        environ: bindings::ModuleEnvironment<'module_env>,
     ) -> DashResult<Self> {
-        let isa = make_isa(static_env)?;
-        let module_env = Rc::new(module_env);
-        let trans_env = TransEnv::new(&*isa, module_env.clone(), static_env);
+        let isa = make_isa(static_environ)?;
+        let trans_env = TransEnv::new(&*isa, environ, static_environ);
         Ok(BatchCompiler {
-            static_env,
-            module_env,
+            static_environ,
+            environ,
             isa,
             func_translator: FuncTranslator::new(),
+            // TODO for Cranelift to support multi-value, feed it the real type section here.
+            dummy_module_state: ModuleTranslationState::new(),
             context: Context::new(),
             trap_relocs: Traps::new(),
             trans_env,
@@ -145,12 +142,9 @@ impl<'static_env, 'module_env> BatchCompiler<'static_env, 'module_env> {
     }
 
     pub fn compile(&mut self, stackmaps: bindings::Stackmaps) -> CodegenResult<()> {
-        debug!("=== BatchCompiler::compile: BEGIN ==============================");
         let info = self.context.compile(&*self.isa)?;
-        let res = self.binemit(info, stackmaps);
-        debug!("=== BatchCompiler::compile: END ================================");
-        debug!("");
-        res
+        debug!("Optimized wasm function IR: {}", self);
+        self.binemit(info, stackmaps)
     }
 
     /// Translate the WebAssembly code to Cranelift IR.
@@ -160,27 +154,11 @@ impl<'static_env, 'module_env> BatchCompiler<'static_env, 'module_env> {
         let index = FuncIndex::new(func.index as usize);
 
         self.context.func.signature =
-            init_sig(&*self.module_env, self.static_env.call_conv(), index)?;
+            init_sig(&self.environ, self.static_environ.call_conv(), index)?;
         self.context.func.name = wasm_function_name(index);
 
-        let features = WasmFeatures {
-            reference_types: self.static_env.ref_types_enabled,
-            module_linking: false,
-            simd: self.static_env.v128_enabled,
-            multi_value: true,
-            threads: self.static_env.threads_enabled,
-            tail_call: false,
-            bulk_memory: true,
-            deterministic_only: true,
-            memory64: false,
-            multi_memory: false,
-        };
-        let sig_index = self.module_env.func_sig_index(index);
-        let mut validator =
-            FuncValidator::new(sig_index.index() as u32, 0, &*self.module_env, &features)?;
-
         self.func_translator.translate(
-            &mut validator,
+            &self.dummy_module_state,
             func.bytecode(),
             func.offset_in_module as usize,
             &mut self.context.func,
@@ -199,7 +177,7 @@ impl<'static_env, 'module_env> BatchCompiler<'static_env, 'module_env> {
         let contains_calls = self.contains_calls();
 
         info!(
-            "Emitting {} bytes, frame_pushed={}.",
+            "Emitting {} bytes, frame_pushed={}\n.",
             total_size, frame_pushed
         );
 
@@ -233,7 +211,7 @@ impl<'static_env, 'module_env> BatchCompiler<'static_env, 'module_env> {
                     code_buffer.as_mut_ptr(),
                     &mut relocs,
                     &mut self.trap_relocs,
-                    &mut NullStackMapSink {},
+                    &mut NullStackmapSink {},
                 )
             };
 
@@ -242,8 +220,13 @@ impl<'static_env, 'module_env> BatchCompiler<'static_env, 'module_env> {
                 .append(&mut self.trap_relocs.metadata);
         }
 
-        if self.static_env.ref_types_enabled {
-            self.emit_stackmaps(stackmaps);
+        if self.static_environ.ref_types_enabled {
+            if self.context.mach_compile_result.is_some() {
+                // TODO Bug 1633721: new backend: support stackmaps.
+                log::warn!("new isel backend doesn't support stackmaps yet");
+            } else {
+                self.emit_stackmaps(stackmaps);
+            }
         }
 
         self.current_func.code_size = info.code_size;
@@ -253,22 +236,28 @@ impl<'static_env, 'module_env> BatchCompiler<'static_env, 'module_env> {
         Ok(())
     }
 
-    /// Iterate over safepoint information contained in the returned `MachBufferFinalized`.
+    /// Iterate over each instruction to generate a stack map for each instruction that needs it.
+    ///
+    /// Note a stackmap is associated to the address of the next instruction following the actual
+    /// instruction needing the stack map. This is because this is the only information
+    /// Spidermonkey has access to when it looks up a stack map (during stack frame iteration).
     fn emit_stackmaps(&self, mut stackmaps: bindings::Stackmaps) {
-        let mach_buf = &self.context.mach_compile_result.as_ref().unwrap().buffer;
-        let mach_stackmaps = mach_buf.stack_maps();
-
-        for &MachStackMap {
-            offset_end,
-            ref stack_map,
-            ..
-        } in mach_stackmaps
-        {
-            debug!(
-                "Stack map at end-of-insn offset {}: {:?}",
-                offset_end, stack_map
-            );
-            stackmaps.add_stackmap(/* inbound_args_size = */ 0, offset_end, stack_map);
+        let encinfo = self.isa.encoding_info();
+        let func = &self.context.func;
+        let stack_slots = &func.stack_slots;
+        for block in func.layout.blocks() {
+            let mut pending_safepoint = None;
+            for (offset, inst, inst_size) in func.inst_offsets(block, &encinfo) {
+                if let Some(stackmap) = pending_safepoint.take() {
+                    stackmaps.add_stackmap(stack_slots, offset + inst_size, stackmap);
+                }
+                if func.dfg[inst].opcode() == ir::Opcode::Safepoint {
+                    let args = func.dfg.inst_args(inst);
+                    let stackmap = Stackmap::from_values(&args, func, &*self.isa);
+                    pending_safepoint = Some(stackmap);
+                }
+            }
+            debug_assert!(pending_safepoint.is_none());
         }
     }
 
@@ -278,12 +267,16 @@ impl<'static_env, 'module_env> BatchCompiler<'static_env, 'module_env> {
     fn frame_pushed(&self) -> StackSize {
         // Cranelift computes the total stack frame size including the pushed return address,
         // standard SM prologue pushes, and its own stack slots.
-        let total = self
-            .context
-            .mach_compile_result
-            .as_ref()
-            .expect("always use Mach backend")
-            .frame_size;
+        let total = if let Some(result) = &self.context.mach_compile_result {
+            result.frame_size
+        } else {
+            self.context
+                .func
+                .stack_slots
+                .layout_info
+                .expect("No frame")
+                .frame_size
+        };
 
         let sm_pushed = StackSize::from(self.isa.flags().baldrdash_prologue_words())
             * mem::size_of::<usize>() as StackSize;
@@ -341,6 +334,11 @@ impl<'a> Relocations<'a> {
 }
 
 impl<'a> RelocSink for Relocations<'a> {
+    /// Add a relocation referencing a block at the current offset.
+    fn reloc_block(&mut self, _at: CodeOffset, _reloc: Reloc, _block_offset: CodeOffset) {
+        unimplemented!("block relocations NYI");
+    }
+
     /// Add a relocation referencing an external symbol at the current offset.
     fn reloc_external(
         &mut self,
@@ -518,8 +516,7 @@ impl TrapSink for Traps {
                 // entries, so we don't have to.
                 return;
             }
-            HeapOutOfBounds | TableOutOfBounds => bindings::Trap::OutOfBounds,
-            HeapMisaligned => bindings::Trap::UnalignedAccess,
+            HeapOutOfBounds | OutOfBounds | TableOutOfBounds => bindings::Trap::OutOfBounds,
             IndirectCallToNull => bindings::Trap::IndirectCallToNull,
             BadSignature => bindings::Trap::IndirectCallBadSig,
             IntegerOverflow => bindings::Trap::IntegerOverflow,

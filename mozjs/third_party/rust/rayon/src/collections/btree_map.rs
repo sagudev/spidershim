@@ -4,10 +4,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::iter::plumbing::*;
-use crate::iter::*;
+use iter::plumbing::*;
+use iter::*;
 
-use crate::vec;
+use vec;
 
 /// Parallel iterator over a B-Tree map
 #[derive(Debug)] // std doesn't Clone
@@ -27,7 +27,7 @@ delegate_iterator! {
 
 /// Parallel iterator over an immutable reference to a B-Tree map
 #[derive(Debug)]
-pub struct Iter<'a, K: Ord + Sync, V: Sync> {
+pub struct Iter<'a, K: Ord + Sync + 'a, V: Sync + 'a> {
     inner: vec::IntoIter<(&'a K, &'a V)>,
 }
 
@@ -51,7 +51,7 @@ delegate_iterator! {
 
 /// Parallel iterator over a mutable reference to a B-Tree map
 #[derive(Debug)]
-pub struct IterMut<'a, K: Ord + Sync, V: Send> {
+pub struct IterMut<'a, K: Ord + Sync + 'a, V: Send + 'a> {
     inner: vec::IntoIter<(&'a K, &'a mut V)>,
 }
 

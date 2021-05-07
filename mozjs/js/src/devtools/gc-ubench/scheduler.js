@@ -24,10 +24,10 @@ var VsyncScheduler = class extends Scheduler {
   tick(loadMgr, timestamp) {
     this._perfMonitor.before_mutator(timestamp);
     gHost.start_turn();
-    const completed = loadMgr.tick(timestamp);
+    const events = loadMgr.tick(timestamp);
     gHost.end_turn();
     this._perfMonitor.after_mutator(timestamp);
-    return completed;
+    return events;
   }
 
   wait_for_next_frame(t0, tick_start, tick_end) {
@@ -47,10 +47,10 @@ var OptimizeForFrameRate = class extends Scheduler {
   tick(loadMgr, timestamp) {
     this._perfMonitor.before_mutator(timestamp);
     gHost.start_turn();
-    const completed = loadMgr.tick(timestamp);
+    const events = loadMgr.tick(timestamp);
     gHost.end_turn();
     this._perfMonitor.after_mutator(timestamp);
-    return completed;
+    return events;
   }
 
   wait_for_next_frame(t0, tick_start, tick_end) {

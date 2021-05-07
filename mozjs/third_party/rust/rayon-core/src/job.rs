@@ -1,9 +1,9 @@
-use crate::latch::Latch;
-use crate::unwind;
-use crossbeam_deque::{Injector, Steal};
+use crossbeam_queue::SegQueue;
+use latch::Latch;
 use std::any::Any;
 use std::cell::UnsafeCell;
 use std::mem;
+use unwind;
 
 pub(super) enum JobResult<T> {
     None,
@@ -184,13 +184,13 @@ impl<T> JobResult<T> {
 
 /// Indirect queue to provide FIFO job priority.
 pub(super) struct JobFifo {
-    inner: Injector<JobRef>,
+    inner: SegQueue<JobRef>,
 }
 
 impl JobFifo {
     pub(super) fn new() -> Self {
         JobFifo {
-            inner: Injector::new(),
+            inner: SegQueue::new(),
         }
     }
 
@@ -206,12 +206,6 @@ impl JobFifo {
 impl Job for JobFifo {
     unsafe fn execute(this: *const Self) {
         // We "execute" a queue by executing its first job, FIFO.
-        loop {
-            match (*this).inner.steal() {
-                Steal::Success(job_ref) => break job_ref.execute(),
-                Steal::Empty => panic!("FIFO is empty"),
-                Steal::Retry => {}
-            }
-        }
+        (*this).inner.pop().expect("job in fifo queue").execute()
     }
 }

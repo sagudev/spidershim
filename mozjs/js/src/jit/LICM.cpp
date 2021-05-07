@@ -106,7 +106,7 @@ static bool HasOperandInLoop(MInstruction* ins, bool hasCalls) {
 // Test whether the given instruction is hoistable, ignoring memory
 // dependencies.
 static bool IsHoistableIgnoringDependency(MInstruction* ins, bool hasCalls) {
-  return ins->isMovable() && !ins->isEffectful() &&
+  return ins->isMovable() && !ins->isEffectful() && !ins->neverHoist() &&
          !HasOperandInLoop(ins, hasCalls);
 }
 
@@ -150,7 +150,6 @@ static void MoveDeferredOperands(MInstruction* ins, MInstruction* hoistPoint,
 #endif
 
     opIns->block()->moveBefore(hoistPoint, opIns);
-    opIns->setBailoutKind(BailoutKind::LICM);
   }
 }
 
@@ -191,7 +190,6 @@ static void VisitLoopBlock(MBasicBlock* block, MBasicBlock* header,
 
     // Move the instruction to the hoistPoint.
     block->moveBefore(hoistPoint, ins);
-    ins->setBailoutKind(BailoutKind::LICM);
   }
 }
 

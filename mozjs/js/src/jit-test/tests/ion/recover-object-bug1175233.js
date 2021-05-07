@@ -1,4 +1,4 @@
-// |jit-test| --ion-pgo=on
+// |jit-test| test-join=--no-unboxed-objects; --ion-pgo=on
 //
 // Unboxed object optimization might not trigger in all cases, thus we ensure
 // that Scalar Replacement optimization is working well independently of the

@@ -3,7 +3,7 @@
 
 /*---
 info: If the property doesn't have the DontDelete attribute, remove the property
-esid: sec-delete-operator-runtime-semantics-evaluation
+es5id: 11.4.1_A3.3_T1
 description: Checking declared variable
 flags: [noStrict]
 ---*/

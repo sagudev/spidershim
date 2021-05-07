@@ -5,20 +5,22 @@ use core::num::NonZeroUsize;
 use futures_core::future::{FusedFuture, Future};
 use futures_core::stream::Stream;
 use futures_core::task::{Context, Poll};
-use pin_project_lite::pin_project;
+use pin_utils::{unsafe_pinned, unsafe_unpinned};
 
-pin_project! {
-    /// Future for the [`for_each_concurrent`](super::StreamExt::for_each_concurrent)
-    /// method.
-    #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct ForEachConcurrent<St, Fut, F> {
-        #[pin]
-        stream: Option<St>,
-        f: F,
-        futures: FuturesUnordered<Fut>,
-        limit: Option<NonZeroUsize>,
-    }
+/// Future for the [`for_each_concurrent`](super::StreamExt::for_each_concurrent)
+/// method.
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct ForEachConcurrent<St, Fut, F> {
+    stream: Option<St>,
+    f: F,
+    futures: FuturesUnordered<Fut>,
+    limit: Option<NonZeroUsize>,
 }
+
+impl<St, Fut, F> Unpin for ForEachConcurrent<St, Fut, F>
+where St: Unpin,
+      Fut: Unpin,
+{}
 
 impl<St, Fut, F> fmt::Debug for ForEachConcurrent<St, Fut, F>
 where
@@ -39,8 +41,13 @@ where St: Stream,
       F: FnMut(St::Item) -> Fut,
       Fut: Future<Output = ()>,
 {
-    pub(super) fn new(stream: St, limit: Option<usize>, f: F) -> Self {
-        Self {
+    unsafe_pinned!(stream: Option<St>);
+    unsafe_unpinned!(f: F);
+    unsafe_unpinned!(futures: FuturesUnordered<Fut>);
+    unsafe_unpinned!(limit: Option<NonZeroUsize>);
+
+    pub(super) fn new(stream: St, limit: Option<usize>, f: F) -> ForEachConcurrent<St, Fut, F> {
+        ForEachConcurrent {
             stream: Some(stream),
             // Note: `limit` = 0 gets ignored.
             limit: limit.and_then(NonZeroUsize::new),
@@ -67,15 +74,16 @@ impl<St, Fut, F> Future for ForEachConcurrent<St, Fut, F>
 {
     type Output = ();
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let mut this = self.project();
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         loop {
             let mut made_progress_this_iter = false;
 
+            // Try and pull an item from the stream
+            let current_len = self.futures.len();
             // Check if we've already created a number of futures greater than `limit`
-            if this.limit.map(|limit| limit.get() > this.futures.len()).unwrap_or(true) {
+            if self.limit.map(|limit| limit.get() > current_len).unwrap_or(true) {
                 let mut stream_completed = false;
-                let elem = if let Some(stream) = this.stream.as_mut().as_pin_mut() {
+                let elem = if let Some(stream) = self.as_mut().stream().as_pin_mut() {
                     match stream.poll_next(cx) {
                         Poll::Ready(Some(elem)) => {
                             made_progress_this_iter = true;
@@ -91,17 +99,18 @@ impl<St, Fut, F> Future for ForEachConcurrent<St, Fut, F>
                     None
                 };
                 if stream_completed {
-                    this.stream.set(None);
+                    self.as_mut().stream().set(None);
                 }
                 if let Some(elem) = elem {
-                    this.futures.push((this.f)(elem));
+                    let next_future = (self.as_mut().f())(elem);
+                    self.as_mut().futures().push(next_future);
                 }
             }
 
-            match this.futures.poll_next_unpin(cx) {
+            match self.as_mut().futures().poll_next_unpin(cx) {
                 Poll::Ready(Some(())) => made_progress_this_iter = true,
                 Poll::Ready(None) => {
-                    if this.stream.is_none() {
+                    if self.stream.is_none() {
                         return Poll::Ready(())
                     }
                 },

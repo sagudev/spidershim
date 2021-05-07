@@ -11,12 +11,9 @@
 
 #include "ctypes/CTypes.h"
 #include "js/CharacterEncoding.h"
-#include "js/experimental/CTypes.h"  // JS::CTypesCallbacks
 #include "js/MemoryFunctions.h"
-#include "js/Object.h"  // JS::GetReservedSlot
 #include "js/PropertySpec.h"
 #include "js/StableStringChars.h"
-#include "vm/JSObject.h"
 
 using JS::AutoStableStringChars;
 
@@ -98,7 +95,7 @@ bool Library::Name(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 JSObject* Library::Create(JSContext* cx, HandleValue path,
-                          const JS::CTypesCallbacks* callbacks) {
+                          const JSCTypesCallbacks* callbacks) {
   RootedObject libraryObj(cx, JS_NewObject(cx, &sLibraryClass));
   if (!libraryObj) {
     return nullptr;
@@ -162,7 +159,7 @@ JSObject* Library::Create(JSContext* cx, HandleValue path,
     }
 
     nbytes = JS::DeflateStringToUTF8Buffer(
-        pathStr, mozilla::Span(pathBytes.get(), nbytes));
+        pathStr, mozilla::MakeSpan(pathBytes.get(), nbytes));
     pathBytes[nbytes] = 0;
   }
 
@@ -202,12 +199,14 @@ JSObject* Library::Create(JSContext* cx, HandleValue path,
   return libraryObj;
 }
 
-bool Library::IsLibrary(JSObject* obj) { return obj->hasClass(&sLibraryClass); }
+bool Library::IsLibrary(JSObject* obj) {
+  return JS_GetClass(obj) == &sLibraryClass;
+}
 
 PRLibrary* Library::GetLibrary(JSObject* obj) {
   MOZ_ASSERT(IsLibrary(obj));
 
-  Value slot = JS::GetReservedSlot(obj, SLOT_LIBRARY);
+  Value slot = JS_GetReservedSlot(obj, SLOT_LIBRARY);
   return static_cast<PRLibrary*>(slot.toPrivate());
 }
 

@@ -1,3 +1,5 @@
+extern crate rayon;
+
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::ops::Range;

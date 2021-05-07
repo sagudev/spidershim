@@ -10,7 +10,7 @@ info: |
 
   ...
   3. Let resolve be ! CreateBuiltinFunction(stepsResolve, « [[Promise]], [[AlreadyResolved]] »).
-features: [Reflect.construct, arrow-function]
+features: [Reflect.construct]
 includes: [isConstructor.js]
 flags: [async]
 ---*/
@@ -21,13 +21,9 @@ Promise.resolve(1).then(function() {
 
 var then = Promise.prototype.then;
 Promise.prototype.then = function(resolve, reject) {
-  assert.sameValue(isConstructor(resolve), false, 'isConstructor(resolve) must return false');
-  assert.throws(TypeError, () => {
-    new resolve();
-  }, '`new resolve()` throws TypeError');
-
-  assert.sameValue(resolve.length, 1, 'The value of resolve.length is 1');
-  assert.sameValue(resolve.name, '', 'The value of resolve.name is ""');
+  assert(!isConstructor(resolve));
+  assert.sameValue(resolve.length, 1);
+  assert.sameValue(resolve.name, '');
 
   return then.call(this, resolve, reject);
 };

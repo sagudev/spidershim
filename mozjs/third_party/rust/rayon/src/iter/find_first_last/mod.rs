@@ -58,7 +58,7 @@ where
     pi.drive_unindexed(consumer)
 }
 
-struct FindConsumer<'p, P> {
+struct FindConsumer<'p, P: 'p> {
     find_op: &'p P,
     lower_bound: Cell<usize>,
     upper_bound: usize,
@@ -163,7 +163,7 @@ where
     }
 }
 
-struct FindFolder<'p, T, P> {
+struct FindFolder<'p, T, P: 'p> {
     find_op: &'p P,
     boundary: usize,
     match_position: MatchPosition,

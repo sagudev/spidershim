@@ -8,8 +8,6 @@
 #include "js/Array.h"        // JS::NewArrayObject
 #include "js/ArrayBuffer.h"  // JS::{GetArrayBuffer{ByteLength,Data},IsArrayBufferObject,NewArrayBuffer{,WithContents},StealArrayBufferContents}
 #include "js/Exception.h"
-#include "js/experimental/TypedData.h"  // JS_New{Int32,Uint8}ArrayWithBuffer
-#include "js/friend/ErrorMessages.h"    // JSMSG_*
 #include "js/MemoryFunctions.h"
 #include "jsapi-tests/tests.h"
 
@@ -175,7 +173,7 @@ BEGIN_TEST(testArrayBuffer_customFreeFunc) {
   CHECK(buffer);
   CHECK(!data.wasFreed());
 
-  size_t len;
+  uint32_t len;
   bool isShared;
   uint8_t* bufferData;
   JS::GetArrayBufferLengthAndData(buffer, &len, &isShared, &bufferData);
@@ -201,7 +199,7 @@ BEGIN_TEST(testArrayBuffer_staticContents) {
   CHECK(buffer);
   CHECK(!data.wasFreed());
 
-  size_t len;
+  uint32_t len;
   bool isShared;
   uint8_t* bufferData;
   JS::GetArrayBufferLengthAndData(buffer, &len, &isShared, &bufferData);

@@ -7,8 +7,8 @@
 #ifndef jit_x86_SharedICHelpers_x86_h
 #define jit_x86_SharedICHelpers_x86_h
 
+#include "jit/BaselineFrame.h"
 #include "jit/BaselineIC.h"
-#include "jit/JitFrames.h"
 #include "jit/MacroAssembler.h"
 #include "jit/SharedICRegisters.h"
 
@@ -27,11 +27,26 @@ inline void EmitRepushTailCallReg(MacroAssembler& masm) {
   masm.Push(ICTailCallReg);
 }
 
-inline void EmitCallIC(MacroAssembler& masm, CodeOffset* callOffset) {
-  // The stub pointer must already be in ICStubReg.
+inline void EmitCallIC(MacroAssembler& masm, const ICEntry* entry,
+                       CodeOffset* callOffset) {
+  // Load stub pointer into ICStubReg.
+  masm.loadPtr(AbsoluteAddress(entry).offset(ICEntry::offsetOfFirstStub()),
+               ICStubReg);
+
   // Call the stubcode.
   masm.call(Address(ICStubReg, ICStub::offsetOfStubCode()));
   *callOffset = CodeOffset(masm.currentOffset());
+}
+
+inline void EmitEnterTypeMonitorIC(
+    MacroAssembler& masm,
+    size_t monitorStubOffset = ICMonitoredStub::offsetOfFirstMonitorStub()) {
+  // This is expected to be called from within an IC, when ICStubReg
+  // is properly initialized to point to the stub.
+  masm.loadPtr(Address(ICStubReg, (int32_t)monitorStubOffset), ICStubReg);
+
+  // Jump to the stubcode.
+  masm.jmp(Operand(ICStubReg, (int32_t)ICStub::offsetOfStubCode()));
 }
 
 inline void EmitReturnFromIC(MacroAssembler& masm) { masm.ret(); }
@@ -69,7 +84,7 @@ inline void EmitPreBarrier(MacroAssembler& masm, const AddrType& addr,
 
 inline void EmitStubGuardFailure(MacroAssembler& masm) {
   // Load next stub into ICStubReg
-  masm.loadPtr(Address(ICStubReg, ICCacheIRStub::offsetOfNext()), ICStubReg);
+  masm.loadPtr(Address(ICStubReg, ICStub::offsetOfNext()), ICStubReg);
 
   // Return address is already loaded, just jump to the next stubcode.
   masm.jmp(Operand(ICStubReg, ICStub::offsetOfStubCode()));

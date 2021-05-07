@@ -26,8 +26,7 @@ use um::minwinbase::{
     LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE, LPSECURITY_ATTRIBUTES, PREASON_CONTEXT,
 };
 use um::processthreadsapi::{
-    LPPROCESS_INFORMATION, LPPROC_THREAD_ATTRIBUTE_LIST, LPSTARTUPINFOA, LPSTARTUPINFOW,
-    STARTUPINFOA, STARTUPINFOW,
+    LPPROC_THREAD_ATTRIBUTE_LIST, LPSTARTUPINFOA, STARTUPINFOA, STARTUPINFOW,
 };
 use um::winnt::{
     BOOLEAN, CHAR, DWORDLONG, EXECUTION_STATE, FILE_ID_128, HANDLE, HRESULT, INT, LANGID,
@@ -2307,37 +2306,9 @@ extern "system" {
         pdwProfileLength: LPDWORD,
         pQuotaLimits: PQUOTA_LIMITS,
     ) -> BOOL;
-}
-pub const LOGON_WITH_PROFILE: DWORD = 0x00000001;
-pub const LOGON_NETCREDENTIALS_ONLY: DWORD = 0x00000002;
-extern "system" {
-    pub fn CreateProcessWithLogonW(
-        lpUsername: LPCWSTR,
-        lpDomain: LPCWSTR,
-        lpPassword: LPCWSTR,
-        dwLogonFlags: DWORD,
-        lpApplicationName: LPCWSTR,
-        lpCommandLine: LPWSTR,
-        dwCreationFlags: DWORD,
-        lpEnvironment: LPVOID,
-        lpCurrentDirectory: LPCWSTR,
-        lpStartupInfo: LPSTARTUPINFOW,
-        lpProcessInformation: LPPROCESS_INFORMATION,
-    ) -> BOOL;
-    pub fn CreateProcessWithTokenW(
-        hToken: HANDLE,
-        dwLogonFlags: DWORD,
-        lpApplicationName: LPCWSTR,
-        lpCommandLine: LPWSTR,
-        dwCreationFlags: DWORD,
-        lpEnvironment: LPVOID,
-        lpCurrentDirectory: LPCWSTR,
-        lpStartupInfo: LPSTARTUPINFOW,
-        lpProcessInformation: LPPROCESS_INFORMATION,
-    ) -> BOOL;
-    pub fn IsTokenUntrusted(
-        TokenHandle: HANDLE,
-    ) -> BOOL;
+    // pub fn CreateProcessWithLogonW();
+    // pub fn CreateProcessWithTokenW();
+    // pub fn IsTokenUntrusted();
     pub fn RegisterWaitForSingleObject(
         phNewWaitObject: PHANDLE,
         hObject: HANDLE,

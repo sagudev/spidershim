@@ -308,8 +308,8 @@ static DWORD ProtectionSettingToFlags(ProtectionSetting protection) {
   MOZ_CRASH();
 }
 
-[[nodiscard]] static bool CommitPages(void* addr, size_t bytes,
-                                      ProtectionSetting protection) {
+static MOZ_MUST_USE bool CommitPages(void* addr, size_t bytes,
+                                     ProtectionSetting protection) {
   void* p = VirtualAlloc(addr, bytes, MEM_COMMIT,
                          ProtectionSettingToFlags(protection));
   if (!p) {
@@ -407,8 +407,8 @@ static unsigned ProtectionSettingToFlags(ProtectionSetting protection) {
   MOZ_CRASH();
 }
 
-[[nodiscard]] static bool CommitPages(void* addr, size_t bytes,
-                                      ProtectionSetting protection) {
+static MOZ_MUST_USE bool CommitPages(void* addr, size_t bytes,
+                                     ProtectionSetting protection) {
   void* p = MozTaggedAnonymousMmap(
       addr, bytes, ProtectionSettingToFlags(protection),
       MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0, "js-executable-memory");
@@ -527,7 +527,7 @@ class ProcessExecutableMemory {
         rng_(),
         pages_() {}
 
-  [[nodiscard]] bool init() {
+  MOZ_MUST_USE bool init() {
     pages_.init();
 
     MOZ_RELEASE_ASSERT(!initialized());
@@ -569,11 +569,6 @@ class ProcessExecutableMemory {
     MOZ_RELEASE_ASSERT(p >= base_ &&
                        uintptr_t(p) + bytes <=
                            uintptr_t(base_) + MaxCodeBytesPerProcess);
-  }
-
-  bool containsAddress(const void* p) const {
-    return p >= base_ &&
-           uintptr_t(p) < uintptr_t(base_) + MaxCodeBytesPerProcess;
   }
 
   void* allocate(size_t bytes, ProtectionSetting protection,
@@ -730,19 +725,13 @@ bool js::jit::CanLikelyAllocateMoreExecutableMemory() {
   return execMemory.bytesAllocated() + BufferSize <= MaxCodeBytesPerProcess;
 }
 
-bool js::jit::AddressIsInExecutableMemory(const void* p) {
-  return execMemory.containsAddress(p);
-}
-
 bool js::jit::ReprotectRegion(void* start, size_t size,
                               ProtectionSetting protection,
                               MustFlushICache flushICache) {
   // Flush ICache when making code executable, before we modify |size|.
-  if (flushICache == MustFlushICache::LocalThreadOnly ||
-      flushICache == MustFlushICache::AllThreads) {
+  if (flushICache == MustFlushICache::Yes) {
     MOZ_ASSERT(protection == ProtectionSetting::Executable);
-    bool codeIsThreadLocal = flushICache == MustFlushICache::LocalThreadOnly;
-    jit::FlushICache(start, size, codeIsThreadLocal);
+    jit::FlushICache(start, size);
   }
 
   // Calculate the start of the page containing this region,

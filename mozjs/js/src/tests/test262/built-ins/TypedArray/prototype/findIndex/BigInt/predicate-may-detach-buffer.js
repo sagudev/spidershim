@@ -1,5 +1,4 @@
 // Copyright (C) 2016 the V8 project authors. All rights reserved.
-// Copyright (C) 2021 Apple Inc. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
 esid: sec-%typedarray%.prototype.findindex
@@ -37,14 +36,18 @@ features: [BigInt, TypedArray]
 testWithBigIntTypedArrayConstructors(function(TA) {
   var sample = new TA(2);
   var loops = 0;
+  var completion = false;
 
-  sample.findIndex(function() {
-    if (loops === 0) {
+  assert.throws(TypeError, function() {
+    sample.findIndex(function() {
+      loops++;
       $DETACHBUFFER(sample.buffer);
-    }
-    loops++;
-  });
-  assert.sameValue(loops, 2, "predicate is called once");
+      completion = true;
+    });
+  }, "throws a TypeError getting a value from the detached buffer");
+
+  assert.sameValue(loops, 1, "predicated is called once");
+  assert(completion, "abrupt completion does not come from DETACHBUFFER");
 });
 
 reportCompare(0, 0);

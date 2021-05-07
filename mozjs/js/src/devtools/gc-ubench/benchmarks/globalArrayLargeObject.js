@@ -19,7 +19,7 @@ tests.set(
       },
 
       defaultGarbagePiles: "8K",
-      defaultGarbagePerFrame: "64K",
+      defaultGarbagePerFrame: "200K",
 
       makeGarbage: N => {
         var obj = {};

@@ -30,7 +30,12 @@ impl QPData {
         self.buf.append(&mut enc.into());
     }
 
-    pub(crate) fn encode_prefixed_encoded_int(&mut self, prefix: Prefix, mut val: u64) -> usize {
+    fn encode_prefixed_encoded_int_internal(
+        &mut self,
+        offset: Option<usize>,
+        prefix: Prefix,
+        mut val: u64,
+    ) -> usize {
         let first_byte_max: u8 = if prefix.len() == 0 {
             0xff
         } else {
@@ -39,11 +44,19 @@ impl QPData {
 
         if val < u64::from(first_byte_max) {
             let v = u8::try_from(val).unwrap();
-            self.write_byte((prefix.prefix() & !first_byte_max) | v);
+            if let Some(offset_val) = offset {
+                self.buf[offset_val] = (prefix.prefix() & !first_byte_max) | v;
+            } else {
+                self.write_byte((prefix.prefix() & !first_byte_max) | v);
+            }
             return 1;
         }
 
-        self.write_byte(prefix.prefix() | first_byte_max);
+        if let Some(offset_val) = offset {
+            self.buf[offset_val] = prefix.prefix() | first_byte_max;
+        } else {
+            self.write_byte(prefix.prefix() | first_byte_max);
+        }
         val -= u64::from(first_byte_max);
 
         let mut written = 1;
@@ -56,11 +69,27 @@ impl QPData {
             } else {
                 done = true;
             }
-
-            self.write_byte(b);
+            if let Some(offset_val) = offset {
+                self.buf[offset_val + written] = b;
+            } else {
+                self.write_byte(b);
+            }
             written += 1;
         }
         written
+    }
+
+    pub(crate) fn encode_prefixed_encoded_int(&mut self, prefix: Prefix, val: u64) {
+        self.encode_prefixed_encoded_int_internal(None, prefix, val);
+    }
+
+    pub(crate) fn encode_prefixed_encoded_int_with_offset(
+        &mut self,
+        offset: usize,
+        prefix: Prefix,
+        val: u64,
+    ) -> usize {
+        self.encode_prefixed_encoded_int_internal(Some(offset), prefix, val)
     }
 
     pub fn encode_literal(&mut self, use_huffman: bool, prefix: Prefix, value: &[u8]) {
@@ -99,7 +128,7 @@ impl QPData {
 impl Deref for QPData {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        &*self.buf
+        self.buf.deref()
     }
 }
 

@@ -173,8 +173,8 @@ add_builtin_define(glcpp_parser_t *parser, const char *name, int value);
 
 %}
 
-%define api.pure
-%define parse.error verbose
+%pure-parser
+%error-verbose
 
 %locations
 %initial-action {
@@ -1186,9 +1186,6 @@ _token_list_equal_ignoring_space(token_list_t *a, token_list_t *b)
          while (node_b && node_b->token->type == SPACE)
             node_b = node_b->next;
       }
-
-      if (node_a == NULL && node_b == NULL)
-         break;
 
       if (node_b == NULL && node_a->token->type == SPACE) {
          while (node_a && node_a->token->type == SPACE)

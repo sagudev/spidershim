@@ -1,6 +1,7 @@
-use crate::iter::plumbing::*;
-use crate::iter::*;
+use iter::plumbing::*;
+use iter::*;
 
+use std;
 use std::fmt;
 use std::marker::PhantomData;
 

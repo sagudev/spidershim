@@ -11,7 +11,7 @@ var first = [0, 'a', undefined];
 var second = [0, 'b', undefined];
 
 if (compareArray(first, second) !== false) {
-  throw new Error('Arrays containing different elements are not equivalent.');
+  $ERROR('Arrays containing different elements are not equivalent.');
 }
 
 reportCompare(0, 0);

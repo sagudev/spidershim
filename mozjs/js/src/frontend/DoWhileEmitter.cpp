@@ -63,7 +63,7 @@ bool DoWhileEmitter::emitCond() {
 bool DoWhileEmitter::emitEnd() {
   MOZ_ASSERT(state_ == State::Cond);
 
-  if (!loopInfo_->emitLoopEnd(bce_, JSOp::JumpIfTrue, TryNoteKind::Loop)) {
+  if (!loopInfo_->emitLoopEnd(bce_, JSOp::IfNe, TryNoteKind::Loop)) {
     return false;
   }
 

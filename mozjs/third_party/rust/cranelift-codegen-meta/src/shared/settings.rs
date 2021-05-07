@@ -25,14 +25,11 @@ pub(crate) fn define() -> SettingGroup {
         - `experimental_linear_scan` is an experimental linear scan allocator. It may take less
         time to allocate registers, but generated code's quality may be inferior. As of
         2020-04-17, it is still experimental and it should not be used in production settings.
-        - `experimental_linear_scan_checked` is the linear scan allocator with additional self
-        checks that may take some time to run, and thus these checks are disabled by default.
     "#,
         vec![
             "backtracking",
             "backtracking_checked",
             "experimental_linear_scan",
-            "experimental_linear_scan_checked",
         ],
     );
 
@@ -157,7 +154,7 @@ pub(crate) fn define() -> SettingGroup {
         r#"
             Enable safepoint instruction insertions.
 
-            This will allow the emit_stack_maps() function to insert the safepoint
+            This will allow the emit_stackmaps() function to insert the safepoint
             instruction on top of calls and interrupt traps in order to display the
             live reference values at that point in the program.
             "#,
@@ -194,7 +191,6 @@ pub(crate) fn define() -> SettingGroup {
             "windows_fastcall",
             "baldrdash_system_v",
             "baldrdash_windows",
-            "baldrdash_2020",
             "probestack",
         ],
     );
@@ -262,24 +258,6 @@ pub(crate) fn define() -> SettingGroup {
     settings.add_bool(
         "enable_jump_tables",
         "Enable the use of jump tables in generated machine code.",
-        true,
-    );
-
-    // Spectre options.
-
-    settings.add_bool(
-        "enable_heap_access_spectre_mitigation",
-        r#"
-        Enable Spectre mitigation on heap bounds checks.
-
-        This is a no-op for any heap that needs no bounds checks; e.g.,
-        if the limit is static and the guard region is large enough that
-        the index cannot reach past it.
-
-        This option is enabled by default because it is highly
-        recommended for secure sandboxing. The embedder should consider
-        the security implications carefully before disabling this option.
-        "#,
         true,
     );
 

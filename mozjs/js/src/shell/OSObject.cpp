@@ -32,10 +32,7 @@
 #include "gc/FreeOp.h"
 #include "js/CharacterEncoding.h"
 #include "js/Conversions.h"
-#include "js/experimental/TypedData.h"  // JS_NewUint8Array
-#include "js/Object.h"                  // JS::GetReservedSlot
 #include "js/PropertySpec.h"
-#include "js/Value.h"  // JS::Value
 #include "js/Wrapper.h"
 #include "shell/jsshell.h"
 #include "shell/StringUtils.h"
@@ -200,7 +197,7 @@ JSObject* FileAsTypedArray(JSContext* cx, JS::HandleString pathnameStr) {
       }
       JS_ReportErrorUTF8(cx, "can't seek start of %s", pathname.get());
     } else {
-      if (len > ArrayBufferObject::maxBufferByteLength()) {
+      if (len > ArrayBufferObject::MaxBufferByteLength) {
         JS_ReportErrorUTF8(cx, "file %s is too large for a Uint8Array",
                            pathname.get());
         return nullptr;
@@ -325,8 +322,7 @@ static bool osfile_readRelativeToScript(JSContext* cx, unsigned argc,
   return ReadFile(cx, argc, vp, true);
 }
 
-static bool ListDir(JSContext* cx, unsigned argc, Value* vp,
-                    PathResolutionMode resolveMode) {
+static bool osfile_listDir(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   if (args.length() != 1) {
@@ -341,7 +337,7 @@ static bool ListDir(JSContext* cx, unsigned argc, Value* vp,
   }
 
   RootedString givenPath(cx, args[0].toString());
-  RootedString str(cx, ResolvePath(cx, givenPath, resolveMode));
+  RootedString str(cx, ResolvePath(cx, givenPath, ScriptRelative));
   if (!str) {
     return false;
   }
@@ -419,15 +415,6 @@ static bool ListDir(JSContext* cx, unsigned argc, Value* vp,
   return true;
 }
 
-static bool osfile_listDir(JSContext* cx, unsigned argc, Value* vp) {
-  return ListDir(cx, argc, vp, RootRelative);
-}
-
-static bool osfile_listDirRelativeToScript(JSContext* cx, unsigned argc,
-                                           Value* vp) {
-  return ListDir(cx, argc, vp, ScriptRelative);
-}
-
 static bool osfile_writeTypedArrayToFile(JSContext* cx, unsigned argc,
                                          Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -477,8 +464,8 @@ static bool osfile_writeTypedArrayToFile(JSContext* cx, unsigned argc,
     return false;
   }
   void* buf = obj->dataPointerUnshared();
-  size_t length = obj->length().get();
-  if (fwrite(buf, obj->bytesPerElement(), length, file) != length ||
+  if (fwrite(buf, obj->bytesPerElement(), obj->length(), file) !=
+          obj->length() ||
       !autoClose.release()) {
     filename = JS_EncodeStringToUTF8(cx, str);
     if (!filename) {
@@ -563,7 +550,7 @@ class FileObject : public NativeObject {
 
   RCFile* rcFile() {
     return reinterpret_cast<RCFile*>(
-        JS::GetReservedSlot(this, FILE_SLOT).toPrivate());
+        js::GetReservedSlot(this, FILE_SLOT).toPrivate());
   }
 };
 
@@ -718,20 +705,15 @@ static const JSFunctionSpecWithHelp osfile_functions[] = {
 "  as the second argument, in which case it returns a Uint8Array. Filename is\n"
 "  relative to the current working directory."),
 
+    JS_FN_HELP("listDir", osfile_listDir, 1, 0,
+"listDir(filename)",
+"  Read entire contents of a directory. The \"filename\" parameter is relate to the\n"
+"  current working directory.Returns a list of filenames within the given directory.\n"
+"  Note that \".\" and \"..\" are also listed."),
+
     JS_FN_HELP("readRelativeToScript", osfile_readRelativeToScript, 1, 0,
 "readRelativeToScript(filename, [\"binary\"])",
 "  Read filename into returned string. Filename is relative to the directory\n"
-"  containing the current script."),
-
-    JS_FN_HELP("listDir", osfile_listDir, 1, 0,
-"listDir(dirname)",
-"  Read entire contents of a directory. The \"dirname\" parameter is relate to the\n"
-"  current working directory. Returns a list of filenames within the given directory.\n"
-"  Note that \".\" and \"..\" are also listed."),
-
-    JS_FN_HELP("listDirRelativeToScript", osfile_listDirRelativeToScript, 1, 0,
-"listDirRelativeToScript(dirname)",
-"  Same as \"listDir\" except that the \"dirname\" is relative to the directory\n"
 "  containing the current script."),
 
     JS_FS_HELP_END

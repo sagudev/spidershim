@@ -4,7 +4,7 @@ import os
 import re
 from itertools import chain
 
-from pip._vendor import six
+import six
 
 from .click import unstyle
 from .logging import log
@@ -230,14 +230,10 @@ class OutputWriter(object):
         elif ireq.comes_from:
             required_by.add(_comes_from_as_string(ireq))
         if required_by:
-            required_by = sorted(required_by)
-            if len(required_by) == 1:
-                source = required_by[0]
-                annotation = "    # via " + source
-            else:
-                annotation_lines = ["    # via"]
-                for source in required_by:
-                    annotation_lines.append("    #   " + source)
-                annotation = "\n".join(annotation_lines)
-            line = "{}\n{}".format(line, comment(annotation))
+            annotation = ", ".join(sorted(required_by))
+            line = "{:24}{}{}".format(
+                line,
+                " \\\n    " if ireq_hashes else "  ",
+                comment("# via " + annotation),
+            )
         return line

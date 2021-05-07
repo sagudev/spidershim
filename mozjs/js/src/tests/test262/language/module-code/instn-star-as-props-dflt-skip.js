@@ -1,4 +1,4 @@
-// |reftest| module
+// |reftest| skip module -- export-star-as-namespace-from-module is not supported
 // Copyright (C) 2018 Valerie Young. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---

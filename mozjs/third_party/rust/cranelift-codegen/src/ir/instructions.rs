@@ -7,19 +7,17 @@
 //! directory.
 
 use alloc::vec::Vec;
-use core::convert::{TryFrom, TryInto};
 use core::fmt::{self, Display, Formatter};
-use core::num::NonZeroU32;
 use core::ops::{Deref, DerefMut};
 use core::str::FromStr;
 
-use crate::ir::{self, trapcode::TrapCode, types, Block, FuncRef, JumpTable, SigRef, Type, Value};
+use crate::ir;
+use crate::ir::types;
+use crate::ir::{Block, FuncRef, JumpTable, SigRef, Type, Value};
 use crate::isa;
 
 use crate::bitset::BitSet;
-use crate::data_value::DataValue;
 use crate::entity;
-use ir::condcodes::{FloatCC, IntCC};
 
 /// Some instructions use an external list of argument values because there is not enough space in
 /// the 16-byte `InstructionData` struct. These value lists are stored in a memory pool in
@@ -62,32 +60,6 @@ impl Opcode {
     /// Panic if this is called on `NotAnOpcode`.
     pub fn constraints(self) -> OpcodeConstraints {
         OPCODE_CONSTRAINTS[self as usize - 1]
-    }
-
-    /// Returns true if the instruction is a resumable trap.
-    pub fn is_resumable_trap(&self) -> bool {
-        match self {
-            Opcode::ResumableTrap | Opcode::ResumableTrapnz => true,
-            _ => false,
-        }
-    }
-}
-
-impl TryFrom<NonZeroU32> for Opcode {
-    type Error = ();
-
-    #[inline]
-    fn try_from(x: NonZeroU32) -> Result<Self, ()> {
-        let x: u16 = x.get().try_into().map_err(|_| ())?;
-        Self::try_from(x)
-    }
-}
-
-impl From<Opcode> for NonZeroU32 {
-    #[inline]
-    fn from(op: Opcode) -> NonZeroU32 {
-        let x = op as u8;
-        NonZeroU32::new(x as u32).unwrap()
     }
 }
 
@@ -277,118 +249,11 @@ impl InstructionData {
                 ref mut destination,
                 ..
             } => Some(destination),
-            Self::BranchTable { .. } | Self::IndirectJump { .. } => None,
+            Self::BranchTable { .. } => None,
             _ => {
                 debug_assert!(!self.opcode().is_branch());
                 None
             }
-        }
-    }
-
-    /// Return the value of an immediate if the instruction has one or `None` otherwise. Only
-    /// immediate values are considered, not global values, constant handles, condition codes, etc.
-    pub fn imm_value(&self) -> Option<DataValue> {
-        match self {
-            &InstructionData::UnaryBool { imm, .. } => Some(DataValue::from(imm)),
-            // 8-bit.
-            &InstructionData::BinaryImm8 { imm, .. }
-            | &InstructionData::BranchTableEntry { imm, .. } => Some(DataValue::from(imm as i8)), // Note the switch from unsigned to signed.
-            // 32-bit
-            &InstructionData::UnaryIeee32 { imm, .. } => Some(DataValue::from(imm)),
-            &InstructionData::HeapAddr { imm, .. } => {
-                let imm: u32 = imm.into();
-                Some(DataValue::from(imm as i32)) // Note the switch from unsigned to signed.
-            }
-            &InstructionData::Load { offset, .. }
-            | &InstructionData::LoadComplex { offset, .. }
-            | &InstructionData::Store { offset, .. }
-            | &InstructionData::StoreComplex { offset, .. }
-            | &InstructionData::StackLoad { offset, .. }
-            | &InstructionData::StackStore { offset, .. }
-            | &InstructionData::TableAddr { offset, .. } => Some(DataValue::from(offset)),
-            // 64-bit.
-            &InstructionData::UnaryImm { imm, .. }
-            | &InstructionData::BinaryImm64 { imm, .. }
-            | &InstructionData::IntCompareImm { imm, .. } => Some(DataValue::from(imm.bits())),
-            &InstructionData::UnaryIeee64 { imm, .. } => Some(DataValue::from(imm)),
-            // 128-bit; though these immediates are present logically in the IR they are not
-            // included in the `InstructionData` for memory-size reasons. This case, returning
-            // `None`, is left here to alert users of this method that they should retrieve the
-            // value using the `DataFlowGraph`.
-            &InstructionData::Shuffle { mask: _, .. } => None,
-            _ => None,
-        }
-    }
-
-    /// If this is a trapping instruction, get its trap code. Otherwise, return
-    /// `None`.
-    pub fn trap_code(&self) -> Option<TrapCode> {
-        match *self {
-            Self::CondTrap { code, .. }
-            | Self::FloatCondTrap { code, .. }
-            | Self::IntCondTrap { code, .. }
-            | Self::Trap { code, .. } => Some(code),
-            _ => None,
-        }
-    }
-
-    /// If this is a control-flow instruction depending on an integer condition, gets its
-    /// condition.  Otherwise, return `None`.
-    pub fn cond_code(&self) -> Option<IntCC> {
-        match self {
-            &InstructionData::IntCond { cond, .. }
-            | &InstructionData::BranchIcmp { cond, .. }
-            | &InstructionData::IntCompare { cond, .. }
-            | &InstructionData::IntCondTrap { cond, .. }
-            | &InstructionData::BranchInt { cond, .. }
-            | &InstructionData::IntSelect { cond, .. }
-            | &InstructionData::IntCompareImm { cond, .. } => Some(cond),
-            _ => None,
-        }
-    }
-
-    /// If this is a control-flow instruction depending on a floating-point condition, gets its
-    /// condition.  Otherwise, return `None`.
-    pub fn fp_cond_code(&self) -> Option<FloatCC> {
-        match self {
-            &InstructionData::BranchFloat { cond, .. }
-            | &InstructionData::FloatCompare { cond, .. }
-            | &InstructionData::FloatCond { cond, .. }
-            | &InstructionData::FloatCondTrap { cond, .. } => Some(cond),
-            _ => None,
-        }
-    }
-
-    /// If this is a trapping instruction, get an exclusive reference to its
-    /// trap code. Otherwise, return `None`.
-    pub fn trap_code_mut(&mut self) -> Option<&mut TrapCode> {
-        match self {
-            Self::CondTrap { code, .. }
-            | Self::FloatCondTrap { code, .. }
-            | Self::IntCondTrap { code, .. }
-            | Self::Trap { code, .. } => Some(code),
-            _ => None,
-        }
-    }
-
-    /// If this is an atomic read/modify/write instruction, return its subopcode.
-    pub fn atomic_rmw_op(&self) -> Option<ir::AtomicRmwOp> {
-        match self {
-            &InstructionData::AtomicRmw { op, .. } => Some(op),
-            _ => None,
-        }
-    }
-
-    /// If this is a load/store instruction, returns its immediate offset.
-    pub fn load_store_offset(&self) -> Option<i32> {
-        match self {
-            &InstructionData::Load { offset, .. }
-            | &InstructionData::StackLoad { offset, .. }
-            | &InstructionData::LoadComplex { offset, .. }
-            | &InstructionData::Store { offset, .. }
-            | &InstructionData::StackStore { offset, .. }
-            | &InstructionData::StoreComplex { offset, .. } => Some(offset.into()),
-            _ => None,
         }
     }
 
@@ -407,39 +272,6 @@ impl InstructionData {
                 debug_assert!(!self.opcode().is_call());
                 CallInfo::NotACall
             }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn sign_extend_immediates(&mut self, ctrl_typevar: Type) {
-        if ctrl_typevar.is_invalid() {
-            return;
-        }
-
-        let bit_width = ctrl_typevar.bits();
-
-        match self {
-            Self::BinaryImm64 {
-                opcode,
-                arg: _,
-                imm,
-            } => {
-                if *opcode == Opcode::SdivImm || *opcode == Opcode::SremImm {
-                    imm.sign_extend_from_width(bit_width);
-                }
-            }
-            Self::IntCompareImm {
-                opcode,
-                arg: _,
-                cond,
-                imm,
-            } => {
-                debug_assert_eq!(*opcode, Opcode::IcmpImm);
-                if cond.unsigned() != *cond {
-                    imm.sign_extend_from_width(bit_width);
-                }
-            }
-            _ => {}
         }
     }
 }
@@ -689,9 +521,6 @@ enum OperandConstraint {
 
     /// This operand is `ctrlType.split_lanes()`.
     SplitLanes,
-
-    /// This operand is `ctrlType.merge_lanes()`.
-    MergeLanes,
 }
 
 impl OperandConstraint {
@@ -722,11 +551,6 @@ impl OperandConstraint {
                 ctrl_type
                     .split_lanes()
                     .expect("invalid type for split_lanes"),
-            ),
-            MergeLanes => Bound(
-                ctrl_type
-                    .merge_lanes()
-                    .expect("invalid type for merge_lanes"),
             ),
         }
     }

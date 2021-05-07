@@ -1,4 +1,4 @@
-use crate::ast::{annotation, kw};
+use crate::ast::annotation;
 use crate::lexer::FloatVal;
 use crate::parser::{Cursor, Parse, Parser, Peek, Result};
 use std::fmt;
@@ -44,23 +44,10 @@ impl Span {
 #[derive(Copy, Clone)]
 pub struct Id<'a> {
     name: &'a str,
-    gen: u32,
     span: Span,
 }
 
 impl<'a> Id<'a> {
-    fn new(name: &'a str, span: Span) -> Id<'a> {
-        Id { name, gen: 0, span }
-    }
-
-    pub(crate) fn gensym(span: Span, gen: u32) -> Id<'a> {
-        Id {
-            name: "gensym",
-            gen,
-            span,
-        }
-    }
-
     /// Returns the underlying name of this identifier.
     ///
     /// The name returned does not contain the leading `$`.
@@ -72,22 +59,17 @@ impl<'a> Id<'a> {
     pub fn span(&self) -> Span {
         self.span
     }
-
-    pub(crate) fn is_gensym(&self) -> bool {
-        self.gen != 0
-    }
 }
 
 impl<'a> Hash for Id<'a> {
     fn hash<H: Hasher>(&self, hasher: &mut H) {
         self.name.hash(hasher);
-        self.gen.hash(hasher);
     }
 }
 
 impl<'a> PartialEq for Id<'a> {
     fn eq(&self, other: &Id<'a>) -> bool {
-        self.name == other.name && self.gen == other.gen
+        self.name == other.name
     }
 }
 
@@ -97,7 +79,13 @@ impl<'a> Parse<'a> for Id<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         parser.step(|c| {
             if let Some((name, rest)) = c.id() {
-                return Ok((Id::new(name, c.cur_span()), rest));
+                return Ok((
+                    Id {
+                        name,
+                        span: c.cur_span(),
+                    },
+                    rest,
+                ));
             }
             Err(c.error("expected an identifier"))
         })
@@ -106,11 +94,7 @@ impl<'a> Parse<'a> for Id<'a> {
 
 impl fmt::Debug for Id<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.gen != 0 {
-            f.debug_struct("Id").field("gen", &self.gen).finish()
-        } else {
-            self.name.fmt(f)
-        }
+        self.name.fmt(f)
     }
 }
 
@@ -132,31 +116,14 @@ impl Peek for Id<'_> {
 ///
 /// The emission phase of a module will ensure that `Index::Id` is never used
 /// and switch them all to `Index::Num`.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Index<'a> {
     /// A numerical index that this references. The index space this is
     /// referencing is implicit based on where this [`Index`] is stored.
-    Num(u32, Span),
+    Num(u32),
     /// A human-readable identifier this references. Like `Num`, the namespace
     /// this references is based on where this is stored.
     Id(Id<'a>),
-}
-
-impl Index<'_> {
-    /// Returns the source location where this `Index` was defined.
-    pub fn span(&self) -> Span {
-        match self {
-            Index::Num(_, span) => *span,
-            Index::Id(id) => id.span(),
-        }
-    }
-
-    pub(crate) fn is_resolved(&self) -> bool {
-        match self {
-            Index::Num(..) => true,
-            _ => false,
-        }
-    }
 }
 
 impl<'a> Parse<'a> for Index<'a> {
@@ -165,8 +132,7 @@ impl<'a> Parse<'a> for Index<'a> {
         if l.peek::<Id>() {
             Ok(Index::Id(parser.parse()?))
         } else if l.peek::<u32>() {
-            let (val, span) = parser.parse()?;
-            Ok(Index::Num(val, span))
+            Ok(Index::Num(parser.parse()?))
         } else {
             Err(l.error())
         }
@@ -180,139 +146,6 @@ impl Peek for Index<'_> {
 
     fn display() -> &'static str {
         "an index"
-    }
-}
-
-impl<'a> From<Id<'a>> for Index<'a> {
-    fn from(id: Id<'a>) -> Index<'a> {
-        Index::Id(id)
-    }
-}
-
-impl PartialEq for Index<'_> {
-    fn eq(&self, other: &Index<'_>) -> bool {
-        match (self, other) {
-            (Index::Num(a, _), Index::Num(b, _)) => a == b,
-            (Index::Id(a), Index::Id(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-
-impl Eq for Index<'_> {}
-
-impl Hash for Index<'_> {
-    fn hash<H: Hasher>(&self, hasher: &mut H) {
-        match self {
-            Index::Num(a, _) => {
-                0u8.hash(hasher);
-                a.hash(hasher);
-            }
-            Index::Id(a) => {
-                1u8.hash(hasher);
-                a.hash(hasher);
-            }
-        }
-    }
-}
-
-/// Parses `(func $foo)`
-///
-/// Optionally includes export strings for module-linking sugar syntax for alias
-/// injection.
-#[derive(Clone, Debug)]
-#[allow(missing_docs)]
-pub enum ItemRef<'a, K> {
-    Outer {
-        kind: K,
-        module: Index<'a>,
-        idx: Index<'a>,
-    },
-    Item {
-        kind: K,
-        idx: Index<'a>,
-        exports: Vec<&'a str>,
-    },
-}
-
-impl<'a, K> ItemRef<'a, K> {
-    /// Unwraps the underlying `Index` for `ItemRef::Item`.
-    ///
-    /// Panics if this is `ItemRef::Outer` or if exports haven't been expanded
-    /// yet.
-    pub fn unwrap_index(&self) -> &Index<'a> {
-        match self {
-            ItemRef::Item { idx, exports, .. } => {
-                debug_assert!(exports.len() == 0);
-                idx
-            }
-            ItemRef::Outer { .. } => panic!("unwrap_index called on Parent"),
-        }
-    }
-}
-
-impl<'a, K: Parse<'a>> Parse<'a> for ItemRef<'a, K> {
-    fn parse(parser: Parser<'a>) -> Result<Self> {
-        parser.parens(|parser| {
-            let kind = parser.parse::<K>()?;
-            if parser.peek::<kw::outer>() {
-                parser.parse::<kw::outer>()?;
-                let module = parser.parse()?;
-                let idx = parser.parse()?;
-                Ok(ItemRef::Outer { kind, module, idx })
-            } else {
-                let idx = parser.parse()?;
-                let mut exports = Vec::new();
-                while !parser.is_empty() {
-                    exports.push(parser.parse()?);
-                }
-                Ok(ItemRef::Item { kind, idx, exports })
-            }
-        })
-    }
-}
-
-impl<'a, K: Peek> Peek for ItemRef<'a, K> {
-    fn peek(cursor: Cursor<'_>) -> bool {
-        match cursor.lparen() {
-            Some(remaining) => K::peek(remaining),
-            None => false,
-        }
-    }
-
-    fn display() -> &'static str {
-        "an item reference"
-    }
-}
-
-/// Convenience structure to parse `$f` or `(item $f)`.
-#[derive(Clone, Debug)]
-pub struct IndexOrRef<'a, K>(pub ItemRef<'a, K>);
-
-impl<'a, K> Parse<'a> for IndexOrRef<'a, K>
-where
-    K: Parse<'a> + Default,
-{
-    fn parse(parser: Parser<'a>) -> Result<Self> {
-        if parser.peek::<Index<'_>>() {
-            Ok(IndexOrRef(ItemRef::Item {
-                kind: K::default(),
-                idx: parser.parse()?,
-                exports: Vec::new(),
-            }))
-        } else {
-            Ok(IndexOrRef(parser.parse()?))
-        }
-    }
-}
-
-impl<'a, K: Peek> Peek for IndexOrRef<'a, K> {
-    fn peek(cursor: Cursor<'_>) -> bool {
-        Index::peek(cursor) || ItemRef::<K>::peek(cursor)
-    }
-
-    fn display() -> &'static str {
-        "an item reference"
     }
 }
 
@@ -346,12 +179,6 @@ macro_rules! integers {
     ($($i:ident($u:ident))*) => ($(
         impl<'a> Parse<'a> for $i {
             fn parse(parser: Parser<'a>) -> Result<Self> {
-                Ok(parser.parse::<($i, Span)>()?.0)
-            }
-        }
-
-        impl<'a> Parse<'a> for ($i, Span) {
-            fn parse(parser: Parser<'a>) -> Result<Self> {
                 parser.step(|c| {
                     if let Some((i, rest)) = c.integer() {
                         let (s, base) = i.val();
@@ -360,7 +187,7 @@ macro_rules! integers {
                                 $u::from_str_radix(s, base).map(|i| i as $i)
                             });
                         return match val {
-                            Ok(n) => Ok(((n, c.cur_span()), rest)),
+                            Ok(n) => Ok((n, rest)),
                             Err(_) => Err(c.error(concat!(
                                 "invalid ",
                                 stringify!($i),

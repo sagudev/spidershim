@@ -1,10 +1,8 @@
 pub type c_char = i8;
 pub type c_long = i32;
 pub type c_ulong = u32;
-pub type wchar_t = i32;
 pub type time_t = i32;
 pub type suseconds_t = i32;
-pub type register_t = i32;
 
 s! {
     pub struct stat {
@@ -40,7 +38,6 @@ cfg_if! {
         pub const _ALIGNBYTES: usize = ::mem::size_of::<::c_long>() - 1;
     } else {
         #[doc(hidden)]
-        pub const _ALIGNBYTES: usize = 4 - 1;
+        pub const _ALIGNBYTES: usize = 8 - 1;
     }
 }
-pub const MINSIGSTKSZ: ::size_t = 2048; // 512 * 4

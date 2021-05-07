@@ -35,8 +35,7 @@ testGetParam("unusedChunks");
 testGetParam("totalChunks");
 
 testChangeParam("maxBytes");
-testChangeParam("incrementalGCEnabled");
-testChangeParam("perZoneGCEnabled");
+testChangeParam("mode");
 testChangeParam("sliceTimeBudgetMS");
 testChangeParam("markStackLimit");
 testChangeParam("highFrequencyTimeLimit");
@@ -53,7 +52,6 @@ testChangeParam("maxEmptyChunkCount");
 testChangeParam("compactingEnabled");
 testChangeParam("mallocThresholdBase");
 testChangeParam("mallocGrowthFactor");
-testChangeParam("nurseryTimeoutForIdleCollectionMS");
 
 testMBParamValue("smallHeapSizeMax");
 testMBParamValue("largeHeapSizeMin");

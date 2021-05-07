@@ -17,7 +17,7 @@ Object.defineProperty(obj, 'a', {
 verifyNotWritable(obj, 'a');
 
 if (obj.a !== 123) {
-  throw new Error('`verifyNotWritable` should be non-destructive.');
+  $ERROR('`verifyNotWritable` should be non-destructive.');
 }
 
 reportCompare(0, 0);

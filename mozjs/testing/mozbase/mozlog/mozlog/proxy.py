@@ -4,6 +4,7 @@
 
 from __future__ import absolute_import
 
+from multiprocessing import Queue
 from threading import Thread
 
 from .structuredlog import get_default_logger, StructuredLogger
@@ -49,14 +50,10 @@ class QueuedProxyLogger(StructuredLogger):
 
     threads = {}
 
-    def __init__(self, logger, mp_context=None):
+    def __init__(self, logger):
         StructuredLogger.__init__(self, logger.name)
-
-        if mp_context is None:
-            import multiprocessing as mp_context
-
         if logger.name not in self.threads:
-            self.threads[logger.name] = LogQueueThread(mp_context.Queue(), logger)
+            self.threads[logger.name] = LogQueueThread(Queue(), logger)
             self.threads[logger.name].start()
         self.queue = self.threads[logger.name].queue
 

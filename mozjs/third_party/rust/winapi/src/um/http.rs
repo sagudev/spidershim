@@ -840,15 +840,6 @@ STRUCT!{struct HTTP_SERVICE_CONFIG_CACHE_SET {
     ParamDesc: HTTP_SERVICE_CONFIG_CACHE_PARAM,
 }}
 pub type PHTTP_SERVICE_CONFIG_CACHE_SET = *mut HTTP_SERVICE_CONFIG_CACHE_SET;
-pub const HTTP_NULL_ID: ULONGLONG = 0;
-#[inline]
-pub unsafe fn HTTP_IS_NULL_ID(pid: PHTTP_OPAQUE_ID) -> bool {
-    HTTP_NULL_ID == *pid
-}
-#[inline]
-pub unsafe fn HTTP_SET_NULL_ID(pid: PHTTP_OPAQUE_ID) {
-    *pid = HTTP_NULL_ID
-}
 extern "system" {
     pub fn HttpInitialize(
         Version: HTTPAPI_VERSION,
@@ -860,7 +851,7 @@ extern "system" {
         pReserved: PVOID,
     ) -> ULONG;
     pub fn HttpCreateHttpHandle(
-        pReqQueueHandle: PHANDLE,
+        pReqQueueHandle: HANDLE,
         Reserved: ULONG,
     ) -> ULONG;
     pub fn HttpCreateRequestQueue(
@@ -1077,20 +1068,5 @@ extern "system" {
         OutputLength: ULONG,
         pReturnLength: PULONG,
         pOverlapped: LPOVERLAPPED,
-    ) -> ULONG;
-    pub fn HttpDeclarePush(
-        RequestQueueHandle: HANDLE,
-        RequestId: HTTP_REQUEST_ID,
-        Verb: HTTP_VERB,
-        Path: PCWSTR,
-        Query: PCSTR,
-        Headers: PHTTP_REQUEST_HEADERS,
-    ) -> ULONG;
-    pub fn HttpUpdateServiceConfiguration(
-        Handle: HANDLE,
-        ConfigId: HTTP_SERVICE_CONFIG_ID,
-        ConfigInfo: PVOID,
-        ConfigInfoLength: ULONG,
-        Overlapped: LPOVERLAPPED,
     ) -> ULONG;
 }

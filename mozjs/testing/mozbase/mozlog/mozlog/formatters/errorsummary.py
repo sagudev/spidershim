@@ -6,21 +6,15 @@
 from __future__ import absolute_import
 
 import json
-from collections import defaultdict
 
 from .base import BaseFormatter
 
 
 class ErrorSummaryFormatter(BaseFormatter):
+
     def __init__(self):
-        self.test_to_group = {}
-        self.groups = defaultdict(
-            lambda: {
-                "status": None,
-                "start": None,
-                "end": None,
-            }
-        )
+        self.groups = {}
+        self.group_results = {}
         self.line_count = 0
 
     def __call__(self, data):
@@ -34,91 +28,64 @@ class ErrorSummaryFormatter(BaseFormatter):
         return "%s\n" % json.dumps(data)
 
     def _output_test(self, test, subtest, item):
-        data = {
-            "test": test,
-            "subtest": subtest,
-            "group": self.test_to_group.get(test, ""),
-            "status": item["status"],
-            "expected": item["expected"],
-            "message": item.get("message"),
-            "stack": item.get("stack"),
-            "known_intermittent": item.get("known_intermittent", []),
-        }
+        data = {"test": test,
+                "subtest": subtest,
+                "group": self.groups.get(test, ''),
+                "status": item["status"],
+                "expected": item["expected"],
+                "message": item.get("message"),
+                "stack": item.get("stack")}
         return self._output("test_result", data)
 
-    def _update_group_result(self, group, item):
-        ginfo = self.groups[group]
+    def _update_results(self, item):
+        group = self.groups.get(item["test"], None)
+        if group is None:
+            return
 
         if item["status"] == "SKIP":
-            if ginfo["status"] is None:
-                ginfo["status"] = "SKIP"
-        elif (
-            "expected" not in item
-            or item["status"] == item["expected"]
-            or item["status"] in item.get("known_intermittent", [])
-        ):
-            if ginfo["status"] in (None, "SKIP"):
-                ginfo["status"] = "OK"
+            if group not in self.group_results:
+                self.group_results[group] = "SKIP"
+        elif "expected" not in item or item["status"] == item["expected"]:
+            if group not in self.group_results or self.group_results[group] == "SKIP":
+                self.group_results[group] = "OK"
         else:
-            ginfo["status"] = "ERROR"
+            self.group_results[group] = "ERROR"
 
     def suite_start(self, item):
-        self.test_to_group = {v: k for k in item["tests"] for v in item["tests"][k]}
+        self.groups = {v: k for k in item["tests"] for v in item["tests"][k]}
         return self._output("test_groups", {"groups": list(item["tests"].keys())})
 
     def suite_end(self, data):
         return "".join(
-            self._output(
-                "group_result",
-                {
-                    "group": group,
-                    "status": info["status"],
-                    "duration": info["end"] - info["start"],
-                },
-            )
-            for group, info in self.groups.items()
+            self._output("group_result", {"group": group, "status": status})
+            for group, status in self.group_results.items()
         )
 
-    def test_start(self, item):
-        group = self.test_to_group.get(item["test"], None)
-        if group and self.groups[group]["start"] is None:
-            self.groups[group]["start"] = item["time"]
-
     def test_status(self, item):
-        group = self.test_to_group.get(item["test"], None)
-        if group:
-            self._update_group_result(group, item)
-
+        self._update_results(item)
         if "expected" not in item:
             return
-
         return self._output_test(item["test"], item["subtest"], item)
 
     def test_end(self, item):
-        group = self.test_to_group.get(item["test"], None)
-        if group:
-            self._update_group_result(group, item)
-            self.groups[group]["end"] = item["time"]
-
+        self._update_results(item)
         if "expected" not in item:
             return
-
         return self._output_test(item["test"], None, item)
 
     def log(self, item):
         if item["level"] not in ("ERROR", "CRITICAL"):
             return
 
-        data = {"level": item["level"], "message": item["message"]}
+        data = {"level": item["level"],
+                "message": item["message"]}
         return self._output("log", data)
 
     def crash(self, item):
-        data = {
-            "test": item.get("test"),
-            "signature": item["signature"],
-            "stackwalk_stdout": item.get("stackwalk_stdout"),
-            "stackwalk_stderr": item.get("stackwalk_stderr"),
-        }
+        data = {"test": item.get("test"),
+                "signature": item["signature"],
+                "stackwalk_stdout": item.get("stackwalk_stdout"),
+                "stackwalk_stderr": item.get("stackwalk_stderr")}
         return self._output("crash", data)
 
     def lint(self, item):
@@ -129,6 +96,6 @@ class ErrorSummaryFormatter(BaseFormatter):
             "lineno": item["lineno"],
             "column": item.get("column"),
             "rule": item.get("rule"),
-            "linter": item.get("linter"),
+            "linter": item.get("linter")
         }
         self._output("lint", data)

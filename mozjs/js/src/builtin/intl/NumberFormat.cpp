@@ -8,6 +8,7 @@
 
 #include "builtin/intl/NumberFormat.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
 #include "mozilla/FloatingPoint.h"
@@ -49,7 +50,6 @@
 #include "vm/SelfHosting.h"
 #include "vm/Stack.h"
 #include "vm/StringType.h"
-#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/JSObject-inl.h"
 
@@ -81,7 +81,7 @@ const JSClassOps NumberFormatObject::classOps_ = {
 };
 
 const JSClass NumberFormatObject::class_ = {
-    "Intl.NumberFormat",
+    js_Object_str,
     JSCLASS_HAS_RESERVED_SLOTS(NumberFormatObject::SLOT_COUNT) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_NumberFormat) |
         JSCLASS_FOREGROUND_FINALIZE,
@@ -108,8 +108,7 @@ static const JSFunctionSpec numberFormat_methods[] = {
 
 static const JSPropertySpec numberFormat_properties[] = {
     JS_SELF_HOSTED_GET("format", "$Intl_NumberFormat_format_get", 0),
-    JS_STRING_SYM_PS(toStringTag, "Intl.NumberFormat", JSPROP_READONLY),
-    JS_PS_END};
+    JS_STRING_SYM_PS(toStringTag, "Object", JSPROP_READONLY), JS_PS_END};
 
 static bool NumberFormat(JSContext* cx, unsigned argc, Value* vp);
 
@@ -346,11 +345,16 @@ static const MeasureUnit& FindSimpleMeasureUnit(const char* name) {
 }
 
 static constexpr size_t MaxUnitLength() {
+  // Enable by default when libstdc++ 7 is the minimal version expected
+#if _GLIBCXX_RELEASE >= 7
   size_t length = 0;
   for (const auto& unit : simpleMeasureUnits) {
     length = std::max(length, std::char_traits<char>::length(unit.name));
   }
   return length * 2 + std::char_traits<char>::length("-per-");
+#else
+  return mozilla::ArrayLength("mile-scandinavian-per-mile-scandinavian") - 1;
+#endif
 }
 
 bool js::intl::NumberFormatterSkeleton::unit(JSLinearString* unit) {
@@ -1017,11 +1021,11 @@ class NumberFormatFields {
  public:
   explicit NumberFormatFields(JSContext* cx) : fields_(cx) {}
 
-  [[nodiscard]] bool append(FieldType type, int32_t begin, int32_t end);
+  MOZ_MUST_USE bool append(FieldType type, int32_t begin, int32_t end);
 
-  [[nodiscard]] ArrayObject* toArray(JSContext* cx,
-                                     JS::HandleString overallResult,
-                                     FieldType unitType);
+  MOZ_MUST_USE ArrayObject* toArray(JSContext* cx,
+                                    JS::HandleString overallResult,
+                                    FieldType unitType);
 };
 
 bool NumberFormatFields::append(FieldType type, int32_t begin, int32_t end) {

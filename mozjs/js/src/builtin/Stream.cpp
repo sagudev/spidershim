@@ -20,8 +20,6 @@
 #include "builtin/streams/ReadableStreamInternals.h"  // js::ReadableStream{AddReadOrReadIntoRequest,CloseInternal,CreateReadResult,ErrorInternal,FulfillReadOrReadIntoRequest,GetNumReadRequests,HasDefaultReader}
 #include "builtin/streams/ReadableStreamReader.h"  // js::ReadableStream{,Default}Reader, js::CreateReadableStreamDefaultReader, js::ReadableStreamReaderGeneric{Cancel,Initialize,Release}, js::ReadableStreamDefaultReaderRead
 #include "js/ArrayBuffer.h"                        // JS::NewArrayBuffer
-#include "js/experimental/TypedData.h"  // JS_GetArrayBufferViewData, JS_NewUint8Array{,WithBuffer}
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
 #include "vm/Interpreter.h"
 #include "vm/JSContext.h"
@@ -29,7 +27,7 @@
 #include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseResolvedWithUndefined
 #include "vm/SelfHosting.h"
 
-#include "builtin/HandlerFunction-inl.h"  // js::NewHandler
+#include "builtin/streams/HandlerFunction-inl.h"  // js::NewHandler
 #include "builtin/streams/ReadableStreamReader-inl.h"  // js::Unwrap{ReaderFromStream{,NoThrow},StreamFromReader}
 #include "vm/Compartment-inl.h"
 #include "vm/List-inl.h"  // js::ListObject, js::StoreNewListInFixedSlot
@@ -107,7 +105,7 @@ const JSClass ByteStreamChunk::class_ = {
  * Note: All arguments must be same-compartment with cx. ReadableStream
  * controllers are always created in the same compartment as the stream.
  */
-[[nodiscard]] static ReadableByteStreamController*
+static MOZ_MUST_USE ReadableByteStreamController*
 CreateReadableByteStreamController(JSContext* cx,
                                    Handle<ReadableStream*> stream,
                                    HandleValue underlyingByteSource,
@@ -254,7 +252,7 @@ class MOZ_RAII AutoClearUnderlyingSource {
  * Version of SetUpReadableByteStreamController that's specialized for handling
  * external, embedding-provided, underlying sources.
  */
-[[nodiscard]] bool js::SetUpExternalReadableByteStreamController(
+MOZ_MUST_USE bool js::SetUpExternalReadableByteStreamController(
     JSContext* cx, Handle<ReadableStream*> stream,
     JS::ReadableStreamUnderlyingSource* source) {
   // Done elsewhere in the standard: Create the controller object.
@@ -390,13 +388,13 @@ JS_STREAMS_CLASS_SPEC(ReadableByteStreamController, 0, SlotCount,
 // Streams spec, 3.11.5.1. [[CancelSteps]] ()
 // Unified with 3.9.5.1 above.
 
-[[nodiscard]] static bool ReadableByteStreamControllerHandleQueueDrain(
+static MOZ_MUST_USE bool ReadableByteStreamControllerHandleQueueDrain(
     JSContext* cx, Handle<ReadableStreamController*> unwrappedController);
 
 /**
  * Streams spec, 3.11.5.2. [[PullSteps]] ( forAuthorCode )
  */
-[[nodiscard]] static PromiseObject* ReadableByteStreamControllerPullSteps(
+static MOZ_MUST_USE PromiseObject* ReadableByteStreamControllerPullSteps(
     JSContext* cx, Handle<ReadableByteStreamController*> unwrappedController) {
   // Step 1: Let stream be this.[[controlledReadableByteStream]].
   Rooted<ReadableStream*> unwrappedStream(cx, unwrappedController->stream());
@@ -581,7 +579,7 @@ JS_STREAMS_CLASS_SPEC(ReadableByteStreamController, 0, SlotCount,
  * and
  * Streams spec, 3.11.5.2. [[PullSteps]] ( forAuthorCode )
  */
-[[nodiscard]] PromiseObject* js::ReadableStreamControllerPullSteps(
+MOZ_MUST_USE PromiseObject* js::ReadableStreamControllerPullSteps(
     JSContext* cx, Handle<ReadableStreamController*> unwrappedController) {
   if (unwrappedController->is<ReadableStreamDefaultController>()) {
     Rooted<ReadableStreamDefaultController*> unwrappedDefaultController(
@@ -607,14 +605,14 @@ JS_STREAMS_CLASS_SPEC(ReadableByteStreamController, 0, SlotCount,
 //      ReadableByteStreamControllerCallPullIfNeeded ( controller )
 // Unified with 3.9.2 above.
 
-[[nodiscard]] static bool ReadableByteStreamControllerInvalidateBYOBRequest(
+static MOZ_MUST_USE bool ReadableByteStreamControllerInvalidateBYOBRequest(
     JSContext* cx, Handle<ReadableByteStreamController*> unwrappedController);
 
 /**
  * Streams spec, 3.13.5.
  *      ReadableByteStreamControllerClearPendingPullIntos ( controller )
  */
-[[nodiscard]] bool js::ReadableByteStreamControllerClearPendingPullIntos(
+MOZ_MUST_USE bool js::ReadableByteStreamControllerClearPendingPullIntos(
     JSContext* cx, Handle<ReadableByteStreamController*> unwrappedController) {
   // Step 1: Perform
   //         ! ReadableByteStreamControllerInvalidateBYOBRequest(controller).
@@ -632,7 +630,7 @@ JS_STREAMS_CLASS_SPEC(ReadableByteStreamController, 0, SlotCount,
 /**
  * Streams spec, 3.13.6. ReadableByteStreamControllerClose ( controller )
  */
-[[nodiscard]] bool js::ReadableByteStreamControllerClose(
+MOZ_MUST_USE bool js::ReadableByteStreamControllerClose(
     JSContext* cx, Handle<ReadableByteStreamController*> unwrappedController) {
   // Step 1: Let stream be controller.[[controlledReadableByteStream]].
   Rooted<ReadableStream*> unwrappedStream(cx, unwrappedController->stream());
@@ -709,7 +707,7 @@ JS_STREAMS_CLASS_SPEC(ReadableByteStreamController, 0, SlotCount,
  * Streams spec, 3.13.15.
  *      ReadableByteStreamControllerHandleQueueDrain ( controller )
  */
-[[nodiscard]] static bool ReadableByteStreamControllerHandleQueueDrain(
+static MOZ_MUST_USE bool ReadableByteStreamControllerHandleQueueDrain(
     JSContext* cx, Handle<ReadableStreamController*> unwrappedController) {
   MOZ_ASSERT(unwrappedController->is<ReadableByteStreamController>());
 
@@ -746,7 +744,7 @@ enum BYOBRequestSlots {
  * Streams spec 3.13.16.
  *      ReadableByteStreamControllerInvalidateBYOBRequest ( controller )
  */
-[[nodiscard]] static bool ReadableByteStreamControllerInvalidateBYOBRequest(
+static MOZ_MUST_USE bool ReadableByteStreamControllerInvalidateBYOBRequest(
     JSContext* cx, Handle<ReadableByteStreamController*> unwrappedController) {
   // Step 1: If controller.[[byobRequest]] is undefined, return.
   RootedValue unwrappedBYOBRequestVal(cx, unwrappedController->byobRequest());

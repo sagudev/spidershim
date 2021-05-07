@@ -4,9 +4,7 @@
 
 #include "jsfriendapi.h"
 
-#include "js/ArrayBuffer.h"             // JS::NewArrayBuffer
-#include "js/experimental/TypedData.h"  // JS_GetArrayBufferView{Type,ByteLength,Data}, JS_GetObjectAsArrayBufferView, JS_GetObjectAs{{Ui,I}nt{8,16,32},Float{32,64}}Array, JS_IsArrayBufferViewObject, JS_NewDataView, JS_New{{Ui,I}nt{8,16,32},Float{32,64},Uint8Clamped}Array
-#include "js/ScalarType.h"              // js::Scalar::Type
+#include "js/ArrayBuffer.h"  // JS::NewArrayBuffer
 #include "jsapi-tests/tests.h"
 #include "vm/ProxyObject.h"
 #include "vm/Realm.h"
@@ -76,14 +74,14 @@ static JSObject* CreateDataView(JSContext* cx) {
   return JS_NewDataView(cx, buffer, 0, 8);
 }
 
-template <JSObject* CreateTypedArray(JSContext* cx, size_t length),
+template <JSObject* CreateTypedArray(JSContext* cx, uint32_t length),
           size_t Length>
 static JSObject* Create(JSContext* cx) {
   return CreateTypedArray(cx, Length);
 }
 
 template <typename T, JSObject* CreateViewType(JSContext* cx),
-          JSObject* GetObjectAs(JSObject* obj, size_t* length,
+          JSObject* GetObjectAs(JSObject* obj, uint32_t* length,
                                 bool* isSharedMemory, T** data),
           js::Scalar::Type ExpectedType, uint32_t ExpectedLength,
           uint32_t ExpectedByteLength>
@@ -104,7 +102,7 @@ bool TestViewType(JSContext* cx) {
 
     T* data2;
     bool shared2;
-    size_t len;
+    uint32_t len;
     CHECK(obj == GetObjectAs(obj, &len, &shared2, &data2));
     CHECK(data1 == data2);
     CHECK(shared1 == shared2);
@@ -122,7 +120,7 @@ bool TestViewType(JSContext* cx) {
     AutoRealm ar(cx, otherGlobal);
     buffer = JS::NewArrayBuffer(cx, 8);
     CHECK(buffer);
-    CHECK(buffer->as<ArrayBufferObject>().byteLength().get() == 8);
+    CHECK(buffer->as<ArrayBufferObject>().byteLength() == 8);
   }
   CHECK(buffer->compartment() == otherGlobal->compartment());
   CHECK(JS_WrapObject(cx, &buffer));

@@ -21,13 +21,11 @@
 #include <chrono>
 #include <thread>
 
+#include "builtin/TypedObject.h"
 #include "jit/JitOptions.h"
-#include "js/BuildId.h"                 // JS::BuildIdCharVector
-#include "js/experimental/TypedData.h"  // JS_NewUint8Array
-#include "js/friend/ErrorMessages.h"    // js::GetErrorMessage, JSMSG_*
+#include "js/BuildId.h"  // JS::BuildIdCharVector
 #include "threading/LockGuard.h"
-#include "vm/HelperThreadState.h"  // Tier2GeneratorTask
-#include "vm/PlainObject.h"        // js::PlainObject
+#include "vm/PlainObject.h"  // js::PlainObject
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmCompile.h"
 #include "wasm/WasmInstance.h"
@@ -65,21 +63,9 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
 
   void cancel() override { cancelled_ = true; }
 
-  void runHelperThreadTask(AutoLockHelperThreadState& locked) override {
-    {
-      AutoUnlockHelperThreadState unlock(locked);
-      CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_);
-    }
-
-    // During shutdown the main thread will wait for any ongoing (cancelled)
-    // tier-2 generation to shut down normally.  To do so, it waits on the
-    // CONSUMER condition for the count of finished generators to rise.
-    HelperThreadState().incWasmTier2GeneratorsFinished(locked);
-
-    // The task is finished, release it.
-    js_delete(this);
+  void runTask() override {
+    CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_);
   }
-
   ThreadType threadType() override {
     return ThreadType::THREAD_TYPE_WASM_TIER2;
   }
@@ -124,8 +110,6 @@ bool Module::finishTier2(const LinkData& linkData2,
   // extant tier1 lazy stubs (otherwise, tiering would break the assumption
   // that any extant exported wasm function has had a lazy entry stub already
   // compiled for it).
-  //
-  // Also see doc block for stubs in WasmJS.cpp.
   {
     // We need to prevent new tier1 stubs generation until we've committed
     // the newer tier2 stubs, otherwise we might not generate one tier2
@@ -167,9 +151,7 @@ bool Module::finishTier2(const LinkData& linkData2,
     stubs2->setJitEntries(stub2Index, code());
   }
 
-  // And we update the jump vectors with pointers to tier-2 functions and eager
-  // stubs.  Callers will continue to invoke tier-1 code until, suddenly, they
-  // will invoke tier-2 code.  This is benign.
+  // And we update the jump vector.
 
   uint8_t* base = code().segment(Tier::Optimized).base();
   for (const CodeRange& cr : metadata(Tier::Optimized).codeRanges) {
@@ -344,7 +326,7 @@ void Module::serialize(const LinkData& linkData,
 }
 
 /* virtual */
-JSObject* Module::createObject(JSContext* cx) const {
+JSObject* Module::createObject(JSContext* cx) {
   if (!GlobalObject::ensureConstructor(cx, cx->global(), JSProto_WebAssembly)) {
     return nullptr;
   }
@@ -352,13 +334,6 @@ JSObject* Module::createObject(JSContext* cx) const {
   RootedObject proto(
       cx, &cx->global()->getPrototype(JSProto_WasmModule).toObject());
   return WasmModuleObject::create(cx, *this, proto);
-}
-
-/* virtual */
-JSObject* Module::createObjectForAsmJS(JSContext* cx) const {
-  // Use nullptr to get the default object prototype. These objects are never
-  // exposed to script for asm.js.
-  return WasmModuleObject::create(cx, *this, nullptr);
 }
 
 bool wasm::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId) {
@@ -486,7 +461,7 @@ bool Module::extractCode(JSContext* cx, Tier tier,
         return false;
       }
 
-      value.setNumber((uint32_t)p.funcUncheckedCallEntry());
+      value.setNumber((uint32_t)p.funcNormalEntry());
       if (!JS_DefineProperty(cx, segment, "funcBodyBegin", value,
                              JSPROP_ENUMERATE)) {
         return false;
@@ -546,6 +521,58 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
   Instance& instance = instanceObj->instance();
   const SharedTableVector& tables = instance.tables();
 
+  // Bulk memory changes the error checking behavior: we apply segments
+  // in-order and terminate if one has an out-of-bounds range.
+  // We enable bulk memory semantics if shared memory is enabled.
+#ifdef ENABLE_WASM_BULKMEM_OPS
+  const bool eagerBoundsCheck = false;
+#else
+  // Bulk memory must be available if shared memory is enabled.
+  const bool eagerBoundsCheck =
+      !cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
+#endif
+
+  if (eagerBoundsCheck) {
+    // Perform all error checks up front so that this function does not perform
+    // partial initialization if an error is reported. In addition, we need to
+    // to report OOBs as a link error when bulk-memory is disabled.
+
+    for (const ElemSegment* seg : elemSegments_) {
+      if (!seg->active()) {
+        continue;
+      }
+
+      uint32_t tableLength = tables[seg->tableIndex]->length();
+      uint32_t offset =
+          EvaluateOffsetInitExpr(globalImportValues, seg->offset());
+
+      if (offset > tableLength || tableLength - offset < seg->length()) {
+        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                 JSMSG_WASM_BAD_FIT, "elem", "table");
+        return false;
+      }
+    }
+
+    if (memoryObj) {
+      uint32_t memoryLength = memoryObj->volatileMemoryLength();
+      for (const DataSegment* seg : dataSegments_) {
+        if (!seg->active()) {
+          continue;
+        }
+
+        uint32_t offset =
+            EvaluateOffsetInitExpr(globalImportValues, seg->offset());
+
+        if (offset > memoryLength ||
+            memoryLength - offset < seg->bytes.length()) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_BAD_FIT, "data", "memory");
+          return false;
+        }
+      }
+    }
+  }
+
   // Write data/elem segments into memories/tables.
 
   for (const ElemSegment* seg : elemSegments_) {
@@ -554,11 +581,13 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
           EvaluateOffsetInitExpr(globalImportValues, seg->offset());
       uint32_t count = seg->length();
 
-      uint32_t tableLength = tables[seg->tableIndex]->length();
-      if (offset > tableLength || tableLength - offset < count) {
-        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                 JSMSG_WASM_OUT_OF_BOUNDS);
-        return false;
+      if (!eagerBoundsCheck) {
+        uint32_t tableLength = tables[seg->tableIndex]->length();
+        if (offset > tableLength || tableLength - offset < count) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_OUT_OF_BOUNDS);
+          return false;
+        }
       }
 
       if (!instance.initElems(seg->tableIndex, *seg, offset, 0, count)) {
@@ -568,7 +597,7 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
   }
 
   if (memoryObj) {
-    size_t memoryLength = memoryObj->volatileMemoryLength().get();
+    uint32_t memoryLength = memoryObj->volatileMemoryLength();
     uint8_t* memoryBase =
         memoryObj->buffer().dataPointerEither().unwrap(/* memcpy */);
 
@@ -581,10 +610,12 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
           EvaluateOffsetInitExpr(globalImportValues, seg->offset());
       uint32_t count = seg->bytes.length();
 
-      if (offset > memoryLength || memoryLength - offset < count) {
-        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                 JSMSG_WASM_OUT_OF_BOUNDS);
-        return false;
+      if (!eagerBoundsCheck) {
+        if (offset > memoryLength || memoryLength - offset < count) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_OUT_OF_BOUNDS);
+          return false;
+        }
       }
       memcpy(memoryBase + offset, seg->bytes.begin(), count);
     }
@@ -593,8 +624,8 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
   return true;
 }
 
-static const Import& FindImportFunction(const ImportVector& imports,
-                                        uint32_t funcImportIndex) {
+static const Import& FindImportForFuncImport(const ImportVector& imports,
+                                             uint32_t funcImportIndex) {
   for (const Import& import : imports) {
     if (import.kind != DefinitionKind::Function) {
       continue;
@@ -635,7 +666,7 @@ bool Module::instantiateFunctions(JSContext* cx,
         instance.metadata(otherTier).lookupFuncExport(funcIndex);
 
     if (funcExport.funcType() != metadata(tier).funcImports[i].funcType()) {
-      const Import& import = FindImportFunction(imports_, i);
+      const Import& import = FindImportForFuncImport(imports_, i);
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                JSMSG_WASM_BAD_IMPORT_SIG, import.module.get(),
                                import.field.get());
@@ -646,11 +677,10 @@ bool Module::instantiateFunctions(JSContext* cx,
   return true;
 }
 
-template <typename T>
-static bool CheckLimits(JSContext* cx, T declaredMin,
-                        const Maybe<T>& declaredMax, T defaultMax,
-                        T actualLength, const Maybe<T>& actualMax, bool isAsmJS,
-                        const char* kind) {
+static bool CheckLimits(JSContext* cx, uint32_t declaredMin,
+                        const Maybe<uint32_t>& declaredMax,
+                        uint32_t actualLength, const Maybe<uint32_t>& actualMax,
+                        bool isAsmJS, const char* kind) {
   if (isAsmJS) {
     MOZ_ASSERT(actualLength >= declaredMin);
     MOZ_ASSERT(!declaredMax);
@@ -659,7 +689,7 @@ static bool CheckLimits(JSContext* cx, T declaredMin,
   }
 
   if (actualLength < declaredMin ||
-      actualLength > declaredMax.valueOr(defaultMax)) {
+      actualLength > declaredMax.valueOr(UINT32_MAX)) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_BAD_IMP_SIZE, kind);
     return false;
@@ -709,20 +739,17 @@ bool Module::instantiateMemory(JSContext* cx,
     return true;
   }
 
-  uint64_t declaredMin = metadata().minMemoryLength;
-  Maybe<uint64_t> declaredMax = metadata().maxMemoryLength;
+  uint32_t declaredMin = metadata().minMemoryLength;
+  Maybe<uint32_t> declaredMax = metadata().maxMemoryLength;
   bool declaredShared = metadata().memoryUsage == MemoryUsage::Shared;
 
   if (memory) {
     MOZ_ASSERT_IF(metadata().isAsmJS(), memory->buffer().isPreparedForAsmJS());
     MOZ_ASSERT_IF(!metadata().isAsmJS(), memory->buffer().isWasm());
 
-    if (!CheckLimits(cx, declaredMin, declaredMax,
-                     /* defaultMax */ uint64_t(MaxMemory32Bytes()),
-                     /* actualLength */
-                     uint64_t(memory->volatileMemoryLength().get()),
-                     memory->buffer().wasmMaxSize(), metadata().isAsmJS(),
-                     "Memory")) {
+    if (!CheckLimits(
+            cx, declaredMin, declaredMax, memory->volatileMemoryLength(),
+            memory->buffer().wasmMaxSize(), metadata().isAsmJS(), "Memory")) {
       return false;
     }
 
@@ -732,15 +759,10 @@ bool Module::instantiateMemory(JSContext* cx,
   } else {
     MOZ_ASSERT(!metadata().isAsmJS());
 
-    if (declaredMin > MaxMemory32Bytes()) {
-      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                               JSMSG_WASM_MEM_IMP_LIMIT);
-      return false;
-    }
-
     RootedArrayBufferObjectMaybeShared buffer(cx);
-    if (!CreateWasmBuffer32(cx, declaredMin, declaredMax, declaredShared,
-                            &buffer)) {
+    Limits l(declaredMin, declaredMax,
+             declaredShared ? Shareable::True : Shareable::False);
+    if (!CreateWasmBuffer(cx, l, &buffer)) {
       return false;
     }
 
@@ -757,88 +779,6 @@ bool Module::instantiateMemory(JSContext* cx,
   return true;
 }
 
-#ifdef ENABLE_WASM_EXCEPTIONS
-bool Module::instantiateImportedException(
-    JSContext* cx, Handle<WasmExceptionObject*> exnObj,
-    WasmExceptionObjectVector& exnObjs, SharedExceptionTagVector* tags) const {
-  MOZ_ASSERT(exnObj);
-  // The check whether the EventDesc signature matches the exnObj value types
-  // is done by js::wasm::GetImports().
-
-  // Collects the exception tag from the imported exception.
-  ExceptionTag& tag = exnObj->tag();
-
-  if (!tags->append(&tag)) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
-  return true;
-}
-
-bool Module::instantiateLocalException(JSContext* cx, const EventDesc& ed,
-                                       WasmExceptionObjectVector& exnObjs,
-                                       SharedExceptionTagVector* tags,
-                                       uint32_t exnIndex) const {
-  SharedExceptionTag tag;
-  // Extend exnObjs in anticipation of an exported exception object.
-  if (exnObjs.length() <= exnIndex && !exnObjs.resize(exnIndex + 1)) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
-  if (ed.isExport) {
-    // If the exception description is exported, create an export exception
-    // object for it.
-    RootedObject proto(
-        cx, &cx->global()->getPrototype(JSProto_WasmException).toObject());
-    RootedWasmExceptionObject exnObj(
-        cx, WasmExceptionObject::create(cx, ed.type, proto));
-    if (!exnObj) {
-      return false;
-    }
-    // Take the exception tag that was created inside the WasmExceptionObject.
-    tag = &exnObj->tag();
-    // Save the new export exception object.
-    exnObjs[exnIndex] = exnObj;
-  } else {
-    // Create a new tag for every non exported exception.
-    tag = SharedExceptionTag(cx->new_<ExceptionTag>());
-    if (!tag) {
-      return false;
-    }
-    // The exnObj is null if the exception is neither exported nor imported.
-  }
-  // Collect a tag for every exception.
-  if (!tags->emplaceBack(tag)) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
-  return true;
-}
-
-bool Module::instantiateExceptions(JSContext* cx,
-                                   WasmExceptionObjectVector& exnObjs,
-                                   SharedExceptionTagVector* tags) const {
-  uint32_t exnIndex = 0;
-  for (const EventDesc& ed : metadata().events) {
-    if (exnIndex < exnObjs.length()) {
-      Rooted<WasmExceptionObject*> exnObj(cx, exnObjs[exnIndex]);
-      if (!instantiateImportedException(cx, exnObj, exnObjs, tags)) {
-        return false;
-      }
-    } else {
-      if (!instantiateLocalException(cx, ed, exnObjs, tags, exnIndex)) {
-        return false;
-      }
-    }
-    exnIndex++;
-  }
-  return true;
-}
-#endif
-
 bool Module::instantiateImportedTable(JSContext* cx, const TableDesc& td,
                                       Handle<WasmTableObject*> tableObj,
                                       WasmTableObjectVector* tableObjs,
@@ -847,10 +787,8 @@ bool Module::instantiateImportedTable(JSContext* cx, const TableDesc& td,
   MOZ_ASSERT(!metadata().isAsmJS());
 
   Table& table = tableObj->table();
-  if (!CheckLimits(cx, td.initialLength, td.maximumLength,
-                   /* declaredMin */ MaxTableLimitField,
-                   /* actualLength */ table.length(), table.maximum(),
-                   metadata().isAsmJS(), "Table")) {
+  if (!CheckLimits(cx, td.limits.initial, td.limits.maximum, table.length(),
+                   table.maximum(), metadata().isAsmJS(), "Table")) {
     return false;
   }
 
@@ -870,19 +808,12 @@ bool Module::instantiateImportedTable(JSContext* cx, const TableDesc& td,
 bool Module::instantiateLocalTable(JSContext* cx, const TableDesc& td,
                                    WasmTableObjectVector* tableObjs,
                                    SharedTableVector* tables) const {
-  if (td.initialLength > MaxTableLength) {
-    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                             JSMSG_WASM_TABLE_IMP_LIMIT);
-    return false;
-  }
-
   SharedTable table;
   Rooted<WasmTableObject*> tableObj(cx);
   if (td.importedOrExported) {
     RootedObject proto(
         cx, &cx->global()->getPrototype(JSProto_WasmTable).toObject());
-    tableObj.set(WasmTableObject::create(cx, td.initialLength, td.maximumLength,
-                                         td.elemType, proto));
+    tableObj.set(WasmTableObject::create(cx, td.limits, td.kind, proto));
     if (!tableObj) {
       return false;
     }
@@ -890,7 +821,6 @@ bool Module::instantiateLocalTable(JSContext* cx, const TableDesc& td,
   } else {
     table = Table::create(cx, td, /* HandleWasmTableObject = */ nullptr);
     if (!table) {
-      ReportOutOfMemory(cx);
       return false;
     }
   }
@@ -1055,8 +985,18 @@ SharedCode Module::getDebugEnabledCode() const {
     return nullptr;
   }
 
+  StructTypeVector structTypes;
+  if (!structTypes.resize(code_->structTypes().length())) {
+    return nullptr;
+  }
+  for (uint32_t i = 0; i < code_->structTypes().length(); i++) {
+    if (!structTypes[i].copyFrom(code_->structTypes()[i])) {
+      return nullptr;
+    }
+  }
   MutableCode debugCode =
-      js_new<Code>(std::move(codeTier), metadata(), std::move(jumpTables));
+      js_new<Code>(std::move(codeTier), metadata(), std::move(jumpTables),
+                   std::move(structTypes));
   if (!debugCode || !debugCode->initialize(*debugLinkData_)) {
     return nullptr;
   }
@@ -1135,19 +1075,15 @@ static bool GetGlobalExport(JSContext* cx, HandleWasmInstanceObject instanceObj,
     }
   }
 
-  globalObj->val() = globalVal;
+  globalObj->setVal(cx, globalVal);
   return true;
 }
 
-static bool CreateExportObject(JSContext* cx,
-                               HandleWasmInstanceObject instanceObj,
-                               const JSFunctionVector& funcImports,
-                               const WasmTableObjectVector& tableObjs,
-                               HandleWasmMemoryObject memoryObj,
-                               const WasmExceptionObjectVector& exceptionObjs,
-                               const ValVector& globalImportValues,
-                               const WasmGlobalObjectVector& globalObjs,
-                               const ExportVector& exports) {
+static bool CreateExportObject(
+    JSContext* cx, HandleWasmInstanceObject instanceObj,
+    const JSFunctionVector& funcImports, const WasmTableObjectVector& tableObjs,
+    HandleWasmMemoryObject memoryObj, const ValVector& globalImportValues,
+    const WasmGlobalObjectVector& globalObjs, const ExportVector& exports) {
   const Instance& instance = instanceObj->instance();
   const Metadata& metadata = instance.metadata();
   const GlobalDescVector& globals = metadata.globals;
@@ -1212,12 +1148,6 @@ static bool CreateExportObject(JSContext* cx,
         }
         break;
       }
-#ifdef ENABLE_WASM_EXCEPTIONS
-      case DefinitionKind::Event: {
-        val = ObjectValue(*exceptionObjs[exp.eventIndex()]);
-        break;
-      }
-#endif
     }
 
     if (!JS_DefinePropertyById(cx, exportObj, id, val, propertyAttr)) {
@@ -1235,10 +1165,208 @@ static bool CreateExportObject(JSContext* cx,
   return true;
 }
 
+#ifdef ENABLE_WASM_GC
+static bool MakeStructField(JSContext* cx, const ValType& v, bool isMutable,
+                            const char* format, uint32_t fieldNo,
+                            MutableHandleIdVector ids,
+                            MutableHandleValueVector fieldTypeObjs,
+                            Vector<StructFieldProps>* fieldProps) {
+  char buf[20];
+  sprintf(buf, format, fieldNo);
+
+  JSAtom* atom = Atomize(cx, buf, strlen(buf));
+  if (!atom) {
+    return false;
+  }
+  RootedId id(cx, AtomToId(atom));
+
+  StructFieldProps props;
+  props.isMutable = isMutable;
+
+  Rooted<TypeDescr*> t(cx);
+  switch (v.kind()) {
+    case ValType::I32:
+      t = GlobalObject::getOrCreateScalarTypeDescr(cx, cx->global(),
+                                                   Scalar::Int32);
+      break;
+    case ValType::I64:
+      // Align for int64 but allocate only an int32, another int32 allocation
+      // will follow immediately.  JS will see two immutable int32 values but
+      // wasm knows it's a single int64.  See makeStructTypeDescrs(), below.
+      props.alignAsInt64 = true;
+      t = GlobalObject::getOrCreateScalarTypeDescr(cx, cx->global(),
+                                                   Scalar::Int32);
+      break;
+    case ValType::V128:
+      // Align for v128 but allocate only an int32, three more int32 allocations
+      // will follow immediately.  JS will see four immutable int32 values but
+      // wasm knows it's a single v128.  See makeStructTypeDescrs(), below.
+      props.alignAsV128 = true;
+      t = GlobalObject::getOrCreateScalarTypeDescr(cx, cx->global(),
+                                                   Scalar::Int32);
+      break;
+    case ValType::F32:
+      t = GlobalObject::getOrCreateScalarTypeDescr(cx, cx->global(),
+                                                   Scalar::Float32);
+      break;
+    case ValType::F64:
+      t = GlobalObject::getOrCreateScalarTypeDescr(cx, cx->global(),
+                                                   Scalar::Float64);
+      break;
+    case ValType::Ref:
+      switch (v.refTypeKind()) {
+        case RefType::TypeIndex:
+          t = GlobalObject::getOrCreateReferenceTypeDescr(
+              cx, cx->global(), ReferenceType::TYPE_OBJECT);
+          break;
+        case RefType::Func:
+        case RefType::Any:
+          t = GlobalObject::getOrCreateReferenceTypeDescr(
+              cx, cx->global(), ReferenceType::TYPE_WASM_ANYREF);
+          break;
+      }
+      break;
+  }
+  MOZ_ASSERT(t != nullptr);
+
+  if (!ids.append(id)) {
+    return false;
+  }
+
+  if (!fieldTypeObjs.append(ObjectValue(*t))) {
+    return false;
+  }
+
+  if (!fieldProps->append(props)) {
+    return false;
+  }
+
+  return true;
+}
+#endif
+
+bool Module::makeStructTypeDescrs(
+    JSContext* cx,
+    MutableHandle<StructTypeDescrVector> structTypeDescrs) const {
+  // This method must be a no-op if there are no structs.
+  if (structTypes().length() == 0) {
+    return true;
+  }
+
+#ifndef ENABLE_WASM_GC
+  MOZ_CRASH("Should not have seen any struct types");
+#else
+
+#  ifndef JS_HAS_TYPED_OBJECTS
+#    error "GC types require TypedObject"
+#  endif
+
+  // Not just any prototype object will do, we must have the actual
+  // StructTypePrototype.
+  RootedObject typedObjectModule(
+      cx, GlobalObject::getOrCreateTypedObjectModule(cx, cx->global()));
+  if (!typedObjectModule) {
+    return false;
+  }
+
+  RootedNativeObject toModule(cx, &typedObjectModule->as<NativeObject>());
+  RootedObject prototype(
+      cx,
+      &toModule->getReservedSlot(TypedObjectModuleObject::StructTypePrototype)
+           .toObject());
+
+  for (const StructType& structType : structTypes()) {
+    RootedIdVector ids(cx);
+    RootedValueVector fieldTypeObjs(cx);
+    Vector<StructFieldProps> fieldProps(cx);
+    bool allowConstruct = true;
+
+    uint32_t k = 0;
+    for (StructField sf : structType.fields_) {
+      const ValType& v = sf.type;
+      if (v.kind() == ValType::I64) {
+        // TypedObjects don't yet have a notion of int64 fields.  Thus
+        // we handle int64 by allocating two adjacent int32 fields, the
+        // first of them aligned as for int64.  We mark these fields as
+        // immutable for JS and render the object non-constructible
+        // from JS.  Wasm however sees one i64 field with appropriate
+        // mutability.
+        sf.isMutable = false;
+        allowConstruct = false;
+
+        if (!MakeStructField(cx, ValType::I64, sf.isMutable, "_%d_low", k, &ids,
+                             &fieldTypeObjs, &fieldProps)) {
+          return false;
+        }
+        if (!MakeStructField(cx, ValType::I32, sf.isMutable, "_%d_high", k++,
+                             &ids, &fieldTypeObjs, &fieldProps)) {
+          return false;
+        }
+      } else if (v.kind() == ValType::V128) {
+        // Ditto v128 fields.  These turn into four adjacent i32 fields, using
+        // the standard xyzw convention.
+        sf.isMutable = false;
+        allowConstruct = false;
+
+        if (!MakeStructField(cx, ValType::V128, sf.isMutable, "_%d_x", k, &ids,
+                             &fieldTypeObjs, &fieldProps)) {
+          return false;
+        }
+        if (!MakeStructField(cx, ValType::I32, sf.isMutable, "_%d_y", k, &ids,
+                             &fieldTypeObjs, &fieldProps)) {
+          return false;
+        }
+        if (!MakeStructField(cx, ValType::I32, sf.isMutable, "_%d_z", k, &ids,
+                             &fieldTypeObjs, &fieldProps)) {
+          return false;
+        }
+        if (!MakeStructField(cx, ValType::I32, sf.isMutable, "_%d_w", k++, &ids,
+                             &fieldTypeObjs, &fieldProps)) {
+          return false;
+        }
+      } else {
+        // TypedObjects don't yet have a sufficient notion of type
+        // constraints on TypedObject properties.  Thus we handle fields
+        // of type (optref T) by marking them as immutable for JS and by
+        // rendering the objects non-constructible from JS.  Wasm
+        // however sees properly-typed (optref T) fields with appropriate
+        // mutability.
+        if (v.isTypeIndex()) {
+          // Validation ensures that v references a struct type here.
+          sf.isMutable = false;
+          allowConstruct = false;
+        }
+
+        if (!MakeStructField(cx, v, sf.isMutable, "_%d", k++, &ids,
+                             &fieldTypeObjs, &fieldProps)) {
+          return false;
+        }
+      }
+    }
+
+    // Types must be opaque, which we ensure here, and sealed, which is true
+    // for every TypedObject.  If they contain fields of type Ref T then we
+    // prevent JS from constructing instances of them.
+
+    Rooted<StructTypeDescr*> structTypeDescr(
+        cx, StructMetaTypeDescr::createFromArrays(cx, prototype,
+                                                  /* opaque= */ true,
+                                                  allowConstruct, ids,
+                                                  fieldTypeObjs, fieldProps));
+
+    if (!structTypeDescr || !structTypeDescrs.append(structTypeDescr)) {
+      return false;
+    }
+  }
+
+  return true;
+#endif
+}
+
 bool Module::instantiate(JSContext* cx, ImportValues& imports,
                          HandleObject instanceProto,
                          MutableHandleWasmInstanceObject instance) const {
-  MOZ_RELEASE_ASSERT(cx->wasm().haveSignalHandlers);
+  MOZ_RELEASE_ASSERT(cx->wasmHaveSignalHandlers);
 
   if (!instantiateFunctions(cx, imports.funcs)) {
     return false;
@@ -1248,20 +1376,6 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
   if (!instantiateMemory(cx, &memory)) {
     return false;
   }
-
-  // Note that the following will extend imports.exceptionObjs with wrappers for
-  // the local (non-imported) exceptions of the module.
-  // The resulting vector is sparse, i.e., it will be null in slots that contain
-  // exceptions that are neither exported or imported.
-  // On the contrary, all the slots of exceptionTags will be filled with
-  // unique tags.
-
-  SharedExceptionTagVector tags;
-#ifdef ENABLE_WASM_EXCEPTIONS
-  if (!instantiateExceptions(cx, imports.exceptionObjs, &tags)) {
-    return false;
-  }
-#endif
 
   // Note that tableObjs is sparse: it will be null in slots that contain
   // tables that are neither exported nor imported.
@@ -1299,18 +1413,24 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
     code = code_;
   }
 
+  // Create type descriptors for any struct types that the module has.
+
+  Rooted<StructTypeDescrVector> structTypeDescrs(cx);
+  if (!makeStructTypeDescrs(cx, &structTypeDescrs)) {
+    return false;
+  }
+
   instance.set(WasmInstanceObject::create(
       cx, code, dataSegments_, elemSegments_, std::move(tlsData), memory,
-      std::move(tags), std::move(tables), imports.funcs, metadata().globals,
-      imports.globalValues, imports.globalObjs, instanceProto,
-      std::move(maybeDebug)));
+      std::move(tables), std::move(structTypeDescrs.get()), imports.funcs,
+      metadata().globals, imports.globalValues, imports.globalObjs,
+      instanceProto, std::move(maybeDebug)));
   if (!instance) {
     return false;
   }
 
   if (!CreateExportObject(cx, instance, imports.funcs, tableObjs.get(), memory,
-                          imports.exceptionObjs, imports.globalValues,
-                          imports.globalObjs, exports_)) {
+                          imports.globalValues, imports.globalObjs, exports_)) {
     return false;
   }
 
@@ -1346,11 +1466,6 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
   JSUseCounter useCounter =
       metadata().isAsmJS() ? JSUseCounter::ASMJS : JSUseCounter::WASM;
   cx->runtime()->setUseCounter(instance, useCounter);
-
-  if (metadata().usesDuplicateImports) {
-    cx->runtime()->setUseCounter(instance,
-                                 JSUseCounter::WASM_DUPLICATE_IMPORTS);
-  }
 
   if (cx->options().testWasmAwaitTier2()) {
     testingBlockOnTier2Complete();

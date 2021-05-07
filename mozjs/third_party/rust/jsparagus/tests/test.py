@@ -20,11 +20,11 @@ def prod(body, method_name):
 
 
 class GenTestCase(unittest.TestCase):
-    def compile(self, tokenize, grammar, **kwargs):
+    def compile(self, tokenize, grammar):
         """Compile a grammar. Use this when you expect compilation to
         succeed."""
         self.tokenize = tokenize
-        self.parser_class = gen.compile(grammar, **kwargs)
+        self.parser_class = gen.compile(grammar)
 
     def parse(self, text, goal=None):
         if goal is None:

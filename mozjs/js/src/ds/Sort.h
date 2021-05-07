@@ -82,8 +82,7 @@ MOZ_ALWAYS_INLINE bool MergeArrayRuns(T* dst, const T* src, size_t run1,
  * allocates memory without using SpiderMonkey's allocator.
  */
 template <typename T, typename Comparator>
-[[nodiscard]] bool MergeSort(T* array, size_t nelems, T* scratch,
-                             Comparator c) {
+MOZ_MUST_USE bool MergeSort(T* array, size_t nelems, T* scratch, Comparator c) {
   const size_t INS_SORT_LIMIT = 3;
 
   if (nelems <= 1) {

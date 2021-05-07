@@ -2,20 +2,17 @@ use crate::stream::{StreamExt, Fuse};
 use core::pin::Pin;
 use futures_core::stream::{FusedStream, Stream};
 use futures_core::task::{Context, Poll};
-use pin_project_lite::pin_project;
 
-pin_project! {
-    /// Stream for the [`select()`] function.
-    #[derive(Debug)]
-    #[must_use = "streams do nothing unless polled"]
-    pub struct Select<St1, St2> {
-        #[pin]
-        stream1: Fuse<St1>,
-        #[pin]
-        stream2: Fuse<St2>,
-        flag: bool,
-    }
+/// Stream for the [`select()`] function.
+#[derive(Debug)]
+#[must_use = "streams do nothing unless polled"]
+pub struct Select<St1, St2> {
+    stream1: Fuse<St1>,
+    stream2: Fuse<St2>,
+    flag: bool,
 }
+
+impl<St1: Unpin, St2: Unpin> Unpin for Select<St1, St2> {}
 
 /// This function will attempt to pull items from both streams. Each
 /// stream will be polled in a round-robin fashion, and whenever a stream is
@@ -60,8 +57,10 @@ impl<St1, St2> Select<St1, St2> {
     /// Note that care must be taken to avoid tampering with the state of the
     /// stream which may otherwise confuse this combinator.
     pub fn get_pin_mut(self: Pin<&mut Self>) -> (Pin<&mut St1>, Pin<&mut St2>) {
-        let this = self.project();
-        (this.stream1.get_pin_mut(), this.stream2.get_pin_mut())
+        unsafe {
+            let Self { stream1, stream2, .. } = self.get_unchecked_mut();
+            (Pin::new_unchecked(stream1).get_pin_mut(), Pin::new_unchecked(stream2).get_pin_mut())
+        }
     }
 
     /// Consumes this combinator, returning the underlying streams.
@@ -92,11 +91,15 @@ impl<St1, St2> Stream for Select<St1, St2>
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<St1::Item>> {
-        let this = self.project();
-        if !*this.flag {
-            poll_inner(this.flag, this.stream1, this.stream2, cx)
+        let Select { flag, stream1, stream2 } =
+            unsafe { self.get_unchecked_mut() };
+        let stream1 = unsafe { Pin::new_unchecked(stream1) };
+        let stream2 = unsafe { Pin::new_unchecked(stream2) };
+
+        if !*flag {
+            poll_inner(flag, stream1, stream2, cx)
         } else {
-            poll_inner(this.flag, this.stream2, this.stream1, cx)
+            poll_inner(flag, stream2, stream1, cx)
         }
     }
 }

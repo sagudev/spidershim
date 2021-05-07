@@ -1,12 +1,14 @@
+#[macro_use]
+extern crate futures;
+
+use futures::{
+    executor::block_on,
+    future::{self, FutureExt},
+    task::Poll,
+};
+
 #[test]
 fn ready() {
-    use futures::{
-        executor::block_on,
-        future,
-        task::Poll,
-        ready,
-    };
-
     block_on(future::poll_fn(|_| {
         ready!(Poll::Ready(()),);
         Poll::Ready(())
@@ -15,12 +17,6 @@ fn ready() {
 
 #[test]
 fn poll() {
-    use futures::{
-        executor::block_on,
-        future::FutureExt,
-        poll,
-    };
-
     block_on(async {
         let _ = poll!(async {}.boxed(),);
     })
@@ -28,11 +24,6 @@ fn poll() {
 
 #[test]
 fn join() {
-    use futures::{
-        executor::block_on,
-        join
-    };
-
     block_on(async {
         let future1 = async { 1 };
         let future2 = async { 2 };
@@ -42,12 +33,6 @@ fn join() {
 
 #[test]
 fn try_join() {
-    use futures::{
-        executor::block_on,
-        future::FutureExt,
-        try_join,
-    };
-
     block_on(async {
         let future1 = async { 1 }.never_error();
         let future2 = async { 2 }.never_error();

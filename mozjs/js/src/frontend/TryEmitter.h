@@ -7,7 +7,7 @@
 #ifndef frontend_TryEmitter_h
 #define frontend_TryEmitter_h
 
-#include "mozilla/Attributes.h"  // MOZ_STACK_CLASS
+#include "mozilla/Attributes.h"  // MOZ_STACK_CLASS, MOZ_MUST_USE
 #include "mozilla/Maybe.h"       // mozilla::Maybe, mozilla::Nothing
 
 #include <stdint.h>  // uint32_t
@@ -193,23 +193,23 @@ class MOZ_STACK_CLASS TryEmitter {
  public:
   TryEmitter(BytecodeEmitter* bce, Kind kind, ControlKind controlKind);
 
-  [[nodiscard]] bool emitTry();
-  [[nodiscard]] bool emitCatch();
+  MOZ_MUST_USE bool emitTry();
+  MOZ_MUST_USE bool emitCatch();
 
   // If `finallyPos` is specified, it's an offset of the finally block's
   // "{" character in the source code text, to improve line:column number in
   // the error reporting.
   // For non-syntactic try-catch-finally, `finallyPos` can be omitted.
-  [[nodiscard]] bool emitFinally(
+  MOZ_MUST_USE bool emitFinally(
       const mozilla::Maybe<uint32_t>& finallyPos = mozilla::Nothing());
 
-  [[nodiscard]] bool emitEnd();
+  MOZ_MUST_USE bool emitEnd();
 
  private:
-  [[nodiscard]] bool emitTryEnd();
-  [[nodiscard]] bool emitCatchEnd();
-  [[nodiscard]] bool emitFinallyEnd();
-  [[nodiscard]] bool instrumentEntryPoint();
+  MOZ_MUST_USE bool emitTryEnd();
+  MOZ_MUST_USE bool emitCatchEnd();
+  MOZ_MUST_USE bool emitFinallyEnd();
+  MOZ_MUST_USE bool instrumentEntryPoint();
 };
 
 } /* namespace frontend */

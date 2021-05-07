@@ -1,4 +1,3 @@
-// |reftest| skip-if(!this.hasOwnProperty('FinalizationRegistry')) async -- FinalizationRegistry is not enabled unconditionally
 // Copyright (C) 2019 Leo Balter. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -26,32 +25,35 @@ info: |
   2. For each FinalizationRegistry finalizationRegistry such that finalizationRegistry.[[Cells]] contains cell, such that cell.[[Target]] is obj,
     a. Set cell.[[Target]] to empty.
     b. Optionally, perform ! HostCleanupFinalizationRegistry(finalizationRegistry).
-features: [cleanupSome, FinalizationRegistry.prototype.cleanupSome, FinalizationRegistry, async-functions, host-gc-required]
+features: [FinalizationRegistry, async-functions, host-gc-required]
 flags: [async, non-deterministic]
-includes: [async-gc.js, compareArray.js]
+includes: [async-gc.js]
 ---*/
 
-let cleanupCallback = 0;
-let holdings = [];
+var cleanupCallback = 0;
+var called = 0;
+
 function cb(holding) {
-  holdings.push(holding);
+  assert.sameValue(holding, 'a');
+  called += 1;
 }
 
-let finalizationRegistry = new FinalizationRegistry(function() {
+var finalizationRegistry = new FinalizationRegistry(function() {
   cleanupCallback += 1;
 });
 
 function emptyCells() {
-  let target = {};
+  var target = {};
   finalizationRegistry.register(target, 'a');
 
-  let prom = asyncGC(target);
+  var prom = asyncGC(target);
   target = null;
 
   return prom;
 }
 
-emptyCells().then(async function() {
+emptyCells()
+  .then(async function() {
   await Promise.resolve(1);
 
   finalizationRegistry.cleanupSome(cb);
@@ -60,7 +62,7 @@ emptyCells().then(async function() {
   // cleanupCallback already ran, then cb won't be called.
   let expectedCalled = cleanupCallback === 1 ? 0 : 1;
   // This asserts the registered object was emptied in the previous GC.
-  assert.sameValue(holdings.length, expectedCalled, 'cleanupSome callback for the first time');
+  assert.sameValue(called, expectedCalled, 'cleanupSome callback for the first time');
 
   // At this point, we can't assert if cleanupCallback was called, because it's
   // optional. Although, we can finally assert it's not gonna be called anymore
@@ -79,7 +81,7 @@ emptyCells().then(async function() {
 
   finalizationRegistry.cleanupSome(cb);
 
-  assert.sameValue(holdings.length, expectedCalled, 'cleanupSome callback is not called anymore, no empty cells');
+  assert.sameValue(called, expectedCalled, 'cleanupSome callback is not called anymore, no empty cells');
   assert.sameValue(cleanupCallback, 0, 'cleanupCallback is not called again #1');
 
   await $262.gc();
@@ -87,12 +89,9 @@ emptyCells().then(async function() {
 
   finalizationRegistry.cleanupSome(cb);
 
-  assert.sameValue(holdings.length, expectedCalled, 'cleanupSome callback is not called again #2');
+  assert.sameValue(called, expectedCalled, 'cleanupSome callback is not called again #2');
   assert.sameValue(cleanupCallback, 0, 'cleanupCallback is not called again #2');
 
-  if (holdings.length) {
-    assert.compareArray(holdings, ['a']);
-  }
-
   await $262.gc();
-}).then($DONE, resolveAsyncGC);
+  })
+  .then($DONE, resolveAsyncGC);

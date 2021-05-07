@@ -13,7 +13,6 @@ info: |
   that may detach the `ArrayBuffer` intended to underlie the fresh instance.
   Verify that a final is-detached check is performed before the new instance is
   returned.
-includes: [detachArrayBuffer.js]
 features: [Reflect.construct]
 ---*/
 
@@ -25,7 +24,7 @@ var byteOffset = { valueOf() { called = true; return 0; } };
 var newTarget = function() {}.bind(null);
 Object.defineProperty(newTarget, "prototype", {
   get() {
-    $DETACHBUFFER(buffer);
+    $262.detachArrayBuffer(buffer);
     return DataView.prototype;
   }
 });

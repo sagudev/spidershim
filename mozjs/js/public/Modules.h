@@ -9,6 +9,8 @@
 #ifndef js_Modules_h
 #define js_Modules_h
 
+#include "mozilla/Utf8.h"  // mozilla::Utf8Unit
+
 #include <stdint.h>  // uint32_t
 
 #include "jstypes.h"  // JS_PUBLIC_API
@@ -26,10 +28,6 @@ namespace JS {
 template <typename UnitT>
 class SourceText;
 }  // namespace JS
-
-namespace mozilla {
-union Utf8Unit;
-}
 
 namespace JS {
 
@@ -83,34 +81,8 @@ GetModuleDynamicImportHook(JSRuntime* rt);
 extern JS_PUBLIC_API void SetModuleDynamicImportHook(
     JSRuntime* rt, ModuleDynamicImportHook func);
 
-/**
- * Passed to FinishDynamicModuleImport to indicate the result of the dynamic
- * import operation.
- */
-enum class DynamicImportStatus { Failed = 0, Ok };
-
-/**
- * This must be called after a dynamic import operation is complete.
- *
- * If |evaluationPromise| is rejected, the rejection reason will be used to
- * complete the user's promise.
- */
 extern JS_PUBLIC_API bool FinishDynamicModuleImport(
-    JSContext* cx, Handle<JSObject*> evaluationPromise,
-    Handle<Value> referencingPrivate, Handle<JSString*> specifier,
-    Handle<JSObject*> promise);
-
-/**
- * This must be called after a dynamic import operation is complete.
- *
- * This is used so that Top Level Await functionality can be turned off
- * entirely. It will be removed in bug#1676612.
- *
- * If |status| is Failed, any pending exception on the context will be used to
- * complete the user's promise.
- */
-extern JS_PUBLIC_API bool FinishDynamicModuleImport_NoTLA(
-    JSContext* cx, DynamicImportStatus status, Handle<Value> referencingPrivate,
+    JSContext* cx, Handle<Value> referencingPrivate,
     Handle<JSString*> specifier, Handle<JSObject*> promise);
 
 /**
@@ -153,32 +125,16 @@ extern JS_PUBLIC_API bool ModuleInstantiate(JSContext* cx,
                                             Handle<JSObject*> moduleRecord);
 
 /*
- * Perform the ModuleEvaluate operation on the given source text module record
- * and returns a bool. A result value is returned in result and is either
- * undefined (and ignored) or a promise (if Top Level Await is enabled).
+ * Perform the ModuleEvaluate operation on the given source text module record.
  *
- * If this module has already been evaluated, it returns the evaluation
- * promise. Otherwise, it transitively evaluates all dependences of this module
- * and then evaluates this module.
+ * This does nothing if this module has already been evaluated. Otherwise, it
+ * transitively evaluates all dependences of this module and then evaluates this
+ * module.
  *
  * ModuleInstantiate must have completed prior to calling this.
  */
 extern JS_PUBLIC_API bool ModuleEvaluate(JSContext* cx,
-                                         Handle<JSObject*> moduleRecord,
-                                         MutableHandleValue rval);
-
-/*
- * If a module evaluation fails, unwrap the resulting evaluation promise
- * and rethrow.
- *
- * This does nothing if this module succeeds in evaluation. Otherwise, it
- * takes the reason for the module throwing, unwraps it and throws it as a
- * regular error rather than as an uncaught promise.
- *
- * ModuleEvaluate must have completed prior to calling this.
- */
-extern JS_PUBLIC_API bool ThrowOnModuleEvaluationFailure(
-    JSContext* cx, Handle<JSObject*> evaluationPromise);
+                                         Handle<JSObject*> moduleRecord);
 
 /*
  * Get a list of the module specifiers used by a source text module

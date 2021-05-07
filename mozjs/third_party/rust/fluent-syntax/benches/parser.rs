@@ -6,8 +6,8 @@ use std::fs;
 use std::io;
 use std::io::Read;
 
-use fluent_syntax::parser::Parser;
-use fluent_syntax::unicode::{unescape_unicode, unescape_unicode_to_string};
+use fluent_syntax::parser::parse;
+use fluent_syntax::unicode::unescape_unicode;
 
 fn read_file(path: &str) -> Result<String, io::Error> {
     let mut f = fs::File::open(path)?;
@@ -36,7 +36,7 @@ fn get_ctxs(tests: &[&'static str]) -> HashMap<&'static str, Vec<String>> {
                 let path = p.to_str().unwrap();
                 read_file(path).unwrap()
             })
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
         ftl_strings.insert(*test, strings);
     }
     return ftl_strings;
@@ -50,11 +50,7 @@ fn parser_bench(c: &mut Criterion) {
         "parse",
         move |b, &&name| {
             let source = &ftl_strings[name];
-            b.iter(|| {
-                Parser::new(source.as_str())
-                    .parse()
-                    .expect("Parsing of the FTL failed.")
-            })
+            b.iter(|| parse(source).expect("Parsing of the FTL failed."))
         },
         tests,
     );
@@ -80,17 +76,8 @@ fn unicode_unescape_bench(c: &mut Criterion) {
     ];
     c.bench_function("unicode", move |b| {
         b.iter(|| {
-            let mut result = String::new();
             for s in strings {
-                unescape_unicode(&mut result, s).unwrap();
-                result.clear();
-            }
-        })
-    });
-    c.bench_function("unicode_to_string", move |b| {
-        b.iter(|| {
-            for s in strings {
-                let _ = unescape_unicode_to_string(s);
+                unescape_unicode(s);
             }
         })
     });
@@ -106,9 +93,7 @@ fn parser_ctx_bench(c: &mut Criterion) {
             let sources = &ftl_strings[name];
             b.iter(|| {
                 for source in sources {
-                    Parser::new(source.as_str())
-                        .parse()
-                        .expect("Parsing of the FTL failed.");
+                    parse(source).expect("Parsing of the FTL failed.");
                 }
             })
         },
@@ -116,10 +101,5 @@ fn parser_ctx_bench(c: &mut Criterion) {
     );
 }
 
-criterion_group!(
-    benches,
-    parser_bench,
-    unicode_unescape_bench,
-    parser_ctx_bench
-);
+criterion_group!(benches, parser_bench, unicode_unescape_bench, parser_ctx_bench);
 criterion_main!(benches);

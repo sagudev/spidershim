@@ -23,7 +23,7 @@ use crate::compilation_info::CompilationInfo;
 
 use ast::source_atom_set::SourceAtomSet;
 use ast::source_slice_list::SourceSliceList;
-use scope::{ScopeBuildError, ScopePassResult};
+use scope::ScopeDataMapAndFunctionMap;
 use stencil::result::EmitResult;
 
 pub fn emit<'alloc>(
@@ -32,33 +32,11 @@ pub fn emit<'alloc>(
     atoms: SourceAtomSet<'alloc>,
     slices: SourceSliceList<'alloc>,
 ) -> Result<EmitResult<'alloc>, EmitError> {
-    let ScopePassResult {
+    let ScopeDataMapAndFunctionMap {
         scope_data_map,
-        function_declarations,
-        function_stencil_indices,
-        function_declaration_properties,
-        scripts,
-        error,
+        function_map,
     } = scope::generate_scope_data(ast);
-
-    // Error case for scope analysis will be removed once all syntax is
-    // supported. Use field instead of Result type here for simplicity.
-    match error {
-        Some(ScopeBuildError::NotImplemented(s)) => {
-            return Err(EmitError::NotImplemented(s));
-        }
-        None => {}
-    }
-
-    let compilation_info = CompilationInfo::new(
-        atoms,
-        slices,
-        scope_data_map,
-        function_declarations,
-        function_stencil_indices,
-        function_declaration_properties,
-        scripts,
-    );
+    let compilation_info = CompilationInfo::new(atoms, slices, scope_data_map, function_map);
     ast_emitter::emit_program(ast, options, compilation_info)
 }
 
@@ -73,24 +51,20 @@ mod tests {
     use bumpalo::Bump;
     use parser::{parse_script, ParseOptions};
     use std::cell::RefCell;
-    use std::convert::TryInto;
     use std::rc::Rc;
     use stencil::opcode::*;
-    use stencil::script::SourceExtent;
 
     fn bytecode(source: &str) -> Vec<u8> {
         let alloc = &Bump::new();
         let parse_options = ParseOptions::new();
         let atoms = Rc::new(RefCell::new(SourceAtomSet::new()));
         let slices = Rc::new(RefCell::new(SourceSliceList::new()));
-        let source_len = source.len();
         let parse_result =
             parse_script(alloc, source, &parse_options, atoms.clone(), slices.clone())
                 .expect("Failed to parse");
         // println!("{:?}", parse_result);
 
-        let extent = SourceExtent::top_level_script(source_len.try_into().unwrap(), 1, 0);
-        let emit_options = EmitOptions::new(extent);
+        let emit_options = EmitOptions::new();
 
         let result = emit(
             alloc.alloc(ast::types::Program::Script(parse_result.unbox())),
@@ -100,12 +74,7 @@ mod tests {
         )
         .expect("Should work!");
 
-        let script_data_index: usize = result.scripts[0]
-            .immutable_script_data
-            .expect("Top level script should have ImmutableScriptData")
-            .into();
-        let script_data = &result.script_data_list[script_data_index];
-        let bytecode = &script_data.bytecode;
+        let bytecode = &result.script.bytecode;
 
         println!("{}", dis(&bytecode));
         bytecode.to_vec()

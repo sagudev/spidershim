@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) -- requires shell-options
+// |reftest| skip -- class-methods-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/grammar-privatemeth-duplicate-meth-nestedclassmeth.case
 // - src/class-elements/syntax/valid/cls-expr-elements-valid-syntax.template

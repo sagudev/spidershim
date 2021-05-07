@@ -9,19 +9,19 @@
 #include "builtin/streams/ReadableStreamReader-inl.h"
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT{,_IF}
+#include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
-#include "jsfriendapi.h"  // JS_ReportErrorNumberASCII
+#include "jsfriendapi.h"  // JS_ReportErrorNumberASCII, js::GetErrorMessage
 
 #include "builtin/Stream.h"  // js::ReadableStreamController, js::ReadableStreamControllerPullSteps
 #include "builtin/streams/ReadableStream.h"            // js::ReadableStream
 #include "builtin/streams/ReadableStreamController.h"  // js::ReadableStreamController
 #include "builtin/streams/ReadableStreamInternals.h"  // js::ReadableStream{Cancel,CreateReadResult}
-#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/RootingAPI.h"            // JS::Handle, JS::Rooted
-#include "js/Value.h"                 // JS::Value, JS::UndefinedHandleValue
-#include "vm/Interpreter.h"           // js::GetAndClearException
-#include "vm/JSContext.h"             // JSContext
-#include "vm/PlainObject.h"           // js::PlainObject
+#include "js/RootingAPI.h"                            // JS::Handle, JS::Rooted
+#include "js/Value.h"        // JS::Value, JS::UndefinedHandleValue
+#include "vm/Interpreter.h"  // js::GetAndClearException
+#include "vm/JSContext.h"    // JSContext
+#include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseResolvedWithUndefined
 #include "vm/Runtime.h"        // JSRuntime
 
@@ -49,7 +49,7 @@ using js::UnwrapStreamFromReader;
 /**
  * Streams spec, 3.8.3. ReadableStreamReaderGenericCancel ( reader, reason )
  */
-[[nodiscard]] JSObject* js::ReadableStreamReaderGenericCancel(
+MOZ_MUST_USE JSObject* js::ReadableStreamReaderGenericCancel(
     JSContext* cx, Handle<ReadableStreamReader*> unwrappedReader,
     Handle<Value> reason) {
   // Step 1: Let stream be reader.[[ownerReadableStream]].
@@ -68,7 +68,7 @@ using js::UnwrapStreamFromReader;
  * Streams spec, 3.8.4.
  *      ReadableStreamReaderGenericInitialize ( reader, stream )
  */
-[[nodiscard]] bool js::ReadableStreamReaderGenericInitialize(
+MOZ_MUST_USE bool js::ReadableStreamReaderGenericInitialize(
     JSContext* cx, Handle<ReadableStreamReader*> reader,
     Handle<ReadableStream*> unwrappedStream, ForAuthorCodeBool forAuthorCode) {
   cx->check(reader);
@@ -149,7 +149,7 @@ using js::UnwrapStreamFromReader;
 /**
  * Streams spec, 3.8.5. ReadableStreamReaderGenericRelease ( reader )
  */
-[[nodiscard]] bool js::ReadableStreamReaderGenericRelease(
+MOZ_MUST_USE bool js::ReadableStreamReaderGenericRelease(
     JSContext* cx, Handle<ReadableStreamReader*> unwrappedReader) {
   // Step 1: Assert: reader.[[ownerReadableStream]] is not undefined.
   Rooted<ReadableStream*> unwrappedStream(
@@ -227,7 +227,7 @@ using js::UnwrapStreamFromReader;
  * Streams spec, 3.8.7.
  *      ReadableStreamDefaultReaderRead ( reader [, forAuthorCode ] )
  */
-[[nodiscard]] PromiseObject* js::ReadableStreamDefaultReaderRead(
+MOZ_MUST_USE PromiseObject* js::ReadableStreamDefaultReaderRead(
     JSContext* cx, Handle<ReadableStreamDefaultReader*> unwrappedReader) {
   // Step 1: If forAuthorCode was not passed, set it to false (implicit).
 

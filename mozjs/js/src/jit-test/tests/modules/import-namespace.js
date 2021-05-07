@@ -1,10 +1,10 @@
-// |jit-test| --enable-top-level-await;
 // Test importing module namespaces
 
 "use strict";
 
 load(libdir + "asserts.js");
 load(libdir + "iteration.js");
+load(libdir + "dummyModuleResolveHook.js");
 
 function parseAndEvaluate(source) {
     let m = parseModule(source);
@@ -28,17 +28,17 @@ function testEqualArrays(actual, expected) {
     }
 }
 
-let a = registerModule('a', parseModule(
+let a = moduleRepo['a'] = parseModule(
     `// Reflection methods should return these exports alphabetically sorted.
      export var b = 2;
      export var a = 1;`
-));
+);
 
-let b = registerModule('b', parseModule(
+let b = moduleRepo['b'] = parseModule(
     `import * as ns from 'a';
      export { ns };
      export var x = ns.a + ns.b;`
-));
+);
 
 b.declarationInstantiation();
 b.evaluation();
@@ -85,30 +85,22 @@ testEqualArrays(Object.getOwnPropertyNames(ns), ["a", "b"]);
 testEqualArrays(Object.getOwnPropertySymbols(ns), [Symbol.toStringTag]);
 
 // Test cyclic namespace import and access in module evaluation.
-let c = registerModule('c',
-    parseModule("export let c = 1; import * as ns from 'd'; let d = ns.d;"));
-let d = registerModule('d',
-    parseModule("export let d = 2; import * as ns from 'c'; let c = ns.c;"));
+let c = moduleRepo['c'] =
+    parseModule("export let c = 1; import * as ns from 'd'; let d = ns.d;");
+let d = moduleRepo['d'] =
+    parseModule("export let d = 2; import * as ns from 'c'; let c = ns.c;");
 c.declarationInstantiation();
 d.declarationInstantiation();
-c.evaluation()
-  .then(r => {
-    // We expect the evaluation to throw, so we should not reach this.
-    assertEq(false, true)
-  })
-  .catch(e => {
-   assertEq(e instanceof ReferenceError, true)
-  });
+assertThrowsInstanceOf(() => c.evaluation(), ReferenceError);
 
 // Test cyclic namespace import.
-let e = registerModule('e',
-    parseModule("export let e = 1; import * as ns from 'f'; export function f() { return ns.f }"));
-let f = registerModule('f',
-    parseModule("export let f = 2; import * as ns from 'e'; export function e() { return ns.e }"));
+let e = moduleRepo['e'] =
+    parseModule("export let e = 1; import * as ns from 'f'; export function f() { return ns.f }");
+let f = moduleRepo['f'] =
+    parseModule("export let f = 2; import * as ns from 'e'; export function e() { return ns.e }");
 e.declarationInstantiation();
 f.declarationInstantiation();
 e.evaluation();
 f.evaluation();
 assertEq(e.namespace.f(), 2);
 assertEq(f.namespace.e(), 1);
-drainJobQueue();

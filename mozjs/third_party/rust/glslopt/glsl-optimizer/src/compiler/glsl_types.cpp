@@ -462,16 +462,6 @@ const glsl_type *glsl_type::get_bare_type() const
    unreachable("Invalid base type");
 }
 
-const glsl_type *glsl_type::get_float16_type() const
-{
-   assert(this->base_type == GLSL_TYPE_FLOAT);
-
-   return get_instance(GLSL_TYPE_FLOAT16,
-                       this->vector_elements,
-                       this->matrix_columns,
-                       this->explicit_stride,
-                       this->interface_row_major);
-}
 
 static void
 hash_free_type_function(struct hash_entry *entry)
@@ -673,11 +663,9 @@ glsl_type::get_instance(unsigned base_type, unsigned rows, unsigned columns,
       assert(((glsl_type *) entry->data)->matrix_columns == columns);
       assert(((glsl_type *) entry->data)->explicit_stride == explicit_stride);
 
-      const glsl_type *t = (const glsl_type *) entry->data;
-
       mtx_unlock(&glsl_type::hash_mutex);
 
-      return t;
+      return (const glsl_type *) entry->data;
    }
 
    assert(!row_major);
@@ -1036,11 +1024,9 @@ glsl_type::get_array_instance(const glsl_type *base,
    assert(((glsl_type *) entry->data)->length == array_size);
    assert(((glsl_type *) entry->data)->fields.array == base);
 
-   glsl_type *t = (glsl_type *) entry->data;
-
    mtx_unlock(&glsl_type::hash_mutex);
 
-   return t;
+   return (glsl_type *) entry->data;
 }
 
 bool
@@ -1239,11 +1225,9 @@ glsl_type::get_struct_instance(const glsl_struct_field *fields,
    assert(strcmp(((glsl_type *) entry->data)->name, name) == 0);
    assert(((glsl_type *) entry->data)->packed == packed);
 
-   glsl_type *t = (glsl_type *) entry->data;
-
    mtx_unlock(&glsl_type::hash_mutex);
 
-   return t;
+   return (glsl_type *) entry->data;
 }
 
 
@@ -1277,11 +1261,9 @@ glsl_type::get_interface_instance(const glsl_struct_field *fields,
    assert(((glsl_type *) entry->data)->length == num_fields);
    assert(strcmp(((glsl_type *) entry->data)->name, block_name) == 0);
 
-   glsl_type *t = (glsl_type *) entry->data;
-
    mtx_unlock(&glsl_type::hash_mutex);
 
-   return t;
+   return (glsl_type *) entry->data;
 }
 
 const glsl_type *
@@ -1308,11 +1290,9 @@ glsl_type::get_subroutine_instance(const char *subroutine_name)
    assert(((glsl_type *) entry->data)->base_type == GLSL_TYPE_SUBROUTINE);
    assert(strcmp(((glsl_type *) entry->data)->name, subroutine_name) == 0);
 
-   glsl_type *t = (glsl_type *) entry->data;
-
    mtx_unlock(&glsl_type::hash_mutex);
 
-   return t;
+   return (glsl_type *) entry->data;
 }
 
 
@@ -2592,8 +2572,29 @@ glsl_type::count_dword_slots(bool is_bindless) const
 int
 glsl_type::coordinate_components() const
 {
-   enum glsl_sampler_dim dim = (enum glsl_sampler_dim)sampler_dimensionality;
-   int size = glsl_get_sampler_dim_coordinate_components(dim);
+   int size;
+
+   switch (sampler_dimensionality) {
+   case GLSL_SAMPLER_DIM_1D:
+   case GLSL_SAMPLER_DIM_BUF:
+      size = 1;
+      break;
+   case GLSL_SAMPLER_DIM_2D:
+   case GLSL_SAMPLER_DIM_RECT:
+   case GLSL_SAMPLER_DIM_MS:
+   case GLSL_SAMPLER_DIM_EXTERNAL:
+   case GLSL_SAMPLER_DIM_SUBPASS:
+      size = 2;
+      break;
+   case GLSL_SAMPLER_DIM_3D:
+   case GLSL_SAMPLER_DIM_CUBE:
+      size = 3;
+      break;
+   default:
+      assert(!"Should not get here.");
+      size = 1;
+      break;
+   }
 
    /* Array textures need an additional component for the array index, except
     * for cubemap array images that behave like a 2D array of interleaved
@@ -2925,30 +2926,4 @@ glsl_type::cl_size() const
       return size;
    }
    return 1;
-}
-
-extern "C" {
-
-int
-glsl_get_sampler_dim_coordinate_components(enum glsl_sampler_dim dim)
-{
-   switch (dim) {
-   case GLSL_SAMPLER_DIM_1D:
-   case GLSL_SAMPLER_DIM_BUF:
-      return 1;
-   case GLSL_SAMPLER_DIM_2D:
-   case GLSL_SAMPLER_DIM_RECT:
-   case GLSL_SAMPLER_DIM_MS:
-   case GLSL_SAMPLER_DIM_EXTERNAL:
-   case GLSL_SAMPLER_DIM_SUBPASS:
-   case GLSL_SAMPLER_DIM_SUBPASS_MS:
-      return 2;
-   case GLSL_SAMPLER_DIM_3D:
-   case GLSL_SAMPLER_DIM_CUBE:
-      return 3;
-   default:
-      unreachable("Unknown sampler dim");
-   }
-}
-
 }

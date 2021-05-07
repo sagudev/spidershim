@@ -5,8 +5,7 @@ use core::fmt;
 use core::pin::Pin;
 use futures_core::future::{Future, FusedFuture};
 use futures_core::task::{Context, Poll};
-use pin_project_lite::pin_project;
-
+use pin_utils::unsafe_pinned;
 use super::assert_future;
 
 macro_rules! generate {
@@ -14,12 +13,10 @@ macro_rules! generate {
         $(#[$doc:meta])*
         ($Join:ident, <$($Fut:ident),*>),
     )*) => ($(
-        pin_project! {
-            $(#[$doc])*
-            #[must_use = "futures do nothing unless you `.await` or poll them"]
-            pub struct $Join<$($Fut: Future),*> {
-                $(#[pin] $Fut: MaybeDone<$Fut>,)*
-            }
+        $(#[$doc])*
+        #[must_use = "futures do nothing unless you `.await` or poll them"]
+        pub struct $Join<$($Fut: Future),*> {
+            $($Fut: MaybeDone<$Fut>,)*
         }
 
         impl<$($Fut),*> fmt::Debug for $Join<$($Fut),*>
@@ -37,27 +34,29 @@ macro_rules! generate {
         }
 
         impl<$($Fut: Future),*> $Join<$($Fut),*> {
-            fn new($($Fut: $Fut),*) -> Self {
-                Self {
+            fn new($($Fut: $Fut),*) -> $Join<$($Fut),*> {
+                $Join {
                     $($Fut: maybe_done($Fut)),*
                 }
             }
+            $(
+                unsafe_pinned!($Fut: MaybeDone<$Fut>);
+            )*
         }
 
         impl<$($Fut: Future),*> Future for $Join<$($Fut),*> {
             type Output = ($($Fut::Output),*);
 
             fn poll(
-                self: Pin<&mut Self>, cx: &mut Context<'_>
+                mut self: Pin<&mut Self>, cx: &mut Context<'_>
             ) -> Poll<Self::Output> {
                 let mut all_done = true;
-                let mut futures = self.project();
                 $(
-                    all_done &= futures.$Fut.as_mut().poll(cx).is_ready();
+                    all_done &= self.as_mut().$Fut().poll(cx).is_ready();
                 )*
 
                 if all_done {
-                    Poll::Ready(($(futures.$Fut.take_output().unwrap()), *))
+                    Poll::Ready(($(self.as_mut().$Fut().take_output().unwrap()), *))
                 } else {
                     Poll::Pending
                 }

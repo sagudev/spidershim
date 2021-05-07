@@ -7,26 +7,15 @@
 #ifndef vm_SharedStencil_h
 #define vm_SharedStencil_h
 
-#include "mozilla/Assertions.h"     // MOZ_ASSERT, MOZ_CRASH
-#include "mozilla/Atomics.h"        // mozilla::{Atomic, SequentiallyConsistent}
-#include "mozilla/CheckedInt.h"     // mozilla::CheckedInt
-#include "mozilla/HashFunctions.h"  // mozilla::HahNumber, mozilla::HashBytes
-#include "mozilla/HashTable.h"      // mozilla::HashSet
-#include "mozilla/MemoryReporting.h"  // mozilla::MallocSizeOf
-#include "mozilla/RefPtr.h"           // RefPtr
-#include "mozilla/Span.h"             // mozilla::Span
+#include "mozilla/Span.h"  // mozilla::Span
 
 #include <stddef.h>  // size_t
-#include <stdint.h>  // uint8_t, uint16_t, uint32_t
+#include <stdint.h>  // uint32_t
 
 #include "frontend/SourceNotes.h"  // js::SrcNote
-#include "frontend/TypedIndex.h"   // js::frontend::TypedIndex
-
-#include "js/AllocPolicy.h"      // js::SystemAllocPolicy
-#include "js/TypeDecls.h"        // JSContext,jsbytecode
-#include "js/UniquePtr.h"        // js::UniquePtr
-#include "util/EnumFlags.h"      // js::EnumFlags
-#include "util/TrailingArray.h"  // js::TrailingArray
+#include "js/TypeDecls.h"          // JSContext,jsbytecode
+#include "js/UniquePtr.h"          // js::UniquePtr
+#include "util/TrailingArray.h"    // js::TrailingArray
 #include "vm/StencilEnums.h"  // js::{TryNoteKind,ImmutableScriptFlagsEnum,MutableScriptFlagsEnum}
 
 //
@@ -34,27 +23,6 @@
 //
 
 namespace js {
-
-namespace frontend {
-class StencilXDR;
-}  // namespace frontend
-
-// Index into gcthings array.
-class GCThingIndexType;
-class GCThingIndex : public frontend::TypedIndex<GCThingIndexType> {
-  // Delegate constructors;
-  using Base = frontend::TypedIndex<GCThingIndexType>;
-  using Base::Base;
-
- public:
-  static constexpr GCThingIndex outermostScopeIndex() {
-    return GCThingIndex(0);
-  }
-
-  static constexpr GCThingIndex invalid() { return GCThingIndex(UINT32_MAX); }
-
-  GCThingIndex next() const { return GCThingIndex(index + 1); }
-};
 
 /*
  * Exception handling record.
@@ -104,14 +72,14 @@ struct TryNote {
 //
 struct ScopeNote {
   // Sentinel index for no Scope.
-  static constexpr GCThingIndex NoScopeIndex = GCThingIndex::invalid();
+  static const uint32_t NoScopeIndex = UINT32_MAX;
 
   // Sentinel index for no ScopeNote.
   static const uint32_t NoScopeNoteIndex = UINT32_MAX;
 
   // Index of the js::Scope in the script's gcthings array, or NoScopeIndex if
   // there is no block scope in this range.
-  GCThingIndex index;
+  uint32_t index = 0;
 
   // Bytecode offset at which this scope starts relative to script->code().
   uint32_t start = 0;
@@ -119,125 +87,59 @@ struct ScopeNote {
   // Length of bytecode span this scope covers.
   uint32_t length = 0;
 
-  // Index of parent block scope in notes, or NoScopeNoteIndex.
+  // Index of parent block scope in notes, or NoScopeNote.
   uint32_t parent = 0;
 };
 
-// Range of characters in scriptSource which contains a script's source,
-// that is, the range used by the Parser to produce a script.
-//
-// For most functions the fields point to the following locations.
-//
-//   function * foo(a, b) { return a + b; }
-//   ^             ^                       ^
-//   |             |                       |
-//   |             sourceStart     sourceEnd
-//   |                                     |
-//   toStringStart               toStringEnd
-//
-// For the special case of class constructors, the spec requires us to use an
-// alternate definition of toStringStart / toStringEnd.
-//
-//   class C { constructor() { this.field = 42; } }
-//   ^                    ^                      ^ ^
-//   |                    |                      | |
-//   |                    sourceStart    sourceEnd |
-//   |                                             |
-//   toStringStart                       toStringEnd
-//
-// Implicit class constructors use the following definitions.
-//
-//   class C { someMethod() { } }
-//   ^                           ^
-//   |                           |
-//   sourceStart         sourceEnd
-//   |                           |
-//   toStringStart     toStringEnd
-//
-// Field initializer lambdas are internal details of the engine, but we still
-// provide a sensible definition of these values.
-//
-//   class C { static field = 1 }
-//   class C {        field = 1 }
-//   class C {        somefield }
-//                    ^        ^
-//                    |        |
-//          sourceStart        sourceEnd
-//
-// The non-static private class methods (including getters and setters) ALSO
-// create a hidden initializer lambda in addition to the method itself. These
-// lambdas are not exposed directly to script.
-//
-//   class C { #field() {       } }
-//   class C { get #field() {   } }
-//   class C { async #field() { } }
-//   class C { * #field() {     } }
-//             ^                 ^
-//             |                 |
-//             sourceStart       sourceEnd
-//
-// NOTE: These are counted in Code Units from the start of the script source.
-//
-// Also included in the SourceExtent is the line and column numbers of the
-// sourceStart position. Compilation options may specify the initial line and
-// column number.
-//
-// NOTE: Column number may saturate and must not be used as unique identifier.
-struct SourceExtent {
-  SourceExtent() = default;
+// These are wrapper types around the flag enums to provide a more appropriate
+// abstraction of the bitfields.
+template <typename EnumType>
+class ScriptFlagBase {
+ protected:
+  // Stored as a uint32_t to make access more predictable from
+  // JIT code.
+  uint32_t flags_ = 0;
 
-  SourceExtent(uint32_t sourceStart, uint32_t sourceEnd, uint32_t toStringStart,
-               uint32_t toStringEnd, uint32_t lineno, uint32_t column)
-      : sourceStart(sourceStart),
-        sourceEnd(sourceEnd),
-        toStringStart(toStringStart),
-        toStringEnd(toStringEnd),
-        lineno(lineno),
-        column(column) {}
-
-  static SourceExtent makeGlobalExtent(uint32_t len) {
-    return SourceExtent(0, len, 0, len, 1, 0);
-  }
-
-  static SourceExtent makeGlobalExtent(uint32_t len, uint32_t lineno,
-                                       uint32_t column) {
-    return SourceExtent(0, len, 0, len, lineno, column);
-  }
-
-  uint32_t sourceStart = 0;
-  uint32_t sourceEnd = 0;
-  uint32_t toStringStart = 0;
-  uint32_t toStringEnd = 0;
-
-  // Line and column of |sourceStart_| position.
-  uint32_t lineno = 1;  // 1-indexed.
-  uint32_t column = 0;  // Count of Code Points
-};
-
-class ImmutableScriptFlags : public EnumFlags<ImmutableScriptFlagsEnum> {
  public:
-  ImmutableScriptFlags() = default;
+  ScriptFlagBase() = default;
+  explicit ScriptFlagBase(uint32_t rawFlags) : flags_(rawFlags) {}
 
-  explicit ImmutableScriptFlags(FieldType rawFlags) : EnumFlags(rawFlags) {}
-
-  operator FieldType() const { return flags_; }
-};
-
-class MutableScriptFlags : public EnumFlags<MutableScriptFlagsEnum> {
- public:
-  MutableScriptFlags() = default;
-
-  MutableScriptFlags& operator&=(const FieldType rhs) {
-    flags_ &= rhs;
-    return *this;
+  MOZ_MUST_USE bool hasFlag(EnumType flag) const {
+    return flags_ & static_cast<uint32_t>(flag);
+  }
+  void setFlag(EnumType flag) { flags_ |= static_cast<uint32_t>(flag); }
+  void clearFlag(EnumType flag) { flags_ &= ~static_cast<uint32_t>(flag); }
+  void setFlag(EnumType flag, bool b) {
+    if (b) {
+      setFlag(flag);
+    } else {
+      clearFlag(flag);
+    }
   }
 
-  MutableScriptFlags& operator|=(const FieldType rhs) {
+  operator uint32_t() const { return flags_; }
+
+  ScriptFlagBase& operator|=(const uint32_t rhs) {
     flags_ |= rhs;
     return *this;
   }
+};
 
-  operator FieldType() const { return flags_; }
+class ImmutableScriptFlags : public ScriptFlagBase<ImmutableScriptFlagsEnum> {
+ public:
+  using ScriptFlagBase<ImmutableScriptFlagsEnum>::ScriptFlagBase;
+
+  void operator=(uint32_t flag) { flags_ = flag; }
+};
+
+class MutableScriptFlags : public ScriptFlagBase<MutableScriptFlagsEnum> {
+ public:
+  MutableScriptFlags() = default;
+
+  MutableScriptFlags& operator&=(const uint32_t rhs) {
+    flags_ &= rhs;
+    return *this;
+  }
 };
 
 // [SMDOC] JSScript data layout (immutable)
@@ -313,7 +215,7 @@ class alignas(uint32_t) ImmutableScriptData final : public TrailingArray {
   uint32_t nslots = 0;
 
   // Index into the gcthings array of the body scope.
-  GCThingIndex bodyScopeIndex;
+  uint32_t bodyScopeIndex = 0;
 
   // Number of IC entries to allocate in JitScript for Baseline ICs.
   uint32_t numICEntries = 0;
@@ -321,9 +223,11 @@ class alignas(uint32_t) ImmutableScriptData final : public TrailingArray {
   // ES6 function length.
   uint16_t funLength = 0;
 
+  // Number of type sets used in this script for dynamic type monitoring.
+  uint16_t numBytecodeTypeSets = 0;
+
   // NOTE: The raw bytes of this structure are used for hashing so use explicit
   // padding values as needed for predicatable results across compilers.
-  uint16_t padding = 0;
 
  private:
   struct Flags {
@@ -394,9 +298,9 @@ class alignas(uint32_t) ImmutableScriptData final : public TrailingArray {
  public:
   static js::UniquePtr<ImmutableScriptData> new_(
       JSContext* cx, uint32_t mainOffset, uint32_t nfixed, uint32_t nslots,
-      GCThingIndex bodyScopeIndex, uint32_t numICEntries, bool isFunction,
-      uint16_t funLength, mozilla::Span<const jsbytecode> code,
-      mozilla::Span<const SrcNote> notes,
+      uint32_t bodyScopeIndex, uint32_t numICEntries,
+      uint32_t numBytecodeTypeSets, bool isFunction, uint16_t funLength,
+      mozilla::Span<const jsbytecode> code, mozilla::Span<const SrcNote> notes,
       mozilla::Span<const uint32_t> resumeOffsets,
       mozilla::Span<const ScopeNote> scopeNotes,
       mozilla::Span<const TryNote> tryNotes);
@@ -405,22 +309,6 @@ class alignas(uint32_t) ImmutableScriptData final : public TrailingArray {
       JSContext* cx, uint32_t codeLength, uint32_t noteLength,
       uint32_t numResumeOffsets, uint32_t numScopeNotes, uint32_t numTryNotes);
 
-  static js::UniquePtr<ImmutableScriptData> new_(JSContext* cx,
-                                                 uint32_t totalSize);
-
-#ifdef DEBUG
-  // Validate the content, after XDR decoding.
-  void validate(uint32_t totalSize);
-#endif
-
- private:
-  static mozilla::CheckedInt<uint32_t> sizeFor(uint32_t codeLength,
-                                               uint32_t noteLength,
-                                               uint32_t numResumeOffsets,
-                                               uint32_t numScopeNotes,
-                                               uint32_t numTryNotes);
-
- public:
   // The code() and note() arrays together maintain an target alignment by
   // padding the source notes with null. This allows arrays with stricter
   // alignment requirements to follow them.
@@ -441,7 +329,7 @@ class alignas(uint32_t) ImmutableScriptData final : public TrailingArray {
   // Span over all raw bytes in this struct and its trailing arrays.
   mozilla::Span<const uint8_t> immutableData() const {
     size_t allocSize = endOffset();
-    return mozilla::Span{reinterpret_cast<const uint8_t*>(this), allocSize};
+    return mozilla::MakeSpan(reinterpret_cast<const uint8_t*>(this), allocSize);
   }
 
  private:
@@ -462,16 +350,16 @@ class alignas(uint32_t) ImmutableScriptData final : public TrailingArray {
   mozilla::Span<SrcNote> notesSpan() { return {notes(), noteLength()}; }
 
   mozilla::Span<uint32_t> resumeOffsets() {
-    return mozilla::Span{offsetToPointer<uint32_t>(resumeOffsetsOffset()),
-                         offsetToPointer<uint32_t>(scopeNotesOffset())};
+    return mozilla::MakeSpan(offsetToPointer<uint32_t>(resumeOffsetsOffset()),
+                             offsetToPointer<uint32_t>(scopeNotesOffset()));
   }
   mozilla::Span<ScopeNote> scopeNotes() {
-    return mozilla::Span{offsetToPointer<ScopeNote>(scopeNotesOffset()),
-                         offsetToPointer<ScopeNote>(tryNotesOffset())};
+    return mozilla::MakeSpan(offsetToPointer<ScopeNote>(scopeNotesOffset()),
+                             offsetToPointer<ScopeNote>(tryNotesOffset()));
   }
   mozilla::Span<TryNote> tryNotes() {
-    return mozilla::Span{offsetToPointer<TryNote>(tryNotesOffset()),
-                         offsetToPointer<TryNote>(endOffset())};
+    return mozilla::MakeSpan(offsetToPointer<TryNote>(tryNotesOffset()),
+                             offsetToPointer<TryNote>(endOffset()));
   }
 
   // Expose offsets to the JITs.
@@ -498,127 +386,6 @@ class alignas(uint32_t) ImmutableScriptData final : public TrailingArray {
   // ImmutableScriptData has trailing data so isn't copyable or movable.
   ImmutableScriptData(const ImmutableScriptData&) = delete;
   ImmutableScriptData& operator=(const ImmutableScriptData&) = delete;
-};
-
-// Wrapper type for ImmutableScriptData to allow sharing across a JSRuntime.
-//
-// Note: This is distinct from ImmutableScriptData because it contains a mutable
-//       ref-count while the ImmutableScriptData may live in read-only memory.
-//
-// Note: This is *not* directly inlined into the SharedImmutableScriptDataTable
-//       because scripts point directly to object and table resizing moves
-//       entries. This allows for fast finalization by decrementing the
-//       ref-count directly without doing a hash-table lookup.
-class SharedImmutableScriptData {
-  // This class is reference counted as follows: each pointer from a JSScript
-  // counts as one reference plus there may be one reference from the shared
-  // script data table.
-  mozilla::Atomic<uint32_t, mozilla::SequentiallyConsistent> refCount_ = {};
-
-  js::UniquePtr<ImmutableScriptData> isd_ = nullptr;
-
-  // End of fields.
-
-  friend class ::JSScript;
-  friend class js::frontend::StencilXDR;
-
- public:
-  SharedImmutableScriptData() = default;
-
-  // Hash over the contents of SharedImmutableScriptData and its
-  // ImmutableScriptData.
-  struct Hasher;
-
-  uint32_t refCount() const { return refCount_; }
-  void AddRef() { refCount_++; }
-  void Release() {
-    MOZ_ASSERT(refCount_ != 0);
-    uint32_t remain = --refCount_;
-    if (remain == 0) {
-      isd_ = nullptr;
-      js_free(this);
-    }
-  }
-
-  static constexpr size_t offsetOfISD() {
-    return offsetof(SharedImmutableScriptData, isd_);
-  }
-
- private:
-  static SharedImmutableScriptData* create(JSContext* cx);
-
- public:
-  static SharedImmutableScriptData* createWith(
-      JSContext* cx, js::UniquePtr<ImmutableScriptData>&& isd);
-
-  size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) {
-    return mallocSizeOf(this) + mallocSizeOf(isd_.get());
-  }
-
-  // SharedImmutableScriptData has trailing data so isn't copyable or movable.
-  SharedImmutableScriptData(const SharedImmutableScriptData&) = delete;
-  SharedImmutableScriptData& operator=(const SharedImmutableScriptData&) =
-      delete;
-
-  static bool shareScriptData(JSContext* cx,
-                              RefPtr<SharedImmutableScriptData>& sisd);
-
-  size_t immutableDataLength() const { return isd_->immutableData().Length(); }
-  uint32_t nfixed() const { return isd_->nfixed; }
-};
-
-// Matches SharedImmutableScriptData objects that have the same atoms as well as
-// contain the same bytes in their ImmutableScriptData.
-struct SharedImmutableScriptData::Hasher {
-  using Lookup = RefPtr<SharedImmutableScriptData>;
-
-  static mozilla::HashNumber hash(const Lookup& l) {
-    mozilla::Span<const uint8_t> immutableData = l->isd_->immutableData();
-    return mozilla::HashBytes(immutableData.data(), immutableData.size());
-  }
-
-  static bool match(SharedImmutableScriptData* entry, const Lookup& lookup) {
-    return (entry->isd_->immutableData() == lookup->isd_->immutableData());
-  }
-};
-
-using SharedImmutableScriptDataTable =
-    mozilla::HashSet<SharedImmutableScriptData*,
-                     SharedImmutableScriptData::Hasher, SystemAllocPolicy>;
-
-struct MemberInitializers {
-  static constexpr uint32_t MaxInitializers = INT32_MAX;
-
-#ifdef DEBUG
-  bool valid = false;
-#endif
-
-  // This struct will eventually have a vector of constant values for optimizing
-  // field initializers.
-  uint32_t numMemberInitializers = 0;
-
-  explicit MemberInitializers(uint32_t numMemberInitializers)
-      :
-#ifdef DEBUG
-        valid(true),
-#endif
-        numMemberInitializers(numMemberInitializers) {
-  }
-
-  static MemberInitializers Invalid() { return MemberInitializers(); }
-
-  // Singleton to use for class constructors that do not have to initialize any
-  // fields. This is used when we elide the trivial data but still need a valid
-  // set to stop scope walking.
-  static const MemberInitializers& Empty() {
-    static const MemberInitializers zeroInitializers(0);
-    return zeroInitializers;
-  }
-
-  uint32_t serialize() const { return numMemberInitializers; }
-
- private:
-  MemberInitializers() = default;
 };
 
 }  // namespace js

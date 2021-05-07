@@ -11,7 +11,7 @@
 #ifndef LLVM_FUZZER_BUILTINS_H
 #define LLVM_FUZZER_BUILTINS_H
 
-#include "FuzzerPlatform.h"
+#include "FuzzerDefs.h"
 
 #if !LIBFUZZER_MSVC
 #include <cstdint>

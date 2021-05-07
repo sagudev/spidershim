@@ -13,7 +13,6 @@ use std::{mem, ptr};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_long, c_void};
 use std::slice;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use ringbuf::RingBuffer;
 
 use self::RingBufferConsumer::*;
@@ -125,6 +124,7 @@ impl Drop for Device {
     }
 }
 
+
 enum RingBufferConsumer {
     IntegerRingBufferConsumer(ringbuf::Consumer<i16>),
     FloatRingBufferConsumer(ringbuf::Consumer<f32>)
@@ -206,7 +206,6 @@ impl BufferManager {
             }
         }
     }
-
     fn get_linear_input_data(&mut self, nsamples: usize) -> *const c_void {
         let p: *mut c_void;
         match &mut self.linear_input_buffer {
@@ -222,33 +221,6 @@ impl BufferManager {
         self.pull_input_data(p, nsamples);
 
         return p;
-    }
-
-    pub fn trim(&mut self, final_size: usize) {
-        match &self.linear_input_buffer {
-            LinearInputBuffer::IntegerLinearInputBuffer(b) => {
-                let length = b.len();
-                assert!(final_size <= length);
-                let nframes_to_pop = length - final_size;
-                self.get_linear_input_data(nframes_to_pop);
-            }
-            LinearInputBuffer::FloatLinearInputBuffer(b) => {
-                let length = b.len();
-                assert!(final_size <= length);
-                let nframes_to_pop = length - final_size;
-                self.get_linear_input_data(nframes_to_pop);
-            }
-        }
-    }
-    pub fn available_samples(&mut self) -> usize {
-        match &self.linear_input_buffer {
-            LinearInputBuffer::IntegerLinearInputBuffer(b) => {
-                b.len()
-            }
-            LinearInputBuffer::FloatLinearInputBuffer(b) => {
-                b.len()
-            }
-        }
     }
 }
 
@@ -270,7 +242,6 @@ pub struct PulseStream<'ctx> {
     drain_timer: *mut pa_time_event,
     output_sample_spec: pulse::SampleSpec,
     input_sample_spec: pulse::SampleSpec,
-    output_frame_count: AtomicUsize,
     shutdown: bool,
     volume: f32,
     state: ffi::cubeb_state,
@@ -370,19 +341,7 @@ impl<'ctx> PulseStream<'ctx> {
             if stm.input_stream.is_some() {
                 let nframes = nbytes / stm.output_sample_spec.frame_size();
                 let nsamples_input = nframes * stm.input_sample_spec.channels as usize;
-                let input_buffer_manager = stm.input_buffer_manager.as_mut().unwrap();
-
-                if stm.output_frame_count.fetch_add(nframes, Ordering::SeqCst) == 0 {
-                    let buffered_input_frames = input_buffer_manager.available_samples() / stm.input_sample_spec.channels as usize;
-                    if buffered_input_frames > nframes {
-                        // Trim the buffer to ensure minimal roundtrip latency
-                        let popped_frames = buffered_input_frames - nframes;
-                        input_buffer_manager.trim(nframes * stm.input_sample_spec.channels as usize);
-                        cubeb_log!("Dropping {} frames in input buffer.", popped_frames);
-                    }
-                }
-
-                let p = input_buffer_manager.get_linear_input_data(nsamples_input);
+                let p = stm.input_buffer_manager.as_mut().unwrap().get_linear_input_data(nsamples_input);
                 stm.trigger_user_callback(p, nbytes);
             } else {
                 // Output/playback only operation.
@@ -402,7 +361,6 @@ impl<'ctx> PulseStream<'ctx> {
             drain_timer: ptr::null_mut(),
             output_sample_spec: pulse::SampleSpec::default(),
             input_sample_spec: pulse::SampleSpec::default(),
-            output_frame_count: AtomicUsize::new(0),
             shutdown: false,
             volume: PULSE_NO_GAIN,
             state: ffi::CUBEB_STATE_ERROR,
@@ -636,6 +594,10 @@ impl<'ctx> StreamOps for PulseStream<'ctx> {
         Ok(())
     }
 
+    fn reset_default_device(&mut self) -> Result<()> {
+        Err(not_supported())
+    }
+
     fn position(&mut self) -> Result<u64> {
         let in_thread = self.context.mainloop.in_thread();
 
@@ -681,22 +643,7 @@ impl<'ctx> StreamOps for PulseStream<'ctx> {
     }
 
     fn input_latency(&mut self) -> Result<u32> {
-        match self.input_stream {
-            None => Err(Error::error()),
-            Some(ref stm) => match stm.get_latency() {
-                Ok(StreamLatency::Positive(w_usec)) => {
-                    let latency = (w_usec * pa_usec_t::from(self.input_sample_spec.rate)
-                        / PA_USEC_PER_SEC) as u32;
-                    Ok(latency)
-                }
-                // Input stream can be negative only if it is attached to a
-                // monitor source device
-                Ok(StreamLatency::Negative(_)) => {
-                    return Ok(0);
-                }
-                Err(_) => Err(Error::error()),
-            },
-        }
+        Err(Error::error())
     }
 
     fn set_volume(&mut self, volume: f32) -> Result<()> {
@@ -743,24 +690,6 @@ impl<'ctx> StreamOps for PulseStream<'ctx> {
                 } else {
                     Err(Error::error())
                 }
-            }
-        }
-    }
-
-    fn set_name(&mut self, name: &CStr) -> Result<()> {
-        match self.output_stream {
-            None => Err(Error::error()),
-            Some(ref stm) => {
-                self.context.mainloop.lock();
-                    if let Ok(o) = stm.set_name(
-                        name,
-                        stream_success,
-                        self as *const _ as *mut _
-                    ) {
-                        self.context.operation_wait(stm, &o);
-                    }
-                self.context.mainloop.unlock();
-                Ok(())
             }
         }
     }

@@ -9,8 +9,6 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
-#include "jit/AutoWritableJitCode.h"
-
 using mozilla::DebugOnly;
 
 using namespace js;

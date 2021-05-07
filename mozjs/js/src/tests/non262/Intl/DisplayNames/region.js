@@ -1,4 +1,4 @@
-// |reftest| skip-if(!this.hasOwnProperty('Intl'))
+// |reftest| skip-if(!this.hasOwnProperty('Intl')||(!this.Intl.DisplayNames&&!this.hasOwnProperty('addIntlExtras')))
 
 const tests = {
   "en": {
@@ -63,11 +63,14 @@ const tests = {
 };
 
 for (let [locale, localeTests] of Object.entries(tests)) {
+  let defaultCalendar = new Intl.DateTimeFormat(locale).resolvedOptions().calendar;
+
   for (let [style, styleTests] of Object.entries(localeTests)) {
     let dn = new Intl.DisplayNames(locale, {type: "region", style});
 
     let resolved = dn.resolvedOptions();
     assertEq(resolved.locale, locale);
+    assertEq(resolved.calendar, defaultCalendar);
     assertEq(resolved.style, style);
     assertEq(resolved.type, "region");
     assertEq(resolved.fallback, "code");
@@ -111,23 +114,10 @@ for (let [locale, localeTests] of Object.entries(tests)) {
   assertEq(dn2.of("AA"), "AA");
   assertEq(dn3.of("AA"), undefined);
 
-  // The returned fallback is in canonical case.
-  assertEq(dn1.of("aa"), "AA");
-  assertEq(dn2.of("aa"), "AA");
+  // The returned fallback is in the same case as the input code.
+  assertEq(dn1.of("aa"), "aa");
+  assertEq(dn2.of("aa"), "aa");
   assertEq(dn3.of("aa"), undefined);
-
-  // "998" is canonicalised to "XZ", but "XZ" has no localised names.
-  assertEq(new Intl.Locale("und-998").region, "XZ");
-
-  // Ensure we return the input and not the canonicalised input.
-  assertEq(dn1.of("998"), "998");
-  assertEq(dn2.of("998"), "998");
-  assertEq(dn3.of("998"), undefined);
-
-  // "XZ" should be consistent with "998".
-  assertEq(dn1.of("XZ"), "XZ");
-  assertEq(dn2.of("XZ"), "XZ");
-  assertEq(dn3.of("XZ"), undefined);
 }
 
 // Ensure language tag canonicalisation is performed.

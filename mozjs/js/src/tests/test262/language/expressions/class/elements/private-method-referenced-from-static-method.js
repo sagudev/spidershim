@@ -1,11 +1,11 @@
-// |reftest| shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) -- requires shell-options
+// |reftest| skip -- class-static-methods-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/private-method-referenced-from-static-method.case
 // - src/class-elements/default/cls-expr.template
 /*---
 description: Private method referenced from a static method (field definitions in a class expression)
 esid: prod-FieldDefinition
-features: [class-methods-private, class]
+features: [class-static-methods-private, class]
 flags: [generated]
 info: |
     PrivateFieldGet (P, O)

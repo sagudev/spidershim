@@ -36,17 +36,16 @@ mod ssl;
 mod time;
 
 pub use self::agent::{
-    Agent, AllowZeroRtt, Client, HandshakeState, Record, RecordList, ResumptionToken, SecretAgent,
-    SecretAgentInfo, SecretAgentPreInfo, Server, ZeroRttCheckResult, ZeroRttChecker,
+    Agent, Client, HandshakeState, Record, RecordList, SecretAgent, SecretAgentInfo,
+    SecretAgentPreInfo, Server, ZeroRttCheckResult, ZeroRttChecker,
 };
-pub use self::auth::AuthenticationStatus;
 pub use self::constants::*;
 pub use self::err::{Error, PRErrorCode, Res};
 pub use self::ext::{ExtensionHandler, ExtensionHandlerResult, ExtensionWriterResult};
 pub use self::p11::{random, SymKey};
 pub use self::replay::AntiReplay;
 pub use self::secrets::SecretDirection;
-pub use self::ssl::Opt;
+pub use auth::AuthenticationStatus;
 
 use self::once::OnceResult;
 

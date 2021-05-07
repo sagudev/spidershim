@@ -25,7 +25,7 @@ const i32a = new Int32Array(
 );
 
 $262.agent.start(`
-  $262.agent.receiveBroadcast(function(sab) {
+  $262.agent.receiveBroadcast(function(sab, id) {
     const i32a = new Int32Array(sab);
     Atomics.add(i32a, ${RUNNING}, 1);
 

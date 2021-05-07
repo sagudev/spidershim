@@ -1,11 +1,11 @@
+use futures::channel::oneshot;
+use futures::future::{FutureExt, TryFutureExt};
+use futures_test::future::FutureTestExt;
+use std::sync::mpsc;
+use std::thread;
+
 #[test]
 fn oneshot_send1() {
-    use futures::channel::oneshot;
-    use futures::future::TryFutureExt;
-    use futures_test::future::FutureTestExt;
-    use std::sync::mpsc;
-    use std::thread;
-
     let (tx1, rx1) = oneshot::channel::<i32>();
     let (tx2, rx2) = mpsc::channel();
 
@@ -17,12 +17,6 @@ fn oneshot_send1() {
 
 #[test]
 fn oneshot_send2() {
-    use futures::channel::oneshot;
-    use futures::future::TryFutureExt;
-    use futures_test::future::FutureTestExt;
-    use std::sync::mpsc;
-    use std::thread;
-
     let (tx1, rx1) = oneshot::channel::<i32>();
     let (tx2, rx2) = mpsc::channel();
 
@@ -33,12 +27,6 @@ fn oneshot_send2() {
 
 #[test]
 fn oneshot_send3() {
-    use futures::channel::oneshot;
-    use futures::future::TryFutureExt;
-    use futures_test::future::FutureTestExt;
-    use std::sync::mpsc;
-    use std::thread;
-
     let (tx1, rx1) = oneshot::channel::<i32>();
     let (tx2, rx2) = mpsc::channel();
 
@@ -49,11 +37,6 @@ fn oneshot_send3() {
 
 #[test]
 fn oneshot_drop_tx1() {
-    use futures::channel::oneshot;
-    use futures::future::FutureExt;
-    use futures_test::future::FutureTestExt;
-    use std::sync::mpsc;
-
     let (tx1, rx1) = oneshot::channel::<i32>();
     let (tx2, rx2) = mpsc::channel();
 
@@ -65,12 +48,6 @@ fn oneshot_drop_tx1() {
 
 #[test]
 fn oneshot_drop_tx2() {
-    use futures::channel::oneshot;
-    use futures::future::FutureExt;
-    use futures_test::future::FutureTestExt;
-    use std::sync::mpsc;
-    use std::thread;
-
     let (tx1, rx1) = oneshot::channel::<i32>();
     let (tx2, rx2) = mpsc::channel();
 
@@ -83,8 +60,6 @@ fn oneshot_drop_tx2() {
 
 #[test]
 fn oneshot_drop_rx() {
-    use futures::channel::oneshot;
-
     let (tx, rx) = oneshot::channel::<i32>();
     drop(rx);
     assert_eq!(Err(2), tx.send(2));

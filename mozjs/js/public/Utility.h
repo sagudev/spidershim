@@ -21,7 +21,6 @@
 
 #include "jstypes.h"
 #include "mozmemory.h"
-#include "js/TypeDecls.h"
 
 /* The public JS engine namespace. */
 namespace JS {}
@@ -546,8 +545,7 @@ namespace js {
  * instances of type |T|.  Return false if the calculation overflowed.
  */
 template <typename T>
-[[nodiscard]] inline bool CalculateAllocSize(size_t numElems,
-                                             size_t* bytesOut) {
+MOZ_MUST_USE inline bool CalculateAllocSize(size_t numElems, size_t* bytesOut) {
   *bytesOut = numElems * sizeof(T);
   return (numElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) == 0;
 }
@@ -558,8 +556,8 @@ template <typename T>
  * false if the calculation overflowed.
  */
 template <typename T, typename Extra>
-[[nodiscard]] inline bool CalculateAllocSizeWithExtra(size_t numExtra,
-                                                      size_t* bytesOut) {
+MOZ_MUST_USE inline bool CalculateAllocSizeWithExtra(size_t numExtra,
+                                                     size_t* bytesOut) {
   *bytesOut = sizeof(T) + numExtra * sizeof(Extra);
   return (numExtra & mozilla::tl::MulOverflowMask<sizeof(Extra)>::value) == 0 &&
          *bytesOut >= sizeof(T);
@@ -652,7 +650,6 @@ struct FreePolicy {
 
 typedef mozilla::UniquePtr<char[], JS::FreePolicy> UniqueChars;
 typedef mozilla::UniquePtr<char16_t[], JS::FreePolicy> UniqueTwoByteChars;
-typedef mozilla::UniquePtr<JS::Latin1Char[], JS::FreePolicy> UniqueLatin1Chars;
 
 }  // namespace JS
 

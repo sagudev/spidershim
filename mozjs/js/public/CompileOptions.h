@@ -52,6 +52,7 @@
 #ifndef js_CompileOptions_h
 #define js_CompileOptions_h
 
+#include "mozilla/Attributes.h"       // MOZ_MUST_USE
 #include "mozilla/MemoryReporting.h"  // mozilla::MallocSizeOf
 
 #include <stddef.h>  // size_t
@@ -129,17 +130,6 @@ class JS_PUBLIC_API TransitiveCompileOptions {
   bool allowHTMLComments = true;
   bool hideScriptFromDebugger = false;
   bool nonSyntacticScope = false;
-  bool privateClassFields = false;
-  bool privateClassMethods = false;
-  bool topLevelAwait = false;
-
-  // True if transcoding to XDR should use Stencil instead of JSScripts.
-  bool useStencilXDR = false;
-
-  // True if off-thread parsing should use a parse GlobalObject in order to
-  // directly allocate to the GC from a helper thread. If false, transfer the
-  // CompilationStencil back to main thread before allocating GC objects.
-  bool useOffThreadParseGlobal = true;
 
   /**
    * |introductionType| is a statically allocated C string: one of "eval",
@@ -266,24 +256,6 @@ class JS_PUBLIC_API OwningCompileOptions final : public ReadOnlyCompileOptions {
   bool copy(JSContext* cx, const ReadOnlyCompileOptions& rhs);
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
-
-  OwningCompileOptions& setIsRunOnce(bool once) {
-    isRunOnce = once;
-    return *this;
-  }
-
-  OwningCompileOptions& setForceStrictMode() {
-    forceStrictMode_ = true;
-    return *this;
-  }
-
-  OwningCompileOptions& setModule() {
-    // ES6 10.2.1 Module code is always strict mode code.
-    setForceStrictMode();
-    setIsRunOnce(true);
-    allowHTMLComments = false;
-    return *this;
-  }
 
  private:
   void release();
@@ -452,14 +424,6 @@ class MOZ_STACK_CLASS JS_PUBLIC_API CompileOptions final
 
   CompileOptions& setForceStrictMode() {
     forceStrictMode_ = true;
-    return *this;
-  }
-
-  CompileOptions& setModule() {
-    // ES6 10.2.1 Module code is always strict mode code.
-    setForceStrictMode();
-    setIsRunOnce(true);
-    allowHTMLComments = false;
     return *this;
   }
 

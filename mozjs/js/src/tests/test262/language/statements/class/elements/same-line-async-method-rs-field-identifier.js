@@ -100,4 +100,4 @@ c.m().then(function(v) {
   }
 
   return Promise.resolve(assertions());
-}).then($DONE, $DONE);
+}, $DONE).then($DONE, $DONE);

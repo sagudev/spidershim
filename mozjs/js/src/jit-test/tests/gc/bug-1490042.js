@@ -11,9 +11,9 @@ for (let i = 0; i < count; i++) {
     a[i] = new c[i];
 }
 
-// Start an incremental GC and run until we're about to sweep objects.
+// Start an incremental GC and run until we're about to sweep type information.
 assertEq(gcstate(), "NotActive");
-gczeal(21);
+gczeal(20);
 startgc(1);
 
 // Run incremental slices with simulated OOM set up to provoke OOM when sweeping

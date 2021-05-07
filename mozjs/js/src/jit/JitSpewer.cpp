@@ -162,7 +162,8 @@ bool IonSpewer::init() {
   if (usePid && *usePid != 0) {
     uint32_t pid = getpid();
     size_t len;
-    len = SprintfLiteral(jsonBuffer, JIT_SPEW_DIR "/ion%" PRIu32 ".json", pid);
+    len = snprintf(jsonBuffer, bufferLength,
+                   JIT_SPEW_DIR "/ion%" PRIu32 ".json", pid);
     if (bufferLength <= len) {
       fprintf(stderr, "Warning: IonSpewer::init: Cannot serialize file name.");
       return false;
@@ -370,7 +371,6 @@ static void PrintHelpAndExit(int status = 0) {
       "  pools         Literal Pools (ARM only for now)\n"
       "  cacheflush    Instruction Cache flushes (ARM only for now)\n"
       "  range         Range Analysis\n"
-      "  wasmbce       Wasm Bounds Check Elimination\n"
       "  logs          JSON visualization logging\n"
       "  logs-sync     Same as logs, but flushes between each pass (sync. "
       "compiled functions only).\n"
@@ -379,7 +379,6 @@ static void PrintHelpAndExit(int status = 0) {
       "  scriptstats   Tracelogger summary stats\n"
       "  warp-snapshots WarpSnapshots created by WarpOracle\n"
       "  warp-transpiler Warp CacheIR transpiler\n"
-      "  warp-trial-inlining Trial inlining for Warp\n"
       "  all           Everything\n"
       "\n"
       "  bl-aborts     Baseline compiler abort messages\n"
@@ -438,8 +437,6 @@ void jit::CheckLogging() {
       EnableChannel(JitSpew_GVN);
     } else if (IsFlag(found, "range")) {
       EnableChannel(JitSpew_Range);
-    } else if (IsFlag(found, "wasmbce")) {
-      EnableChannel(JitSpew_WasmBCE);
     } else if (IsFlag(found, "licm")) {
       EnableChannel(JitSpew_LICM);
     } else if (IsFlag(found, "flac")) {
@@ -482,8 +479,6 @@ void jit::CheckLogging() {
       EnableChannel(JitSpew_WarpSnapshots);
     } else if (IsFlag(found, "warp-transpiler")) {
       EnableChannel(JitSpew_WarpTranspiler);
-    } else if (IsFlag(found, "warp-trial-inlining")) {
-      EnableChannel(JitSpew_WarpTrialInlining);
     } else if (IsFlag(found, "all")) {
       LoggingBits = uint64_t(-1);
     } else if (IsFlag(found, "bl-aborts")) {

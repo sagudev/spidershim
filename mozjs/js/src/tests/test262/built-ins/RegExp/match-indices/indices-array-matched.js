@@ -1,3 +1,4 @@
+// |reftest| skip -- regexp-match-indices is not supported
 // Copyright 2019 Ron Buckton. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -7,12 +8,12 @@ includes: [compareArray.js]
 esid: sec-makeindicesarray
 features: [regexp-match-indices]
 info: |
-  MakeIndicesArray ( S, indices, groupNames, hasIndices )
+  MakeIndicesArray ( S, indices, groupNames )
     4. Let _n_ be the number of elements in _indices_.
     ...
-    8. Set _A_ to ! ArrayCreate(_n_).
+    6. Set _A_ to ! ArrayCreate(_n_).
     ...
-    13. For each integer _i_ such that _i_ >= 0 and _i_ < _n_, do
+    11. For each integer _i_ such that _i_ >= 0 and _i_ < _n_, do
       a. Let _matchIndices_ be _indices_[_i_].
       b. If _matchIndices_ is not *undefined*, then
         i. Let _matchIndicesArray_ be ! GetMatchIndicesArray(_S_, _matchIndices_).
@@ -23,7 +24,7 @@ info: |
 ---*/
 
 let input = "abcd";
-let match = /b(c)/d.exec(input);
+let match = /b(c)/.exec(input);
 let indices = match.indices;
 
 // `indices` has the same length as match

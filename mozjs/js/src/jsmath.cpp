@@ -31,7 +31,6 @@
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
 #include "vm/Time.h"
-#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/JSObject-inl.h"
 
@@ -800,8 +799,7 @@ bool js::math_hypot_handle(JSContext* cx, HandleValueArray args,
   }
 
   double result = isInfinite ? PositiveInfinity<double>()
-                  : isNaN    ? GenericNaN()
-                             : scale * sqrt(sumsq);
+                             : isNaN ? GenericNaN() : scale * sqrt(sumsq);
   res.setDouble(result);
   return true;
 }
@@ -1043,7 +1041,7 @@ static JSObject* CreateMathObject(JSContext* cx, JSProtoKey key) {
   if (!proto) {
     return nullptr;
   }
-  return NewTenuredObjectWithGivenProto(cx, &MathClass, proto);
+  return NewSingletonObjectWithGivenProto(cx, &MathClass, proto);
 }
 
 static const ClassSpec MathClassSpec = {CreateMathObject,

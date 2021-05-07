@@ -11,7 +11,7 @@ use libc::c_void;
 ///     ..AndroidHandle::empty()
 /// };
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AndroidHandle {
     /// A pointer to an ANativeWindow.
     pub a_native_window: *mut c_void,

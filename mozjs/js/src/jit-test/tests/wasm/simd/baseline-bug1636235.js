@@ -1,5 +1,3 @@
-// |jit-test| skip-if: !wasmSimdEnabled()
-
 // Bug 1636235: assorted corner case baseline SIMD bugs.
 
 function get(arr, loc, len) {

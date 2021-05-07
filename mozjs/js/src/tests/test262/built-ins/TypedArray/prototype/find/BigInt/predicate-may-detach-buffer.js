@@ -5,7 +5,7 @@ esid: sec-%typedarray%.prototype.find
 description: >
   Predicate may detach the buffer
 info: |
-  %TypedArray%.prototype.find (predicate [ , thisArg ] )
+  22.2.3.10 %TypedArray%.prototype.find (predicate [ , thisArg ] )
 
   %TypedArray%.prototype.find is a distinct function that implements the same
   algorithm as Array.prototype.find as defined in 22.1.3.8
@@ -17,43 +17,44 @@ info: |
   possibility that calls to predicate may cause the this value to become
   detached.
 
+  ...
 
-  Array.prototype.find ( predicate[ , thisArg ] )
+  22.1.3.8 Array.prototype.find ( predicate[ , thisArg ] )
 
-    Let O be ? ToObject(this value).
-    Let len be ? LengthOfArrayLike(O).
-    If IsCallable(predicate) is false, throw a TypeError exception.
-    Let k be 0.
-    Repeat, while k < len,
-      Let Pk be ! ToString(𝔽(k)).
-      Let kValue be ? Get(O, Pk).
-      Let testResult be ! ToBoolean(? Call(predicate, thisArg, « kValue, 𝔽(k), O »)).
-      If testResult is true, return kValue.
-      Set k to k + 1.
-    Return undefined.
-
-  IntegerIndexedElementGet ( O, index )
-
+  ...
+  4. If thisArg was supplied, let T be thisArg; else let T be undefined.
+  5. Let k be 0.
+  6. Repeat, while k < len
     ...
-    Let buffer be the value of O's [[ViewedArrayBuffer]] internal slot.
-    If IsDetachedBuffer(buffer) is true, return undefined.
+    b. Let kValue be ? Get(O, Pk).
+    c. Let testResult be ToBoolean(? Call(predicate, T, « kValue, k, O »)).
+  ...
 
+  9.4.5.8 IntegerIndexedElementGet ( O, index )
+
+  ...
+  3. Let buffer be the value of O's [[ViewedArrayBuffer]] internal slot.
+  4. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
+  ...
 includes: [testBigIntTypedArray.js, detachArrayBuffer.js]
 features: [BigInt, TypedArray]
 ---*/
 
 testWithBigIntTypedArrayConstructors(function(TA) {
-  var loops = 0;
   var sample = new TA(2);
+  var loops = 0;
+  var completion = false;
 
-  sample.find(function() {
-    if (loops === 0) {
+  assert.throws(TypeError, function() {
+    sample.find(function() {
+      loops++;
       $DETACHBUFFER(sample.buffer);
-    }
-    loops++;
-  });
+      completion = true;
+    });
+  }, "throws a TypeError getting a value from the detached buffer");
 
-  assert.sameValue(loops, 2);
+  assert.sameValue(loops, 1, "predicate is called once");
+  assert(completion, "abrupt completion does not come from DETACHBUFFER");
 });
 
 reportCompare(0, 0);

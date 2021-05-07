@@ -12,7 +12,7 @@
 namespace js {
 
 template <typename IntoOwnedChars>
-[[nodiscard]] mozilla::Maybe<SharedImmutableString>
+MOZ_MUST_USE mozilla::Maybe<SharedImmutableString>
 SharedImmutableStringsCache::getOrCreate(const char* chars, size_t length,
                                          IntoOwnedChars intoOwnedChars) {
   MOZ_ASSERT(inner_);
@@ -39,7 +39,7 @@ SharedImmutableStringsCache::getOrCreate(const char* chars, size_t length,
 }
 
 template <typename IntoOwnedTwoByteChars>
-[[nodiscard]] mozilla::Maybe<SharedImmutableTwoByteString>
+MOZ_MUST_USE mozilla::Maybe<SharedImmutableTwoByteString>
 SharedImmutableStringsCache::getOrCreate(
     const char16_t* chars, size_t length,
     IntoOwnedTwoByteChars intoOwnedTwoByteChars) {

@@ -10,7 +10,6 @@
 
 #include "builtin/WeakSetObject.h"
 #include "gc/FreeOp.h"
-#include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/PropertySpec.h"
 #include "vm/JSContext.h"
 #include "vm/SelfHosting.h"
@@ -291,8 +290,8 @@ const JSClass WeakMapObject::class_ = {
     &WeakCollectionObject::classOps_, &WeakMapObject::classSpec_};
 
 const JSClass WeakMapObject::protoClass_ = {
-    "WeakMap.prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_WeakMap),
-    JS_NULL_CLASS_OPS, &WeakMapObject::classSpec_};
+    js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_WeakMap), JS_NULL_CLASS_OPS,
+    &WeakMapObject::classSpec_};
 
 const JSPropertySpec WeakMapObject::properties[] = {
     JS_STRING_SYM_PS(toStringTag, "WeakMap", JSPROP_READONLY), JS_PS_END};

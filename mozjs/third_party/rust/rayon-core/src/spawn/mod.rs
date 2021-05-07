@@ -1,8 +1,8 @@
-use crate::job::*;
-use crate::registry::Registry;
-use crate::unwind;
+use job::*;
+use registry::Registry;
 use std::mem;
 use std::sync::Arc;
+use unwind;
 
 /// Fires off a task into the Rayon threadpool in the "static" or
 /// "global" scope.  Just like a standard thread, this task is not
@@ -21,7 +21,8 @@ use std::sync::Arc;
 ///
 /// This API assumes that the closure is executed purely for its
 /// side-effects (i.e., it might send messages, modify data protected
-/// by a mutex, or some such thing).
+/// by a mutex, or some such thing). If you want to compute a result,
+/// consider `spawn_future()`.
 ///
 /// There is no guaranteed order of execution for spawns, given that
 /// other threads may steal tasks at any time. However, they are
@@ -65,7 +66,7 @@ where
     unsafe { spawn_in(func, &Registry::current()) }
 }
 
-/// Spawns an asynchronous job in `registry.`
+/// Spawn an asynchronous job in `registry.`
 ///
 /// Unsafe because `registry` must not yet have terminated.
 pub(super) unsafe fn spawn_in<F>(func: F, registry: &Arc<Registry>)
@@ -140,7 +141,7 @@ where
     unsafe { spawn_fifo_in(func, &Registry::current()) }
 }
 
-/// Spawns an asynchronous FIFO job in `registry.`
+/// Spawn an asynchronous FIFO job in `registry.`
 ///
 /// Unsafe because `registry` must not yet have terminated.
 pub(super) unsafe fn spawn_fifo_in<F>(func: F, registry: &Arc<Registry>)

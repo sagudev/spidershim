@@ -1,4 +1,5 @@
 //! Cranelift code generation library.
+
 #![deny(missing_docs, trivial_numeric_casts, unused_extern_crates)]
 #![warn(unused_import_braces)]
 #![cfg_attr(feature = "std", deny(unstable_features))]
@@ -31,7 +32,8 @@
         clippy::float_arithmetic,
         clippy::mut_mut,
         clippy::nonminimal_bool,
-        clippy::map_unwrap_or,
+        clippy::option_map_unwrap_or,
+        clippy::option_map_unwrap_or_else,
         clippy::unicode_not_nfc,
         clippy::use_self
     )
@@ -70,7 +72,6 @@ pub use cranelift_entity as entity;
 pub mod binemit;
 pub mod cfg_printer;
 pub mod cursor;
-pub mod data_value;
 pub mod dbg;
 pub mod dominator_tree;
 pub mod flowgraph;
@@ -98,12 +99,12 @@ mod iterators;
 mod legalizer;
 mod licm;
 mod nan_canonicalization;
+mod num_uses;
 mod partition_slice;
 mod postopt;
 mod predicates;
 mod redundant_reload_remover;
 mod regalloc;
-mod remove_constant_phis;
 mod result;
 mod scoped_hash_map;
 mod simple_gvn;
@@ -112,12 +113,6 @@ mod stack_layout;
 mod topo_order;
 mod unreachable_code;
 mod value_label;
-
-#[cfg(feature = "enable-peepmatic")]
-mod peepmatic;
-
-#[cfg(feature = "souper-harvest")]
-mod souper_harvest;
 
 pub use crate::result::{CodegenError, CodegenResult};
 

@@ -6,14 +6,11 @@ esid: sec-Intl.DisplayNames
 description: >
   Custom Prototype of the returned object based on the NewTarget
 info: |
-  Intl.DisplayNames ( locales , options )
+  Intl.DisplayNames ([ locales [ , options ]])
 
   1. If NewTarget is undefined, throw a TypeError exception.
   2. Let displayNames be ? OrdinaryCreateFromConstructor(NewTarget, "%DisplayNamesPrototype%",
     « [[InitializedDisplayNames]], [[Locale]], [[Style]], [[Type]], [[Fallback]], [[Fields]] »).
-  ...
-  12. Let type be ? GetOption(options, "type", "string", « "language", "region", "script", "currency" », undefined).
-  13. If type is undefined, throw a TypeError exception.
   ...
 
   OrdinaryCreateFromConstructor ( constructor, intrinsicDefaultProto [ , internalSlotsList ] )
@@ -35,7 +32,7 @@ features: [Intl.DisplayNames, Reflect]
 var custom = new Function();
 custom.prototype = {};
 
-const obj = Reflect.construct(Intl.DisplayNames, [undefined, {type: 'language'}], custom);
+var obj = Reflect.construct(Intl.DisplayNames, [], custom);
 
 assert.sameValue(Object.getPrototypeOf(obj), custom.prototype);
 

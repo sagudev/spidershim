@@ -300,15 +300,6 @@ void TestNotNullWithRefPtr() {
   // and the MyRefType is destroyed.
 }
 
-// Create a derived object and store its base pointer.
-struct Base {
-  virtual ~Base() = default;
-  virtual bool IsDerived() const { return false; }
-};
-struct Derived : Base {
-  bool IsDerived() const override { return true; }
-};
-
 void TestMakeNotNull() {
   // Raw pointer.
   auto nni = MakeNotNull<int*>(11);
@@ -324,6 +315,14 @@ void TestMakeNotNull() {
   CHECK(*nnci == 12);
   delete nnci;
 
+  // Create a derived object and store its base pointer.
+  struct Base {
+    virtual ~Base() = default;
+    virtual bool IsDerived() const { return false; }
+  };
+  struct Derived : Base {
+    bool IsDerived() const override { return true; }
+  };
   auto nnd = MakeNotNull<Derived*>();
   static_assert(std::is_same_v<NotNull<Derived*>, decltype(nnd)>,
                 "MakeNotNull<Derived*> should return NotNull<Derived*>");
@@ -368,9 +367,6 @@ void TestMovingNotNull() {
 
   NotNull<UniquePtr<int>> x2 = CreateNotNullUniquePtr();
   CHECK(42 == *x2);
-
-  NotNull<UniquePtr<Base>> x3 =
-      mozilla::WrapMovingNotNull(mozilla::MakeUnique<Derived>());
 
   // Must not compile:
   // auto y = CreateNotNullUniquePtr();

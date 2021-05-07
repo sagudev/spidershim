@@ -30,7 +30,7 @@
 //!     .expect("Failed to parse an FTL string.");
 //!
 //! let langid_en: LanguageIdentifier = "en-US".parse().expect("Parsing failed");
-//! let mut bundle = FluentBundle::new(vec![langid_en]);
+//! let mut bundle = FluentBundle::new(&[langid_en]);
 //!
 //! bundle
 //!     .add_resource(res)
@@ -46,7 +46,7 @@
 //! assert_eq!(&value, "Hello, world!");
 //!
 //! let mut args = FluentArgs::new();
-//! args.add("name", FluentValue::from("John"));
+//! args.insert("name", FluentValue::from("John"));
 //!
 //! let msg = bundle.get_message("intro")
 //!     .expect("Message doesn't exist.");
@@ -100,7 +100,7 @@ macro_rules! fluent_args {
         {
             let mut args: $crate::FluentArgs = $crate::FluentArgs::new();
             $(
-                args.add($key, $value.into());
+                args.insert($key, $value.into());
             )*
             args
         }

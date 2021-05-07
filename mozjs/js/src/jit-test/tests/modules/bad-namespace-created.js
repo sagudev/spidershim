@@ -5,11 +5,13 @@
 "use strict";
 
 load(libdir + "asserts.js");
+load(libdir + "dummyModuleResolveHook.js");
 
-let a = registerModule('A', parseModule('import "B"; export {x} from "C"'));
-registerModule('B', parseModule('import * as a from "A"'));
-registerModule('C', parseModule('export * from "D"; export * from "E"'));
-registerModule('D', parseModule('export let x'));
-registerModule('E', parseModule('export let x'));
+moduleRepo['A'] = parseModule('import "B"; export {x} from "C"');
+moduleRepo['B'] = parseModule('import * as a from "A"');
+moduleRepo['C'] = parseModule('export * from "D"; export * from "E"');
+moduleRepo['D'] = parseModule('export let x');
+moduleRepo['E'] = parseModule('export let x');
 
-assertThrowsInstanceOf(() => a.declarationInstantiation(), SyntaxError);
+let m = moduleRepo['A'];
+assertThrowsInstanceOf(() => m.declarationInstantiation(), SyntaxError);

@@ -13,9 +13,7 @@
  * limitations under the License.
  */
 
-use super::{
-    BinaryReader, Range, Result, SectionIteratorLimited, SectionReader, SectionWithLimitedItems,
-};
+use super::{BinaryReader, Result, SectionIteratorLimited, SectionReader, SectionWithLimitedItems};
 
 #[derive(Debug, Copy, Clone)]
 pub struct ProducersFieldValue<'a> {
@@ -175,9 +173,6 @@ impl<'a> SectionReader for ProducersSectionReader<'a> {
     }
     fn original_position(&self) -> usize {
         ProducersSectionReader::original_position(self)
-    }
-    fn range(&self) -> Range {
-        self.reader.range()
     }
 }
 

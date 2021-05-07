@@ -35,8 +35,8 @@ void js::Mutex::preLockChecks() const {
 }
 
 void js::Mutex::postLockChecks() {
-  MOZ_ASSERT(!owningThread_);
-  owningThread_ = ThreadId::ThisThreadId();
+  MOZ_ASSERT(owningThread_.isNothing());
+  owningThread_.emplace(ThreadId::ThisThreadId());
 
   MOZ_ASSERT(prev_ == nullptr);
   prev_ = HeldMutexStack.get();
@@ -54,22 +54,29 @@ void js::Mutex::preUnlockChecks() {
   HeldMutexStack.set(prev_);
   prev_ = nullptr;
 
-  MOZ_ASSERT(ThreadId::ThisThreadId() == owningThread_);
-  owningThread_ = ThreadId();
+  MOZ_ASSERT(owningThread_.isSome() &&
+             ThreadId::ThisThreadId() == owningThread_.value());
+  owningThread_.reset();
 }
 
-void js::Mutex::assertOwnedByCurrentThread() const {
-  // This check is only thread-safe if it succeeds.
-  MOZ_ASSERT(ThreadId::ThisThreadId() == owningThread_);
+bool js::Mutex::ownedByCurrentThread() const {
+  // First determine this using the owningThread_ property, then check it via
+  // the mutex stack.
+  bool check = ThreadId::ThisThreadId() == owningThread_.value();
 
-  // Check the mutex is on the mutex stack.
-  for (Mutex* mutex = HeldMutexStack.get(); mutex; mutex = mutex->prev_) {
-    if (mutex == this) {
-      return;
+  Mutex* stack = HeldMutexStack.get();
+
+  while (stack) {
+    if (stack == this) {
+      MOZ_ASSERT(check);
+      return true;
     }
+
+    stack = stack->prev_;
   }
 
-  MOZ_CRASH("Mutex not found on the stack of held mutexes");
+  MOZ_ASSERT(!check);
+  return false;
 }
 
 #endif

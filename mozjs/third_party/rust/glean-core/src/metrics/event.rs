@@ -36,12 +36,8 @@ impl MetricType for EventMetric {
     }
 }
 
-// IMPORTANT:
-//
-// When changing this implementation, make sure all the operations are
-// also declared in the related trait in `../traits/`.
 impl EventMetric {
-    /// Creates a new event metric.
+    /// Create a new event metric.
     pub fn new(meta: CommonMetricData, allowed_extra_keys: Vec<String>) -> Self {
         Self {
             meta,
@@ -49,15 +45,15 @@ impl EventMetric {
         }
     }
 
-    /// Records an event.
+    /// Record an event.
     ///
-    /// # Arguments
+    /// ## Arguments
     ///
     /// * `glean` - The Glean instance this metric belongs to.
     /// * `timestamp` - A monotonically increasing timestamp, in milliseconds.
     ///   This must be provided since the actual recording of the event may
     ///   happen some time later than the moment the event occurred.
-    /// * `extra` - A [`HashMap`] of (key, value) pairs. The key is an index into
+    /// * `extra` - A HashMap of (key, value) pairs. The key is an index into
     ///   the metric's `allowed_extra_keys` vector where the key's string is
     ///   looked up. If any key index is out of range, an error is reported and
     ///   no event is recorded.
@@ -108,7 +104,7 @@ impl EventMetric {
 
     /// **Test-only API (exported for FFI purposes).**
     ///
-    /// Tests whether there are currently stored events for this event metric.
+    /// Test whether there are currently stored events for this event metric.
     ///
     /// This doesn't clear the stored value.
     pub fn test_has_value(&self, glean: &Glean, store_name: &str) -> bool {
@@ -126,7 +122,7 @@ impl EventMetric {
 
     /// **Test-only API (exported for FFI purposes).**
     ///
-    /// Gets the currently stored events for this event metric as a JSON-encoded string.
+    /// Get the currently stored events for this event metric as a JSON-encoded string.
     ///
     /// This doesn't clear the stored value.
     pub fn test_get_value_as_json_string(&self, glean: &Glean, store_name: &str) -> String {

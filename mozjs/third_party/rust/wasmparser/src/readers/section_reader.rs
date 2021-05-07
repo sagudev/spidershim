@@ -13,14 +13,13 @@
  * limitations under the License.
  */
 
-use super::{BinaryReaderError, Range, Result};
+use super::{BinaryReaderError, Result};
 
 pub trait SectionReader {
     type Item;
     fn read(&mut self) -> Result<Self::Item>;
     fn eof(&self) -> bool;
     fn original_position(&self) -> usize;
-    fn range(&self) -> Range;
     fn ensure_end(&self) -> Result<()> {
         if self.eof() {
             return Ok(());

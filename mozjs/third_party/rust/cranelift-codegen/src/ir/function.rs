@@ -7,9 +7,8 @@ use crate::binemit::CodeOffset;
 use crate::entity::{PrimaryMap, SecondaryMap};
 use crate::ir;
 use crate::ir::{
-    instructions::BranchInfo, Block, ExtFuncData, FuncRef, GlobalValue, GlobalValueData, Heap,
-    HeapData, Inst, InstructionData, JumpTable, JumpTableData, Opcode, SigRef, StackSlot,
-    StackSlotData, Table, TableData,
+    Block, ExtFuncData, FuncRef, GlobalValue, GlobalValueData, Heap, HeapData, Inst, JumpTable,
+    JumpTableData, Opcode, SigRef, StackSlot, StackSlotData, Table, TableData,
 };
 use crate::ir::{BlockOffsets, InstEncodings, SourceLocs, StackSlots, ValueLocations};
 use crate::ir::{DataFlowGraph, ExternalName, Layout, Signature};
@@ -95,7 +94,7 @@ pub struct Function {
     /// The instructions that mark the start (inclusive) of an epilogue in the function.
     ///
     /// This is used for some ABIs to generate unwind information.
-    pub epilogues_start: Vec<(Inst, Block)>,
+    pub epilogues_start: Vec<Inst>,
 
     /// An optional global value which represents an expression evaluating to
     /// the stack limit for this function. This `GlobalValue` will be
@@ -271,49 +270,10 @@ impl Function {
 
     /// Changes the destination of a jump or branch instruction.
     /// Does nothing if called with a non-jump or non-branch instruction.
-    ///
-    /// Note that this method ignores multi-destination branches like `br_table`.
     pub fn change_branch_destination(&mut self, inst: Inst, new_dest: Block) {
         match self.dfg[inst].branch_destination_mut() {
             None => (),
             Some(inst_dest) => *inst_dest = new_dest,
-        }
-    }
-
-    /// Rewrite the branch destination to `new_dest` if the destination matches `old_dest`.
-    /// Does nothing if called with a non-jump or non-branch instruction.
-    ///
-    /// Unlike [change_branch_destination](Function::change_branch_destination), this method rewrite the destinations of
-    /// multi-destination branches like `br_table`.
-    pub fn rewrite_branch_destination(&mut self, inst: Inst, old_dest: Block, new_dest: Block) {
-        match self.dfg.analyze_branch(inst) {
-            BranchInfo::SingleDest(dest, ..) => {
-                if dest == old_dest {
-                    self.change_branch_destination(inst, new_dest);
-                }
-            }
-
-            BranchInfo::Table(table, default_dest) => {
-                self.jump_tables[table].iter_mut().for_each(|entry| {
-                    if *entry == old_dest {
-                        *entry = new_dest;
-                    }
-                });
-
-                if default_dest == Some(old_dest) {
-                    match &mut self.dfg[inst] {
-                        InstructionData::BranchTable { destination, .. } => {
-                            *destination = new_dest;
-                        }
-                        _ => panic!(
-                            "Unexpected instruction {} having default destination",
-                            self.dfg.display_inst(inst, None)
-                        ),
-                    }
-                }
-            }
-
-            BranchInfo::NotABranch => {}
         }
     }
 
@@ -347,30 +307,6 @@ impl Function {
         // Conservative result: if there's at least one function signature referenced in this
         // function, assume it is not a leaf.
         self.dfg.signatures.is_empty()
-    }
-
-    /// Replace the `dst` instruction's data with the `src` instruction's data
-    /// and then remove `src`.
-    ///
-    /// `src` and its result values should not be used at all, as any uses would
-    /// be left dangling after calling this method.
-    ///
-    /// `src` and `dst` must have the same number of resulting values, and
-    /// `src`'s i^th value must have the same type as `dst`'s i^th value.
-    pub fn transplant_inst(&mut self, dst: Inst, src: Inst) {
-        debug_assert_eq!(
-            self.dfg.inst_results(dst).len(),
-            self.dfg.inst_results(src).len()
-        );
-        debug_assert!(self
-            .dfg
-            .inst_results(dst)
-            .iter()
-            .zip(self.dfg.inst_results(src))
-            .all(|(a, b)| self.dfg.value_type(*a) == self.dfg.value_type(*b)));
-
-        self.dfg[dst] = self.dfg[src].clone();
-        self.layout.remove_inst(src);
     }
 }
 

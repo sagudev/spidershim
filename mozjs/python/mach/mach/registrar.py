@@ -10,12 +10,12 @@ import six
 
 from .base import MachError
 
-INVALID_COMMAND_CONTEXT = r"""
+INVALID_COMMAND_CONTEXT = r'''
 It looks like you tried to run a mach command from an invalid context. The %s
 command failed to meet the following conditions: %s
 
 Run |mach help| to show a list of all commands available to the current context.
-""".lstrip()
+'''.lstrip()
 
 
 class MachRegistrar(object):
@@ -33,15 +33,12 @@ class MachRegistrar(object):
         name = handler.name
 
         if not handler.category:
-            raise MachError(
-                "Cannot register a mach command without a " "category: %s" % name
-            )
+            raise MachError('Cannot register a mach command without a '
+                            'category: %s' % name)
 
         if handler.category not in self.categories:
-            raise MachError(
-                "Cannot register a command to an undefined "
-                "category: %s -> %s" % (name, handler.category)
-            )
+            raise MachError('Cannot register a command to an undefined '
+                            'category: %s -> %s' % (name, handler.category))
 
         self.command_handlers[name] = handler
         self.commands_by_category[handler.category].add(name)
@@ -55,25 +52,27 @@ class MachRegistrar(object):
 
     @classmethod
     def _condition_failed_message(cls, name, conditions):
-        msg = ["\n"]
+        msg = ['\n']
         for c in conditions:
-            part = ["  %s" % getattr(c, "__name__", c)]
+            part = ['  %s' % getattr(c, '__name__', c)]
             if c.__doc__ is not None:
                 part.append(c.__doc__)
-            msg.append(" - ".join(part))
-        return INVALID_COMMAND_CONTEXT % (name, "\n".join(msg))
+            msg.append(' - '.join(part))
+        return INVALID_COMMAND_CONTEXT % (name, '\n'.join(msg))
 
     @classmethod
     def _instance(_, handler, context, **kwargs):
-        if context is None:
-            raise ValueError("Expected a non-None context.")
+        cls = handler.cls
 
-        prerun = getattr(context, "pre_dispatch_handler", None)
+        if context is None:
+            raise ValueError('Expected a non-None context.')
+
+        prerun = getattr(context, 'pre_dispatch_handler', None)
         if prerun:
             prerun(context, handler, args=kwargs)
 
         context.handler = handler
-        return handler.create_instance(context, handler.virtualenv_name)
+        return cls(context, handler.virtualenv_name)
 
     @classmethod
     def _fail_conditions(_, handler, instance):
@@ -89,9 +88,7 @@ class MachRegistrar(object):
         instance = MachRegistrar._instance(handler, context, **kwargs)
         fail_conditions = MachRegistrar._fail_conditions(handler, instance)
         if fail_conditions:
-            print(
-                MachRegistrar._condition_failed_message(handler.name, fail_conditions)
-            )
+            print(MachRegistrar._condition_failed_message(handler.name, fail_conditions))
             return 1
 
         self.command_depth += 1
@@ -101,7 +98,6 @@ class MachRegistrar(object):
 
         if debug_command:
             import pdb
-
             result = pdb.runcall(fn, **kwargs)
         else:
             result = fn(**kwargs)
@@ -112,18 +108,10 @@ class MachRegistrar(object):
         assert isinstance(result, six.integer_types)
 
         if not debug_command:
-            postrun = getattr(context, "post_dispatch_handler", None)
+            postrun = getattr(context, 'post_dispatch_handler', None)
             if postrun:
-                postrun(
-                    context,
-                    handler,
-                    instance,
-                    not result,
-                    start_time,
-                    end_time,
-                    self.command_depth,
-                    args=kwargs,
-                )
+                postrun(context, handler, instance, result,
+                        start_time, end_time, self.command_depth, args=kwargs)
         self.command_depth -= 1
 
         return result
@@ -151,12 +139,9 @@ class MachRegistrar(object):
 
             if unknown:
                 if subcommand:
-                    name = "{} {}".format(name, subcommand)
-                parser.error(
-                    "unrecognized arguments for {}: {}".format(
-                        name, ", ".join(["'{}'".format(arg) for arg in unknown])
-                    )
-                )
+                    name = '{} {}'.format(name, subcommand)
+                parser.error("unrecognized arguments for {}: {}".format(
+                    name, ', '.join(["'{}'".format(arg) for arg in unknown])))
 
         return self._run_command_handler(handler, context, **kwargs)
 

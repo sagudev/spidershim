@@ -395,11 +395,6 @@ AST_MATCHER(FunctionDecl, isMozMustReturnFromCaller) {
          hasCustomAttribute<moz_must_return_from_caller_if_this_is_arg>(Decl);
 }
 
-AST_MATCHER(FunctionDecl, isMozTemporaryLifetimeBound) {
-  const FunctionDecl *Decl = Node.getCanonicalDecl();
-  return Decl && hasCustomAttribute<moz_lifetime_bound>(Decl);
-}
-
 /// This matcher will select default args which have nullptr as the value.
 AST_MATCHER(CXXDefaultArgExpr, isNullDefaultArg) {
   const Expr *Expr = Node.getExpr();
@@ -418,12 +413,6 @@ AST_MATCHER(UsingDirectiveDecl, isUsingNamespaceMozillaJava) {
   // namespaces contained within the `mozilla::java` namespace.
   return !FQName.compare(NAMESPACE) ||
          !FQName.compare(0, sizeof(PREFIX) - 1, PREFIX);
-}
-
-AST_MATCHER(MemberExpr, hasKnownLiveAnnotation) {
-  ValueDecl *Member = Node.getMemberDecl();
-  FieldDecl *Field = dyn_cast<FieldDecl>(Member);
-  return Field && hasCustomAttribute<moz_known_live>(Field);
 }
 
 } // namespace ast_matchers

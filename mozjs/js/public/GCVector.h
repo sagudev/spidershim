@@ -9,12 +9,10 @@
 
 #include "mozilla/Vector.h"
 
-#include "js/AllocPolicy.h"
 #include "js/GCPolicyAPI.h"
 #include "js/RootingAPI.h"
-
-class JSTracer;
-struct JSContext;
+#include "js/TracingAPI.h"
+#include "js/Vector.h"
 
 namespace JS {
 
@@ -67,11 +65,10 @@ class GCVector {
   const T& back() const { return vector.back(); }
 
   bool initCapacity(size_t cap) { return vector.initCapacity(cap); }
-  [[nodiscard]] bool reserve(size_t req) { return vector.reserve(req); }
+  MOZ_MUST_USE bool reserve(size_t req) { return vector.reserve(req); }
   void shrinkBy(size_t amount) { return vector.shrinkBy(amount); }
-  void shrinkTo(size_t newLen) { return vector.shrinkTo(newLen); }
-  [[nodiscard]] bool growBy(size_t amount) { return vector.growBy(amount); }
-  [[nodiscard]] bool resize(size_t newLen) { return vector.resize(newLen); }
+  MOZ_MUST_USE bool growBy(size_t amount) { return vector.growBy(amount); }
+  MOZ_MUST_USE bool resize(size_t newLen) { return vector.resize(newLen); }
 
   void clear() { return vector.clear(); }
   void clearAndFree() { return vector.clearAndFree(); }
@@ -93,13 +90,8 @@ class GCVector {
   }
 
   template <typename... Args>
-  [[nodiscard]] bool emplaceBack(Args&&... args) {
+  MOZ_MUST_USE bool emplaceBack(Args&&... args) {
     return vector.emplaceBack(std::forward<Args>(args)...);
-  }
-
-  template <typename... Args>
-  void infallibleEmplaceBack(Args&&... args) {
-    vector.infallibleEmplaceBack(std::forward<Args>(args)...);
   }
 
   template <typename U>
@@ -119,25 +111,20 @@ class GCVector {
   }
 
   template <typename U>
-  [[nodiscard]] bool appendAll(const U& aU) {
+  MOZ_MUST_USE bool appendAll(const U& aU) {
     return vector.append(aU.begin(), aU.end());
   }
-  template <typename T2, size_t MinInlineCapacity2, typename AllocPolicy2>
-  [[nodiscard]] bool appendAll(
-      GCVector<T2, MinInlineCapacity2, AllocPolicy2>&& aU) {
-    return vector.appendAll(aU.begin(), aU.end());
-  }
 
-  [[nodiscard]] bool appendN(const T& val, size_t count) {
+  MOZ_MUST_USE bool appendN(const T& val, size_t count) {
     return vector.appendN(val, count);
   }
 
   template <typename U>
-  [[nodiscard]] bool append(const U* aBegin, const U* aEnd) {
+  MOZ_MUST_USE bool append(const U* aBegin, const U* aEnd) {
     return vector.append(aBegin, aEnd);
   }
   template <typename U>
-  [[nodiscard]] bool append(const U* aBegin, size_t aLength) {
+  MOZ_MUST_USE bool append(const U* aBegin, size_t aLength) {
     return vector.append(aBegin, aLength);
   }
 
@@ -156,24 +143,6 @@ class GCVector {
     for (auto& elem : vector) {
       GCPolicy<T>::trace(trc, &elem, "vector element");
     }
-  }
-
-  bool traceWeak(JSTracer* trc) {
-    T* src = begin();
-    T* dst = begin();
-    while (src != end()) {
-      if (GCPolicy<T>::traceWeak(trc, src)) {
-        if (src != dst) {
-          *dst = std::move(*src);
-        }
-        dst++;
-      }
-      src++;
-    }
-
-    MOZ_ASSERT(dst <= end());
-    shrinkBy(end() - dst);
-    return !empty();
   }
 
   bool needsSweep() const { return !this->empty(); }
@@ -256,53 +225,47 @@ class MutableWrappedPtrOperations<JS::GCVector<T, Capacity, AllocPolicy>,
     return JS::MutableHandle<T>::fromMarkedLocation(&vec().operator[](aIndex));
   }
 
-  [[nodiscard]] bool initCapacity(size_t aRequest) {
+  MOZ_MUST_USE bool initCapacity(size_t aRequest) {
     return vec().initCapacity(aRequest);
   }
-  [[nodiscard]] bool reserve(size_t aRequest) {
-    return vec().reserve(aRequest);
-  }
+  MOZ_MUST_USE bool reserve(size_t aRequest) { return vec().reserve(aRequest); }
   void shrinkBy(size_t aIncr) { vec().shrinkBy(aIncr); }
-  [[nodiscard]] bool growBy(size_t aIncr) { return vec().growBy(aIncr); }
-  [[nodiscard]] bool resize(size_t aNewLength) {
+  MOZ_MUST_USE bool growBy(size_t aIncr) { return vec().growBy(aIncr); }
+  MOZ_MUST_USE bool resize(size_t aNewLength) {
     return vec().resize(aNewLength);
   }
-  [[nodiscard]] bool growByUninitialized(size_t aIncr) {
+  MOZ_MUST_USE bool growByUninitialized(size_t aIncr) {
     return vec().growByUninitialized(aIncr);
   }
   void infallibleGrowByUninitialized(size_t aIncr) {
     vec().infallibleGrowByUninitialized(aIncr);
   }
-  [[nodiscard]] bool resizeUninitialized(size_t aNewLength) {
+  MOZ_MUST_USE bool resizeUninitialized(size_t aNewLength) {
     return vec().resizeUninitialized(aNewLength);
   }
   void clear() { vec().clear(); }
   void clearAndFree() { vec().clearAndFree(); }
   template <typename U>
-  [[nodiscard]] bool append(U&& aU) {
+  MOZ_MUST_USE bool append(U&& aU) {
     return vec().append(std::forward<U>(aU));
   }
   template <typename... Args>
-  [[nodiscard]] bool emplaceBack(Args&&... aArgs) {
+  MOZ_MUST_USE bool emplaceBack(Args&&... aArgs) {
     return vec().emplaceBack(std::forward<Args>(aArgs)...);
   }
-  template <typename... Args>
-  void infallibleEmplaceBack(Args&&... args) {
-    vec().infallibleEmplaceBack(std::forward<Args>(args)...);
-  }
   template <typename U>
-  [[nodiscard]] bool appendAll(U&& aU) {
+  MOZ_MUST_USE bool appendAll(const U& aU) {
     return vec().appendAll(aU);
   }
-  [[nodiscard]] bool appendN(const T& aT, size_t aN) {
+  MOZ_MUST_USE bool appendN(const T& aT, size_t aN) {
     return vec().appendN(aT, aN);
   }
   template <typename U>
-  [[nodiscard]] bool append(const U* aBegin, const U* aEnd) {
+  MOZ_MUST_USE bool append(const U* aBegin, const U* aEnd) {
     return vec().append(aBegin, aEnd);
   }
   template <typename U>
-  [[nodiscard]] bool append(const U* aBegin, size_t aLength) {
+  MOZ_MUST_USE bool append(const U* aBegin, size_t aLength) {
     return vec().append(aBegin, aLength);
   }
   template <typename U>

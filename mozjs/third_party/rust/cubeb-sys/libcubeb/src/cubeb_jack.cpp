@@ -64,12 +64,6 @@ enum devstream {
   DUPLEX,
 };
 
-enum cbjack_connect_ports_options {
-  CBJACK_CP_OPTIONS_NONE = 0x0,
-  CBJACK_CP_OPTIONS_SKIP_OUTPUT = 0x1,
-  CBJACK_CP_OPTIONS_SKIP_INPUT = 0x2,
-};
-
 static void
 s16ne_to_float(float * dst, const int16_t * src, size_t n)
 {
@@ -135,11 +129,11 @@ static struct cubeb_ops const cbjack_ops = {
   .stream_destroy = cbjack_stream_destroy,
   .stream_start = cbjack_stream_start,
   .stream_stop = cbjack_stream_stop,
+  .stream_reset_default_device = NULL,
   .stream_get_position = cbjack_stream_get_position,
   .stream_get_latency = cbjack_get_latency,
   .stream_get_input_latency = NULL,
   .stream_set_volume = cbjack_stream_set_volume,
-  .stream_set_name = NULL,
   .stream_get_current_device = cbjack_stream_get_current_device,
   .stream_device_destroy = cbjack_stream_device_destroy,
   .stream_register_device_changed_callback = NULL,
@@ -244,24 +238,8 @@ load_jack_lib(cubeb * context)
   return CUBEB_OK;
 }
 
-static void
-cbjack_connect_port_out (cubeb_stream * stream, const size_t out_port, const char * const phys_in_port)
-{
-  const char *src_port = api_jack_port_name (stream->output_ports[out_port]);
-
-  api_jack_connect (stream->context->jack_client, src_port, phys_in_port);
-}
-
-static void
-cbjack_connect_port_in (cubeb_stream * stream, const char * const phys_out_port, size_t in_port)
-{
-  const char *src_port = api_jack_port_name (stream->input_ports[in_port]);
-
-  api_jack_connect (stream->context->jack_client, phys_out_port, src_port);
-}
-
 static int
-cbjack_connect_ports (cubeb_stream * stream, enum cbjack_connect_ports_options options)
+cbjack_connect_ports (cubeb_stream * stream)
 {
   int r = CUBEB_ERROR;
   const char ** phys_in_ports = api_jack_get_ports (stream->context->jack_client,
@@ -273,29 +251,27 @@ cbjack_connect_ports (cubeb_stream * stream, enum cbjack_connect_ports_options o
                                                     JackPortIsOutput
                                                     | JackPortIsPhysical);
 
- if (phys_in_ports == NULL || *phys_in_ports == NULL || options & CBJACK_CP_OPTIONS_SKIP_OUTPUT) {
+ if (phys_in_ports == NULL || *phys_in_ports == NULL) {
     goto skipplayback;
   }
 
   // Connect outputs to playback
   for (unsigned int c = 0; c < stream->out_params.channels && phys_in_ports[c] != NULL; c++) {
-    cbjack_connect_port_out(stream, c, phys_in_ports[c]);
-  }
+    const char *src_port = api_jack_port_name (stream->output_ports[c]);
 
-  // Special case playing mono source in stereo
-  if (stream->out_params.channels == 1 && phys_in_ports[1] != NULL) {
-    cbjack_connect_port_out(stream, 0, phys_in_ports[1]);
+    api_jack_connect (stream->context->jack_client, src_port, phys_in_ports[c]);
   }
-
   r = CUBEB_OK;
 
 skipplayback:
-  if (phys_out_ports == NULL || *phys_out_ports == NULL || options & CBJACK_CP_OPTIONS_SKIP_INPUT) {
+  if (phys_out_ports == NULL || *phys_out_ports == NULL) {
     goto end;
   }
   // Connect inputs to capture
   for (unsigned int c = 0; c < stream->in_params.channels && phys_out_ports[c] != NULL; c++) {
-    cbjack_connect_port_in(stream, phys_out_ports[c], c);
+    const char *src_port = api_jack_port_name (stream->input_ports[c]);
+
+    api_jack_connect (stream->context->jack_client, phys_out_ports[c], src_port);
   }
   r = CUBEB_OK;
 end:
@@ -314,9 +290,9 @@ cbjack_xrun_callback(void * arg)
   cubeb * ctx = (cubeb *)arg;
 
   float delay = api_jack_get_xrun_delayed_usecs(ctx->jack_client);
-  float fragments = ceilf(((delay / 1000000.0) * ctx->jack_sample_rate) / ctx->jack_buffer_size);
-
-  ctx->jack_xruns += (unsigned int)fragments;
+  int fragments = (int)ceilf( ((delay / 1000000.0) * ctx->jack_sample_rate )
+                             / (float)(ctx->jack_buffer_size) );
+  ctx->jack_xruns += fragments;
   return 0;
 }
 
@@ -356,10 +332,8 @@ static int
 cbjack_process(jack_nframes_t nframes, void * arg)
 {
   cubeb * ctx = (cubeb *)arg;
-  unsigned int t_jack_xruns = ctx->jack_xruns;
+  int t_jack_xruns = ctx->jack_xruns;
   int i;
-
-  ctx->jack_xruns = 0;
 
   for (int j = 0; j < MAX_STREAMS; j++) {
     cubeb_stream *stm = &ctx->streams[j];
@@ -370,7 +344,10 @@ cbjack_process(jack_nframes_t nframes, void * arg)
       continue;
 
     // handle xruns by skipping audio that should have been played
-    stm->position += t_jack_xruns * ctx->fragment_size * stm->ratio;
+    for (i = 0; i < t_jack_xruns; i++) {
+        stm->position += ctx->fragment_size * stm->ratio;
+    }
+    ctx->jack_xruns -= t_jack_xruns;
 
     if (!stm->ports_ready)
       continue;
@@ -897,13 +874,6 @@ cbjack_stream_init(cubeb * context, cubeb_stream ** stream, char const * stream_
                                                     JACK_DEFAULT_AUDIO_TYPE,
                                                     JackPortIsOutput,
                                                     0);
-      if (!(output_stream_params->prefs & CUBEB_STREAM_PREF_JACK_NO_AUTO_CONNECT)) {
-        if (cbjack_connect_ports(stm, CBJACK_CP_OPTIONS_SKIP_INPUT) != CUBEB_OK) {
-          pthread_mutex_unlock(&stm->mutex);
-          cbjack_stream_destroy(stm);
-          return CUBEB_ERROR;
-        }
-      }
     }
   }
 
@@ -916,14 +886,13 @@ cbjack_stream_init(cubeb * context, cubeb_stream ** stream, char const * stream_
                                                     JACK_DEFAULT_AUDIO_TYPE,
                                                     JackPortIsInput,
                                                     0);
-      if (!(input_stream_params->prefs & CUBEB_STREAM_PREF_JACK_NO_AUTO_CONNECT)) {
-        if (cbjack_connect_ports(stm, CBJACK_CP_OPTIONS_SKIP_OUTPUT) != CUBEB_OK) {
-          pthread_mutex_unlock(&stm->mutex);
-          cbjack_stream_destroy(stm);
-          return CUBEB_ERROR;
-        }
-      }
     }
+  }
+
+  if (cbjack_connect_ports(stm) != CUBEB_OK) {
+    pthread_mutex_unlock(&stm->mutex);
+    cbjack_stream_destroy(stm);
+    return CUBEB_ERROR;
   }
 
   *stream = stm;

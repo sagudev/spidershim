@@ -12,13 +12,10 @@
 #include "jstypes.h"               // JS_PUBLIC_API
 #include "builtin/ModuleObject.h"  // js::{{Im,Ex}portEntry,Requested{Module,}}Object
 #include "frontend/EitherParser.h"  // js::frontend::EitherParser
-#include "frontend/ParserAtom.h"    // js::frontend::TaggedParserAtomIndex
-#include "frontend/Stencil.h"       // js::frontend::StencilModuleEntry
-#include "frontend/TaggedParserAtomIndexHasher.h"  // frontend::TaggedParserAtomIndexHasher
-#include "js/GCHashTable.h"                        // JS::GCHash{Map,Set}
-#include "js/GCVector.h"                           // JS::GCVector
-#include "js/RootingAPI.h"                         // JS::{Handle,Rooted}
-#include "vm/AtomsTable.h"                         // js::AtomSet
+#include "js/GCHashTable.h"         // JS::GCHash{Map,Set}
+#include "js/GCVector.h"            // JS::GCVector
+#include "js/RootingAPI.h"          // JS::{Handle,Rooted}
+#include "vm/AtomsTable.h"          // js::AtomSet
 
 struct JS_PUBLIC_API JSContext;
 class JS_PUBLIC_API JSAtom;
@@ -48,56 +45,61 @@ class MOZ_STACK_CLASS ModuleBuilder {
   bool processExport(frontend::ParseNode* exportNode);
   bool processExportFrom(frontend::BinaryNode* exportNode);
 
-  bool hasExportedName(frontend::TaggedParserAtomIndex name) const;
+  bool hasExportedName(JSAtom* name) const;
 
-  bool buildTables(frontend::StencilModuleMetadata& metadata);
+  using ExportEntryVector = GCVector<ExportEntryObject*>;
+  const ExportEntryVector& localExportEntries() const {
+    return localExportEntries_;
+  }
 
-  // During BytecodeEmitter we note top-level functions, and afterwards we must
-  // call finishFunctionDecls on the list.
-  bool noteFunctionDeclaration(JSContext* cx, uint32_t funIndex);
-  void finishFunctionDecls(frontend::StencilModuleMetadata& metadata);
-
-  void noteAsync(frontend::StencilModuleMetadata& metadata);
+  bool buildTables();
+  bool initModule(JS::Handle<ModuleObject*> module);
 
  private:
-  using RequestedModuleVector =
-      Vector<frontend::StencilModuleEntry, 0, js::SystemAllocPolicy>;
-
-  using AtomSet = HashSet<frontend::TaggedParserAtomIndex,
-                          frontend::TaggedParserAtomIndexHasher>;
-  using ExportEntryVector = Vector<frontend::StencilModuleEntry>;
-  using ImportEntryMap =
-      HashMap<frontend::TaggedParserAtomIndex, frontend::StencilModuleEntry,
-              frontend::TaggedParserAtomIndexHasher>;
+  using RequestedModuleVector = JS::GCVector<RequestedModuleObject*>;
+  using AtomSet = JS::GCHashSet<JSAtom*>;
+  using ImportEntryMap = JS::GCHashMap<JSAtom*, ImportEntryObject*>;
+  using RootedExportEntryVector = JS::Rooted<ExportEntryVector>;
+  using RootedRequestedModuleVector = JS::Rooted<RequestedModuleVector>;
+  using RootedAtomSet = JS::Rooted<AtomSet>;
+  using RootedImportEntryMap = JS::Rooted<ImportEntryMap>;
 
   JSContext* cx_;
   frontend::EitherParser eitherParser_;
+  RootedAtomSet requestedModuleSpecifiers_;
+  RootedRequestedModuleVector requestedModules_;
+  RootedImportEntryMap importEntries_;
+  RootedExportEntryVector exportEntries_;
+  RootedAtomSet exportNames_;
+  RootedExportEntryVector localExportEntries_;
+  RootedExportEntryVector indirectExportEntries_;
+  RootedExportEntryVector starExportEntries_;
 
-  // These are populated while parsing.
-  AtomSet requestedModuleSpecifiers_;
-  RequestedModuleVector requestedModules_;
-  ImportEntryMap importEntries_;
-  ExportEntryVector exportEntries_;
-  AtomSet exportNames_;
-
-  // These are populated while emitting bytecode.
-  frontend::FunctionDeclarationVector functionDecls_;
-
-  frontend::StencilModuleEntry* importEntryFor(
-      frontend::TaggedParserAtomIndex localName) const;
+  ImportEntryObject* importEntryFor(JSAtom* localName) const;
 
   bool processExportBinding(frontend::ParseNode* pn);
   bool processExportArrayBinding(frontend::ListNode* array);
   bool processExportObjectBinding(frontend::ListNode* obj);
 
-  bool appendExportEntry(frontend::TaggedParserAtomIndex exportName,
-                         frontend::TaggedParserAtomIndex localName,
+  bool appendImportEntryObject(JS::Handle<ImportEntryObject*> importEntry);
+
+  bool appendExportEntry(JS::Handle<JSAtom*> exportName,
+                         JS::Handle<JSAtom*> localName,
                          frontend::ParseNode* node = nullptr);
 
-  bool maybeAppendRequestedModule(frontend::TaggedParserAtomIndex specifier,
+  bool appendExportFromEntry(JS::Handle<JSAtom*> exportName,
+                             JS::Handle<JSAtom*> moduleRequest,
+                             JS::Handle<JSAtom*> importName,
+                             frontend::ParseNode* node);
+
+  bool appendExportEntryObject(JS::Handle<ExportEntryObject*> exportEntry);
+
+  bool maybeAppendRequestedModule(JS::Handle<JSAtom*> specifier,
                                   frontend::ParseNode* node);
 
-  void markUsedByStencil(frontend::TaggedParserAtomIndex name);
+  template <typename K, typename V>
+  ArrayObject* createArrayFromHashMap(
+      const JS::Rooted<JS::GCHashMap<K, V>>& map);
 };
 
 template <typename T>

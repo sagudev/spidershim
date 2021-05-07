@@ -4,21 +4,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(clippy::module_name_repetitions)]
-
-use neqo_common::{qdebug, Decoder, IncrementalDecoderUint};
+use neqo_common::{qdebug, Decoder, IncrementalDecoder, IncrementalDecoderResult};
 use neqo_transport::Connection;
 
 #[derive(Debug)]
-pub(crate) struct NewStreamTypeReader {
-    reader: IncrementalDecoderUint,
+pub struct NewStreamTypeReader {
+    reader: IncrementalDecoder,
     fin: bool,
 }
 
 impl NewStreamTypeReader {
     pub fn new() -> Self {
         Self {
-            reader: IncrementalDecoderUint::default(),
+            reader: IncrementalDecoder::decode_varint(),
             fin: false,
         }
     }
@@ -36,9 +34,15 @@ impl NewStreamTypeReader {
                     return None;
                 }
                 Ok((amount, false)) => {
-                    let res = self.reader.consume(&mut Decoder::from(&buf[..amount]));
-                    if res.is_some() {
-                        return res;
+                    let mut dec = Decoder::from(&buf[..amount]);
+                    match self.reader.consume(&mut dec) {
+                        IncrementalDecoderResult::Uint(v) => {
+                            return Some(v);
+                        }
+                        IncrementalDecoderResult::InProgress => {}
+                        _ => {
+                            return None;
+                        }
                     }
                 }
                 Err(e) => {

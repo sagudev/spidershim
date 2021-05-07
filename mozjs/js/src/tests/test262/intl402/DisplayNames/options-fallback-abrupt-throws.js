@@ -6,16 +6,22 @@ esid: sec-Intl.DisplayNames
 description: >
   Return abrupt completion from GetOption fallback
 info: |
-  Intl.DisplayNames ( locales , options )
+  Intl.DisplayNames ([ locales [ , options ]])
 
   1. If NewTarget is undefined, throw a TypeError exception.
   2. Let displayNames be ? OrdinaryCreateFromConstructor(NewTarget, "%DisplayNamesPrototype%",
     « [[InitializedDisplayNames]], [[Locale]], [[Style]], [[Type]], [[Fallback]], [[Fields]] »).
   ...
-  4. Let options be ? ToObject(options).
+  4. If options is undefined, then
+    a. Let options be ObjectCreate(null).
+  5. Else
+    a. Let options be ? ToObject(options).
   ...
-  12. Let type be ? GetOption(options, "type", "string", « "language", "region", "script", "currency" », undefined).
-  13. If type is undefined, throw a TypeError exception.
+  8. Let matcher be ? GetOption(options, "localeMatcher", "string", « "lookup", "best fit" », "best fit").
+  ...
+  11. Let style be ? GetOption(options, "style", "string", « "narrow", "short", "long" », "long").
+  ...
+  13. Let type be ? GetOption(options, "type", "string", « "language", "region", "script", "currency", "weekday", "month", "quarter", "dayPeriod", "dateTimeField" », "language").
   ...
   15. Let fallback be ? GetOption(options, "fallback", "string", « "code", "none" », "code").
   ...
@@ -28,7 +34,7 @@ features: [Intl.DisplayNames, Symbol]
 locale: [en]
 ---*/
 
-var options = { type: 'language' };
+var options = {};
 Object.defineProperty(options, 'fallback', {
   get() { throw new Test262Error(); },
 });

@@ -3,11 +3,8 @@ use crate::shared::{entities::EntityRefs, immediates::Immediates};
 use std::rc::Rc;
 
 pub(crate) struct Formats {
-    pub(crate) atomic_cas: Rc<InstructionFormat>,
-    pub(crate) atomic_rmw: Rc<InstructionFormat>,
     pub(crate) binary: Rc<InstructionFormat>,
-    pub(crate) binary_imm8: Rc<InstructionFormat>,
-    pub(crate) binary_imm64: Rc<InstructionFormat>,
+    pub(crate) binary_imm: Rc<InstructionFormat>,
     pub(crate) branch: Rc<InstructionFormat>,
     pub(crate) branch_float: Rc<InstructionFormat>,
     pub(crate) branch_icmp: Rc<InstructionFormat>,
@@ -20,12 +17,14 @@ pub(crate) struct Formats {
     pub(crate) cond_trap: Rc<InstructionFormat>,
     pub(crate) copy_special: Rc<InstructionFormat>,
     pub(crate) copy_to_ssa: Rc<InstructionFormat>,
+    pub(crate) extract_lane: Rc<InstructionFormat>,
     pub(crate) float_compare: Rc<InstructionFormat>,
     pub(crate) float_cond: Rc<InstructionFormat>,
     pub(crate) float_cond_trap: Rc<InstructionFormat>,
     pub(crate) func_addr: Rc<InstructionFormat>,
     pub(crate) heap_addr: Rc<InstructionFormat>,
     pub(crate) indirect_jump: Rc<InstructionFormat>,
+    pub(crate) insert_lane: Rc<InstructionFormat>,
     pub(crate) int_compare: Rc<InstructionFormat>,
     pub(crate) int_compare_imm: Rc<InstructionFormat>,
     pub(crate) int_cond: Rc<InstructionFormat>,
@@ -34,7 +33,6 @@ pub(crate) struct Formats {
     pub(crate) jump: Rc<InstructionFormat>,
     pub(crate) load: Rc<InstructionFormat>,
     pub(crate) load_complex: Rc<InstructionFormat>,
-    pub(crate) load_no_offset: Rc<InstructionFormat>,
     pub(crate) multiary: Rc<InstructionFormat>,
     pub(crate) nullary: Rc<InstructionFormat>,
     pub(crate) reg_fill: Rc<InstructionFormat>,
@@ -45,10 +43,8 @@ pub(crate) struct Formats {
     pub(crate) stack_store: Rc<InstructionFormat>,
     pub(crate) store: Rc<InstructionFormat>,
     pub(crate) store_complex: Rc<InstructionFormat>,
-    pub(crate) store_no_offset: Rc<InstructionFormat>,
     pub(crate) table_addr: Rc<InstructionFormat>,
     pub(crate) ternary: Rc<InstructionFormat>,
-    pub(crate) ternary_imm8: Rc<InstructionFormat>,
     pub(crate) trap: Rc<InstructionFormat>,
     pub(crate) unary: Rc<InstructionFormat>,
     pub(crate) unary_bool: Rc<InstructionFormat>,
@@ -80,9 +76,7 @@ impl Formats {
 
             binary: Builder::new("Binary").value().value().build(),
 
-            binary_imm8: Builder::new("BinaryImm8").value().imm(&imm.uimm8).build(),
-
-            binary_imm64: Builder::new("BinaryImm64").value().imm(&imm.imm64).build(),
+            binary_imm: Builder::new("BinaryImm").value().imm(&imm.imm64).build(),
 
             // The select instructions are controlled by the second VALUE operand.
             // The first VALUE operand is the controlling flag which has a derived type.
@@ -94,17 +88,22 @@ impl Formats {
                 .typevar_operand(1)
                 .build(),
 
-            ternary_imm8: Builder::new("TernaryImm8")
-                .value()
-                .imm(&imm.uimm8)
-                .value()
-                .build(),
-
             // Catch-all for instructions with many outputs and inputs and no immediate
             // operands.
             multiary: Builder::new("MultiAry").varargs().build(),
 
             nullary: Builder::new("NullAry").build(),
+
+            insert_lane: Builder::new("InsertLane")
+                .value()
+                .imm_with_name("lane", &imm.uimm8)
+                .value()
+                .build(),
+
+            extract_lane: Builder::new("ExtractLane")
+                .value()
+                .imm_with_name("lane", &imm.uimm8)
+                .build(),
 
             shuffle: Builder::new("Shuffle")
                 .value()
@@ -206,21 +205,6 @@ impl Formats {
 
             func_addr: Builder::new("FuncAddr").imm(&entities.func_ref).build(),
 
-            atomic_rmw: Builder::new("AtomicRmw")
-                .imm(&imm.memflags)
-                .imm(&imm.atomic_rmw_op)
-                .value()
-                .value()
-                .build(),
-
-            atomic_cas: Builder::new("AtomicCas")
-                .imm(&imm.memflags)
-                .value()
-                .value()
-                .value()
-                .typevar_operand(2)
-                .build(),
-
             load: Builder::new("Load")
                 .imm(&imm.memflags)
                 .value()
@@ -231,11 +215,6 @@ impl Formats {
                 .imm(&imm.memflags)
                 .varargs()
                 .imm(&imm.offset32)
-                .build(),
-
-            load_no_offset: Builder::new("LoadNoOffset")
-                .imm(&imm.memflags)
-                .value()
                 .build(),
 
             store: Builder::new("Store")
@@ -250,12 +229,6 @@ impl Formats {
                 .value()
                 .varargs()
                 .imm(&imm.offset32)
-                .build(),
-
-            store_no_offset: Builder::new("StoreNoOffset")
-                .imm(&imm.memflags)
-                .value()
-                .value()
                 .build(),
 
             stack_load: Builder::new("StackLoad")

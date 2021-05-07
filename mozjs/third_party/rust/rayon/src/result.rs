@@ -5,11 +5,11 @@
 //!
 //! [std::result]: https://doc.rust-lang.org/stable/std/result/
 
-use crate::iter::plumbing::*;
-use crate::iter::*;
+use iter::plumbing::*;
+use iter::*;
 use std::sync::Mutex;
 
-use crate::option;
+use option;
 
 /// Parallel iterator over a result
 #[derive(Debug, Clone)]
@@ -35,7 +35,7 @@ delegate_indexed_iterator! {
 
 /// Parallel iterator over an immutable reference to a result
 #[derive(Debug)]
-pub struct Iter<'a, T: Sync> {
+pub struct Iter<'a, T: Sync + 'a> {
     inner: option::IntoIter<&'a T>,
 }
 
@@ -65,7 +65,7 @@ delegate_indexed_iterator! {
 
 /// Parallel iterator over a mutable reference to a result
 #[derive(Debug)]
-pub struct IterMut<'a, T: Send> {
+pub struct IterMut<'a, T: Send + 'a> {
     inner: option::IntoIter<&'a mut T>,
 }
 

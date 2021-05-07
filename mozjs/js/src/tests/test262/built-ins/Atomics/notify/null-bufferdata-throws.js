@@ -4,21 +4,15 @@
 /*---
 esid: sec-atomics.notify
 description: >
-  A null value for bufferData (detached) throws a TypeError
+  A null value for bufferData throws a TypeError
 info: |
   Atomics.notify( typedArray, index, count )
 
-  Let buffer be ? ValidateIntegerTypedArray(typedArray, true).
-  ...
-
-    Let buffer be ? ValidateTypedArray(typedArray).
+  1.Let buffer be ? ValidateSharedIntegerTypedArray(typedArray, true).
     ...
-
-      If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
-      ...
-
-        If arrayBuffer.[[ArrayBufferData]] is null, return true.
-
+      9.If IsSharedArrayBuffer(buffer) is false, throw a TypeError exception.
+        ...
+          3.If bufferData is null, return false.
 includes: [detachArrayBuffer.js]
 features: [ArrayBuffer, Atomics, TypedArray]
 ---*/
@@ -36,7 +30,7 @@ const poisoned = {
 try {
   $DETACHBUFFER(i32a.buffer); // Detaching a non-shared ArrayBuffer sets the [[ArrayBufferData]] value to null
 } catch (error) {
-  $ERROR(`An unexpected error occurred when detaching ArrayBuffer: ${error.message}`);
+  $ERROR(`An unexpected error occurred when detaching ArrayBuffer: ${error}`);
 }
 
 assert.throws(TypeError, function() {

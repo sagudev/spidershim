@@ -7,6 +7,9 @@ function TestObject(a) {
     if (a > 0) {
         new TestObject(a - 1);
     }
+    if (a == 0) {
+        markObjectPropertiesUnknown(this);
+    }
 }
 
 // Force analysis. There may be a better way.

@@ -1,25 +1,26 @@
 use core::fmt;
 use core::marker::PhantomData;
 use core::pin::Pin;
-use futures_core::ready;
 use futures_core::stream::{Stream, FusedStream};
 use futures_core::task::{Context, Poll};
 use futures_sink::Sink;
-use pin_project_lite::pin_project;
+use pin_utils::{unsafe_pinned, unsafe_unpinned};
 
-pin_project! {
-    /// Sink for the [`with_flat_map`](super::SinkExt::with_flat_map) method.
-    #[must_use = "sinks do nothing unless polled"]
-    pub struct WithFlatMap<Si, Item, U, St, F> {
-        #[pin]
-        sink: Si,
-        f: F,
-        #[pin]
-        stream: Option<St>,
-        buffer: Option<Item>,
-        _marker: PhantomData<fn(U)>,
-    }
+/// Sink for the [`with_flat_map`](super::SinkExt::with_flat_map) method.
+#[must_use = "sinks do nothing unless polled"]
+pub struct WithFlatMap<Si, Item, U, St, F> {
+    sink: Si,
+    f: F,
+    stream: Option<St>,
+    buffer: Option<Item>,
+    _marker: PhantomData<fn(U)>,
 }
+
+impl<Si, Item, U, St, F> Unpin for WithFlatMap<Si, Item, U, St, F>
+where
+    Si: Unpin,
+    St: Unpin,
+{}
 
 impl<Si, Item, U, St, F> fmt::Debug for WithFlatMap<Si, Item, U, St, F>
 where
@@ -42,8 +43,12 @@ where
     F: FnMut(U) -> St,
     St: Stream<Item = Result<Item, Si::Error>>,
 {
+    unsafe_pinned!(sink: Si);
+    unsafe_unpinned!(f: F);
+    unsafe_pinned!(stream: Option<St>);
+
     pub(super) fn new(sink: Si, f: F) -> Self {
-        Self {
+        WithFlatMap {
             sink,
             f,
             stream: None,
@@ -52,31 +57,55 @@ where
         }
     }
 
-    delegate_access_inner!(sink, Si, ());
+    /// Get a shared reference to the inner sink.
+    pub fn get_ref(&self) -> &Si {
+        &self.sink
+    }
+
+    /// Get a mutable reference to the inner sink.
+    pub fn get_mut(&mut self) -> &mut Si {
+        &mut self.sink
+    }
+
+    /// Get a pinned mutable reference to the inner sink.
+    pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut Si> {
+        self.sink()
+    }
+
+    /// Consumes this combinator, returning the underlying sink.
+    ///
+    /// Note that this may discard intermediate state of this combinator, so
+    /// care should be taken to avoid losing resources when this is called.
+    pub fn into_inner(self) -> Si {
+        self.sink
+    }
 
     fn try_empty_stream(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), Si::Error>> {
-        let mut this = self.project();
+        let WithFlatMap { sink, stream, buffer, .. } =
+            unsafe { self.get_unchecked_mut() };
+        let mut sink = unsafe { Pin::new_unchecked(sink) };
+        let mut stream = unsafe { Pin::new_unchecked(stream) };
 
-        if this.buffer.is_some() {
-            ready!(this.sink.as_mut().poll_ready(cx))?;
-            let item = this.buffer.take().unwrap();
-            this.sink.as_mut().start_send(item)?;
+        if buffer.is_some() {
+            ready!(sink.as_mut().poll_ready(cx))?;
+            let item = buffer.take().unwrap();
+            sink.as_mut().start_send(item)?;
         }
-        if let Some(mut some_stream) = this.stream.as_mut().as_pin_mut() {
+        if let Some(mut some_stream) = stream.as_mut().as_pin_mut() {
             while let Some(item) = ready!(some_stream.as_mut().poll_next(cx)?) {
-                match this.sink.as_mut().poll_ready(cx)? {
-                    Poll::Ready(()) => this.sink.as_mut().start_send(item)?,
+                match sink.as_mut().poll_ready(cx)? {
+                    Poll::Ready(()) => sink.as_mut().start_send(item)?,
                     Poll::Pending => {
-                        *this.buffer = Some(item);
+                        *buffer = Some(item);
                         return Poll::Pending;
                     }
                 };
             }
         }
-        this.stream.set(None);
+        stream.set(None);
         Poll::Ready(Ok(()))
     }
 }
@@ -90,7 +119,16 @@ where
 {
     type Item = S::Item;
 
-    delegate_stream!(sink);
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<S::Item>> {
+        self.sink().poll_next(cx)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.sink.size_hint()
+    }
 }
 
 impl<S, Item, U, St, F> FusedStream for WithFlatMap<S, Item, U, St, F>
@@ -120,13 +158,12 @@ where
     }
 
     fn start_send(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         item: U,
     ) -> Result<(), Self::Error> {
-        let mut this = self.project();
-
-        assert!(this.stream.is_none());
-        this.stream.set(Some((this.f)(item)));
+        assert!(self.stream.is_none());
+        let stream = (self.as_mut().f())(item);
+        self.stream().set(Some(stream));
         Ok(())
     }
 
@@ -135,7 +172,7 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         ready!(self.as_mut().try_empty_stream(cx)?);
-        self.project().sink.poll_flush(cx)
+        self.as_mut().sink().poll_flush(cx)
     }
 
     fn poll_close(
@@ -143,6 +180,6 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         ready!(self.as_mut().try_empty_stream(cx)?);
-        self.project().sink.poll_close(cx)
+        self.as_mut().sink().poll_close(cx)
     }
 }

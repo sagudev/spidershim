@@ -10,6 +10,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/EnumeratedArray.h"
+#include "mozilla/GuardObjects.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/Maybe.h"
 
@@ -22,12 +23,12 @@
 #include "js/GCAnnotations.h"
 #include "js/GCPolicyAPI.h"
 #include "js/GCTypeMacros.h"  // JS_FOR_EACH_PUBLIC_{,TAGGED_}GC_POINTER_TYPE
-#include "js/HashTable.h"
 #include "js/HeapAPI.h"
 #include "js/ProfilingStack.h"
 #include "js/Realm.h"
 #include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
+#include "js/Utility.h"
 
 /*
  * [SMDOC] Stack Rooting
@@ -311,13 +312,12 @@ class MOZ_NON_MEMMOVABLE Heap : public js::HeapBase<T, Heap<T>> {
   explicit Heap(const T& p) { init(p); }
 
   /*
-   * For Heap, move semantics are equivalent to copy semantics. However, we want
-   * the copy constructor to be explicit, and an explicit move constructor
-   * breaks common usage of move semantics, so we need to define both, even
-   * though they are equivalent.
+   * For Heap, move semantics are equivalent to copy semantics. In C++, a
+   * copy constructor taking const-ref is the way to get a single function
+   * that will be used for both lvalue and rvalue copies, so we can simply
+   * omit the rvalue variant.
    */
   explicit Heap(const Heap<T>& other) { init(other.ptr); }
-  Heap(Heap<T>&& other) { init(other.ptr); }
 
   Heap& operator=(Heap<T>&& other) {
     set(other.unbarrieredGet());
@@ -831,8 +831,7 @@ struct JS_PUBLIC_API MovableCellHasher {
   static bool ensureHash(const Lookup& l);
   static HashNumber hash(const Lookup& l);
   static bool match(const Key& k, const Lookup& l);
-  // The rekey hash policy method is not provided since you dont't need to
-  // rekey any more when using this policy.
+  static void rekey(Key& k, const Key& newKey) { k = newKey; }
 };
 
 template <typename T>
@@ -852,6 +851,7 @@ struct JS_PUBLIC_API MovableCellHasher<JS::Heap<T>> {
   static bool match(const Key& k, const Lookup& l) {
     return MovableCellHasher<T>::match(k.unbarrieredGet(), l);
   }
+  static void rekey(Key& k, const Key& newKey) { k.unsafeSet(newKey); }
 };
 
 }  // namespace js
@@ -925,22 +925,15 @@ enum class AutoGCRooterKind : uint8_t {
   Limit
 };
 
-namespace detail {
-// Dummy type to store root list entry pointers as. This code does not just use
-// the actual type, because then eg JSObject* and JSFunction* would be assumed
-// to never alias but they do (they are stored in the same list). Also, do not
-// use `void*` so that `Rooted<void*>` is a compile error.
-struct RootListEntry;
-}  // namespace detail
-
+// Our instantiations of Rooted<void*> and PersistentRooted<void*> require an
+// instantiation of MapTypeToRootKind.
 template <>
-struct MapTypeToRootKind<detail::RootListEntry*> {
+struct MapTypeToRootKind<void*> {
   static const RootKind kind = RootKind::Traceable;
 };
 
 using RootedListHeads =
-    mozilla::EnumeratedArray<RootKind, RootKind::Limit,
-                             Rooted<detail::RootListEntry*>*>;
+    mozilla::EnumeratedArray<RootKind, RootKind::Limit, Rooted<void*>*>;
 
 using AutoRooterListHeads =
     mozilla::EnumeratedArray<AutoGCRooterKind, AutoGCRooterKind::Limit,
@@ -1080,7 +1073,7 @@ class MOZ_RAII Rooted : public js::RootedBase<T, Rooted<T>> {
   inline void registerWithRootLists(RootedListHeads& roots) {
     this->stack = &roots[JS::MapTypeToRootKind<T>::kind];
     this->prev = *stack;
-    *stack = reinterpret_cast<Rooted<detail::RootListEntry*>*>(this);
+    *stack = reinterpret_cast<Rooted<void*>*>(this);
   }
 
   inline RootedListHeads& rootLists(RootingContext* cx) {
@@ -1130,8 +1123,7 @@ class MOZ_RAII Rooted : public js::RootedBase<T, Rooted<T>> {
   }
 
   ~Rooted() {
-    MOZ_ASSERT(*stack ==
-               reinterpret_cast<Rooted<detail::RootListEntry*>*>(this));
+    MOZ_ASSERT(*stack == reinterpret_cast<Rooted<void*>*>(this));
     *stack = prev;
   }
 
@@ -1163,12 +1155,12 @@ class MOZ_RAII Rooted : public js::RootedBase<T, Rooted<T>> {
 
  private:
   /*
-   * These need to be templated on RootListEntry* to avoid aliasing issues
-   * between, for example, Rooted<JSObject*> and Rooted<JSFunction*>, which use
-   * the same stack head pointer for different classes.
+   * These need to be templated on void* to avoid aliasing issues between, for
+   * example, Rooted<JSObject> and Rooted<JSFunction>, which use the same
+   * stack head pointer for different classes.
    */
-  Rooted<detail::RootListEntry*>** stack;
-  Rooted<detail::RootListEntry*>* prev;
+  Rooted<void*>** stack;
+  Rooted<void*>* prev;
 
   Ptr ptr;
 
@@ -1297,13 +1289,11 @@ inline MutableHandle<T>::MutableHandle(PersistentRooted<T>* root) {
   ptr = root->address();
 }
 
-JS_PUBLIC_API void AddPersistentRoot(
-    RootingContext* cx, RootKind kind,
-    PersistentRooted<detail::RootListEntry*>* root);
+JS_PUBLIC_API void AddPersistentRoot(RootingContext* cx, RootKind kind,
+                                     PersistentRooted<void*>* root);
 
-JS_PUBLIC_API void AddPersistentRoot(
-    JSRuntime* rt, RootKind kind,
-    PersistentRooted<detail::RootListEntry*>* root);
+JS_PUBLIC_API void AddPersistentRoot(JSRuntime* rt, RootKind kind,
+                                     PersistentRooted<void*>* root);
 
 /**
  * A copyable, assignable global GC root type with arbitrary lifetime, an
@@ -1352,17 +1342,15 @@ class PersistentRooted
   void registerWithRootLists(RootingContext* cx) {
     MOZ_ASSERT(!initialized());
     JS::RootKind kind = JS::MapTypeToRootKind<T>::kind;
-    AddPersistentRoot(
-        cx, kind,
-        reinterpret_cast<JS::PersistentRooted<detail::RootListEntry*>*>(this));
+    AddPersistentRoot(cx, kind,
+                      reinterpret_cast<JS::PersistentRooted<void*>*>(this));
   }
 
   void registerWithRootLists(JSRuntime* rt) {
     MOZ_ASSERT(!initialized());
     JS::RootKind kind = JS::MapTypeToRootKind<T>::kind;
-    AddPersistentRoot(
-        rt, kind,
-        reinterpret_cast<JS::PersistentRooted<detail::RootListEntry*>*>(this));
+    AddPersistentRoot(rt, kind,
+                      reinterpret_cast<JS::PersistentRooted<void*>*>(this));
   }
 
  public:
@@ -1490,7 +1478,7 @@ class MutableWrappedPtrOperations<UniquePtr<T, D>, Container>
   UniquePtr<T, D>& uniquePtr() { return static_cast<Container*>(this)->get(); }
 
  public:
-  [[nodiscard]] typename UniquePtr<T, D>::Pointer release() {
+  MOZ_MUST_USE typename UniquePtr<T, D>::Pointer release() {
     return uniquePtr().release();
   }
   void reset(T* ptr = T()) { uniquePtr().reset(ptr); }

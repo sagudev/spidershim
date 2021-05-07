@@ -19,7 +19,7 @@ impl<I> Skip<I>
 where
     I: IndexedParallelIterator,
 {
-    /// Creates a new `Skip` iterator.
+    /// Create a new `Skip` iterator.
     pub(super) fn new(base: I, n: usize) -> Self {
         let n = min(base.len(), n);
         Skip { base, n }

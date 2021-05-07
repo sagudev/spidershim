@@ -26,17 +26,17 @@ info: |
   [[Type]]: "type"
   [[Fallback]]: "fallback"
 
-  Intl.DisplayNames ( locales , options )
+  Intl.DisplayNames ([ locales [ , options ]])
 
   ...
   8. Let matcher be ? GetOption(options, "localeMatcher", "string", « "lookup", "best fit" », "best fit").
   ...
   10. Let r be ResolveLocale(%DisplayNames%.[[AvailableLocales]], requestedLocales, opt,
     %DisplayNames%.[[RelevantExtensionKeys]]).
-  10. Let style be ? GetOption(options, "style", "string", « "narrow", "short", "long" », "long").
+  11. Let style be ? GetOption(options, "style", "string", « "narrow", "short", "long" », "long").
   ...
-  12. Let type be ? GetOption(options, "type", "string", « "language", "region", "script", "currency" », undefined).
-  13. If type is undefined, throw a TypeError exception.
+  13. Let type be ? GetOption(options, "type", "string", « "language", "region", "script", "currency",
+    "weekday", "month", "quarter", "dayPeriod", "dateTimeField" », "language").
   ...
   15. Let fallback be ? GetOption(options, "fallback", "string", « "code", "none" », "code").
   ...
@@ -54,34 +54,31 @@ features: [Intl.DisplayNames]
 includes: [propertyHelper.js]
 ---*/
 
-const styles = ['narrow', 'short', 'long'];
-const types = ['language', 'region', 'script', 'currency'];
+var styles = ['narrow', 'short', 'long'];
 
-types.forEach(type => {
-  styles.forEach(style => {
-    const dn = new Intl.DisplayNames('en-US', { style, type });
-    const options = dn.resolvedOptions();
+styles.forEach(style => {
+  var dn = new Intl.DisplayNames('en-US', { style });
+  var options = dn.resolvedOptions();
 
-    verifyProperty(options, 'style', {
-      value: style,
-      writable: true,
-      enumerable: true,
-      configurable: true
-    });
-
-    verifyProperty(options, 'type', {
-      value: type,
-      writable: true,
-      enumerable: true,
-      configurable: true
-    });
-
-    verifyProperty(options, 'fallback', {
-      value: 'code',
-      writable: true,
-      enumerable: true,
-      configurable: true
-    });
+  verifyProperty(options, 'style', {
+    value: style,
+    writable: true,
+    enumerable: true,
+    configurable: true
+  });
+  
+  verifyProperty(options, 'type', {
+    value: 'language',
+    writable: true,
+    enumerable: true,
+    configurable: true
+  });
+  
+  verifyProperty(options, 'fallback', {
+    value: 'code',
+    writable: true,
+    enumerable: true,
+    configurable: true
   });
 });
 

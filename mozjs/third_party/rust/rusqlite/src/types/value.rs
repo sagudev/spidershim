@@ -109,7 +109,6 @@ where
 }
 
 impl Value {
-    /// Returns SQLite fundamental datatype.
     pub fn data_type(&self) -> Type {
         match *self {
             Value::Null => Type::Null,

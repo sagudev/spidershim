@@ -65,9 +65,9 @@ use crate::ir;
 use crate::ir::entities::AnyEntity;
 use crate::ir::instructions::{BranchInfo, CallInfo, InstructionFormat, ResolvedConstraint};
 use crate::ir::{
-    types, ArgumentLoc, ArgumentPurpose, Block, Constant, FuncRef, Function, GlobalValue, Inst,
-    InstructionData, JumpTable, Opcode, SigRef, StackSlot, StackSlotKind, Type, Value, ValueDef,
-    ValueList, ValueLoc,
+    types, ArgumentLoc, Block, Constant, FuncRef, Function, GlobalValue, Inst, InstructionData,
+    JumpTable, Opcode, SigRef, StackSlot, StackSlotKind, Type, Value, ValueDef, ValueList,
+    ValueLoc,
 };
 use crate::isa::TargetIsa;
 use crate::iterators::IteratorExtras;
@@ -749,21 +749,17 @@ impl<'a> Verifier<'a> {
             }
 
             // Exhaustive list so we can't forget to add new formats
-            AtomicCas { .. }
-            | AtomicRmw { .. }
-            | LoadNoOffset { .. }
-            | StoreNoOffset { .. }
-            | Unary { .. }
+            Unary { .. }
             | UnaryConst { .. }
             | UnaryImm { .. }
             | UnaryIeee32 { .. }
             | UnaryIeee64 { .. }
             | UnaryBool { .. }
             | Binary { .. }
-            | BinaryImm8 { .. }
-            | BinaryImm64 { .. }
+            | BinaryImm { .. }
             | Ternary { .. }
-            | TernaryImm8 { .. }
+            | InsertLane { .. }
+            | ExtractLane { .. }
             | Shuffle { .. }
             | IntCompare { .. }
             | IntCompareImm { .. }
@@ -1477,8 +1473,7 @@ impl<'a> Verifier<'a> {
                             ),
                         ));
                     }
-                    if abi.purpose == ArgumentPurpose::StructArgument(slot.size) {
-                    } else if slot.size != abi.value_type.bytes() {
+                    if slot.size != abi.value_type.bytes() {
                         return errors.fatal((
                             inst,
                             self.context(inst),
@@ -1917,20 +1912,20 @@ impl<'a> Verifier<'a> {
                     Ok(())
                 }
             }
-            ir::InstructionData::BinaryImm8 {
+            ir::InstructionData::ExtractLane {
                 opcode: ir::instructions::Opcode::Extractlane,
-                imm: lane,
+                lane,
                 arg,
                 ..
             }
-            | ir::InstructionData::TernaryImm8 {
+            | ir::InstructionData::InsertLane {
                 opcode: ir::instructions::Opcode::Insertlane,
-                imm: lane,
+                lane,
                 args: [arg, _],
                 ..
             } => {
                 // We must be specific about the opcodes above because other instructions are using
-                // the same formats.
+                // the ExtractLane/InsertLane formats.
                 let ty = self.func.dfg.value_type(arg);
                 if u16::from(lane) >= ty.lane_count() {
                     errors.fatal((
@@ -1989,20 +1984,6 @@ impl<'a> Verifier<'a> {
                     AnyEntity::Function,
                     format!("Return value at position {} has an invalid type", i),
                 ))
-            });
-
-        self.func
-            .signature
-            .returns
-            .iter()
-            .enumerate()
-            .for_each(|(i, ret)| {
-                if let ArgumentPurpose::StructArgument(_) = ret.purpose {
-                    errors.report((
-                        AnyEntity::Function,
-                        format!("Return value at position {} can't be an struct argument", i),
-                    ))
-                }
             });
 
         if errors.has_error() {

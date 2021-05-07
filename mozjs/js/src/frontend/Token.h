@@ -16,9 +16,9 @@
 
 #include <stdint.h>  // uint32_t
 
-#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex, TrivialTaggedParserAtomIndex
 #include "frontend/TokenKind.h"  // js::frontend::TokenKind
 #include "js/RegExpFlags.h"      // JS::RegExpFlags
+#include "vm/StringType.h"       // js::PropertyName
 
 namespace js {
 
@@ -143,7 +143,11 @@ struct Token {
    private:
     friend struct Token;
 
-    TrivialTaggedParserAtomIndex atom;
+    /** Non-numeric atom. */
+    PropertyName* name;
+
+    /** Potentially-numeric atom. */
+    JSAtom* atom;
 
     struct {
       /** Numeric literal's value. */
@@ -164,15 +168,15 @@ struct Token {
 
   // Mutators
 
-  void setName(TaggedParserAtomIndex name) {
+  void setName(PropertyName* name) {
     MOZ_ASSERT(type == TokenKind::Name || type == TokenKind::PrivateName);
-    u.atom = TrivialTaggedParserAtomIndex::from(name);
+    u.name = name;
   }
 
-  void setAtom(TaggedParserAtomIndex atom) {
+  void setAtom(JSAtom* atom) {
     MOZ_ASSERT(type == TokenKind::String || type == TokenKind::TemplateHead ||
                type == TokenKind::NoSubsTemplate);
-    u.atom = TrivialTaggedParserAtomIndex::from(atom);
+    u.atom = atom;
   }
 
   void setRegExpFlags(JS::RegExpFlags flags) {
@@ -188,12 +192,12 @@ struct Token {
 
   // Type-safe accessors
 
-  TaggedParserAtomIndex name() const {
+  PropertyName* name() const {
     MOZ_ASSERT(type == TokenKind::Name || type == TokenKind::PrivateName);
-    return u.atom;
+    return u.name->JSAtom::asPropertyName();  // poor-man's type verification
   }
 
-  TaggedParserAtomIndex atom() const {
+  JSAtom* atom() const {
     MOZ_ASSERT(type == TokenKind::String || type == TokenKind::TemplateHead ||
                type == TokenKind::NoSubsTemplate);
     return u.atom;

@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import attr
-
 from ..result import Issue
 
 
@@ -13,7 +11,6 @@ class UnixFormatter(object):
     `<FILENAME>:<LINE>[:<COL>]: <RULE> <LEVEL>: <MESSAGE>`.
 
     """
-
     fmt = "{path}:{lineno}:{column} {rule} {level}: {message}"
 
     def __call__(self, result):
@@ -23,8 +20,8 @@ class UnixFormatter(object):
             for err in errors:
                 assert isinstance(err, Issue)
 
-                slots = attr.asdict(err)
-                slots["path"] = slots["relpath"]
+                slots = {s: getattr(err, s) for s in err.__slots__}
+                slots["path"] = slots['relpath']
                 slots["column"] = "%d:" % slots["column"] if slots["column"] else ""
                 slots["rule"] = slots["rule"] or slots["linter"]
 

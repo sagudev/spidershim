@@ -22,16 +22,28 @@
 // by the headers included above.
 namespace JS {
 
+class Latin1Chars;
+class Latin1CharsZ;
+class ConstTwoByteChars;
+class TwoByteChars;
+class TwoByteCharsZ;
+class UTF8Chars;
+class WTF8Chars;
+class UTF8CharsZ;
+
 using ValueVector = JS::GCVector<JS::Value>;
 using IdVector = JS::GCVector<jsid>;
 using ScriptVector = JS::GCVector<JSScript*>;
+
+template <typename UnitT>
+class SourceText;
 
 class HandleValueArray;
 
 class ObjectOpResult;
 class PropertyResult;
 
-struct JS_PUBLIC_API PropertyDescriptor;
+enum class SymbolCode : uint32_t;
 
 }  // namespace JS
 
@@ -55,10 +67,17 @@ using JS::UndefinedValue;
 using JS::Value;
 using JS::ValueType;
 
+using JS::ConstTwoByteChars;
 using JS::Latin1Char;
+using JS::Latin1Chars;
+using JS::Latin1CharsZ;
+using JS::TwoByteChars;
+using JS::TwoByteCharsZ;
 using JS::UniqueChars;
-using JS::UniqueLatin1Chars;
 using JS::UniqueTwoByteChars;
+using JS::UTF8Chars;
+using JS::UTF8CharsZ;
+using JS::WTF8Chars;
 
 using JS::Ok;
 using JS::OOM;
@@ -137,11 +156,12 @@ using JS::HandleValueArray;
 using JS::ObjectOpResult;
 using JS::PropertyResult;
 
-using JS::PropertyDescriptor;
-
 using JS::Compartment;
 using JS::Realm;
 using JS::Zone;
+
+using JS::Symbol;
+using JS::SymbolCode;
 
 using JS::BigInt;
 

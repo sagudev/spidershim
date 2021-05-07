@@ -1,3 +1,4 @@
+load(libdir + "dummyModuleResolveHook.js");
 const count = 10;
 
 let s = "";
@@ -5,11 +6,11 @@ for (let i = 0; i < count; i++)
     s += "export let e" + i + " = " + (i * i) + ";\n";
 let og = parseModule(s);
 let bc = codeModule(og);
-let a = registerModule('a', decodeModule(bc));
+let a = moduleRepo['a'] = decodeModule(bc);
 
 og = parseModule("import * as ns from 'a'");
 bc = codeModule(og);
-let b = registerModule('b', decodeModule(bc));
+let b = moduleRepo['b'] = decodeModule(bc);
 
 b.declarationInstantiation();
 b.evaluation();

@@ -46,4 +46,7 @@ assert(!Reflect.set(regExpProxy, "global", true));
 regExpProxy.lastIndex = 1;
 assert.sameValue(regExp.lastIndex, 1);
 
+regExpProxy.__proto__ = null;
+assert.sameValue(Object.getPrototypeOf(regExp), null);
+
 reportCompare(0, 0);

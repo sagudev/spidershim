@@ -12,16 +12,15 @@
 
 #include "builtin/MapObject.h"
 #include "debugger/DebugAPI.h"
+#include "frontend/BinASTParserBase.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/Parser.h"
 #include "gc/ClearEdgesTracer.h"
 #include "gc/GCInternals.h"
 #include "gc/Marking.h"
-#include "jit/JitFrames.h"
-#include "jit/JitRuntime.h"
+#include "jit/MacroAssembler.h"
 #include "js/HashTable.h"
 #include "js/ValueArray.h"
-#include "vm/HelperThreadState.h"
 #include "vm/JSContext.h"
 #include "vm/JSONParser.h"
 
@@ -75,10 +74,10 @@ inline void JS::PersistentRooted<T>::trace(JSTracer* trc, const char* name) {
 }
 
 template <typename T>
-static inline void TraceExactStackRootList(
-    JSTracer* trc, JS::Rooted<JS::detail::RootListEntry*>* listHead,
-    const char* name) {
-  auto* typedList = reinterpret_cast<JS::Rooted<T>*>(listHead);
+static inline void TraceExactStackRootList(JSTracer* trc,
+                                           JS::Rooted<void*>* listHead,
+                                           const char* name) {
+  auto typedList = reinterpret_cast<JS::Rooted<T>*>(listHead);
   for (JS::Rooted<T>* root = typedList; root; root = root->previous()) {
     root->trace(trc, name);
   }
@@ -112,8 +111,7 @@ static void TraceExactStackRoots(JSContext* cx, JSTracer* trc) {
 
 template <typename T>
 static inline void TracePersistentRootedList(
-    JSTracer* trc,
-    LinkedList<PersistentRooted<JS::detail::RootListEntry*>>& list,
+    JSTracer* trc, LinkedList<PersistentRooted<void*>>& list,
     const char* name) {
   auto& typedList = reinterpret_cast<LinkedList<PersistentRooted<T>>&>(list);
   for (PersistentRooted<T>* root : typedList) {
@@ -145,7 +143,7 @@ static void TracePersistentRooted(JSRuntime* rt, JSTracer* trc) {
 
 template <typename T>
 static void FinishPersistentRootedChain(
-    LinkedList<PersistentRooted<JS::detail::RootListEntry*>>& listArg) {
+    LinkedList<PersistentRooted<void*>>& listArg) {
   auto& list = reinterpret_cast<LinkedList<PersistentRooted<T>>&>(listArg);
   while (!list.isEmpty()) {
     list.getFirst()->reset();
@@ -246,8 +244,6 @@ void StackShape::trace(JSTracer* trc) {
   }
 }
 
-void StackBaseShape::trace(JSTracer* trc) { proto.trace(trc); }
-
 void PropertyDescriptor::trace(JSTracer* trc) {
   if (obj) {
     TraceRoot(trc, &obj, "Descriptor::obj");
@@ -270,12 +266,10 @@ void js::gc::GCRuntime::traceRuntimeForMajorGC(JSTracer* trc,
   MOZ_ASSERT(!TlsContext.get()->suppressGC);
 
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_ROOTS);
-
-  // We only need to trace atoms when we're marking; atoms are never moved by
-  // compacting GC.
-  if (atomsZone->isGCMarking()) {
+  if (atomsZone->isCollecting()) {
     traceRuntimeAtoms(trc, session.checkAtomsAccess());
   }
+  traceKeptAtoms(trc);
 
   {
     // Trace incoming cross compartment edges from uncollected compartments,
@@ -339,7 +333,18 @@ void js::gc::GCRuntime::traceRuntimeAtoms(JSTracer* trc,
   rt->tracePermanentAtoms(trc);
   TraceAtoms(trc, access);
   TraceWellKnownSymbols(trc);
-  jit::JitRuntime::TraceAtomZoneRoots(trc, access);
+  jit::JitRuntime::Trace(trc, access);
+}
+
+void js::gc::GCRuntime::traceKeptAtoms(JSTracer* trc) {
+  // We don't have exact rooting information for atoms while parsing. When
+  // this is happeninng we set a flag on the zone and trace all atoms in the
+  // zone's cache.
+  for (GCZonesIter zone(this); !zone.done(); zone.next()) {
+    if (zone->hasKeptAtoms()) {
+      zone->traceAtomCache(trc);
+    }
+  }
 }
 
 void js::gc::GCRuntime::traceRuntimeCommon(JSTracer* trc,
@@ -446,22 +451,20 @@ void GCRuntime::traceEmbeddingGrayRoots(JSTracer* trc) {
 
 #ifdef DEBUG
 class AssertNoRootsTracer final : public JS::CallbackTracer {
-  void onChild(const JS::GCCellPtr& thing) override {
+  bool onChild(const JS::GCCellPtr& thing) override {
     MOZ_CRASH("There should not be any roots during runtime shutdown");
+    return true;
   }
 
  public:
-  // This skips tracking WeakMap entries because they are not roots.
   explicit AssertNoRootsTracer(JSRuntime* rt)
-      : JS::CallbackTracer(rt, JS::TracerKind::Callback,
-                           JS::WeakMapTraceAction::Skip) {}
+      : JS::CallbackTracer(rt, TraceWeakMapKeysValues) {}
 };
 #endif  // DEBUG
 
 void js::gc::GCRuntime::finishRoots() {
   AutoNoteSingleThreadedRegion anstr;
 
-  rt->finishParserAtoms();
   rt->finishAtoms();
 
   rootsHash.ref().clear();
@@ -496,55 +499,42 @@ void js::gc::GCRuntime::checkNoRuntimeRoots(AutoGCSession& session) {
 
 // Append traced things to a buffer on the zone for use later in the GC.
 // See the comment in GCRuntime.h above grayBufferState for details.
-class BufferGrayRootsTracer final : public GenericTracer {
+class BufferGrayRootsTracer final : public JS::CallbackTracer {
   // Set to false if we OOM while buffering gray roots.
   bool bufferingGrayRootsFailed;
 
-  JSObject* onObjectEdge(JSObject* obj) override { return bufferRoot(obj); }
-  JSString* onStringEdge(JSString* string) override {
-    return bufferRoot(string);
+  bool onObjectEdge(JSObject** objp) override { return bufferRoot(*objp); }
+  bool onStringEdge(JSString** stringp) override {
+    return bufferRoot(*stringp);
   }
-  js::BaseScript* onScriptEdge(js::BaseScript* script) override {
-    return bufferRoot(script);
+  bool onScriptEdge(js::BaseScript** scriptp) override {
+    return bufferRoot(*scriptp);
   }
-  JS::Symbol* onSymbolEdge(JS::Symbol* symbol) override {
-    return bufferRoot(symbol);
+  bool onSymbolEdge(JS::Symbol** symbolp) override {
+    return bufferRoot(*symbolp);
   }
-  JS::BigInt* onBigIntEdge(JS::BigInt* bi) override { return bufferRoot(bi); }
+  bool onBigIntEdge(JS::BigInt** bip) override { return bufferRoot(*bip); }
 
-  js::Shape* onShapeEdge(js::Shape* shape) override {
-    unsupportedEdge();
-    return nullptr;
+  bool onChild(const JS::GCCellPtr& thing) override {
+    MOZ_CRASH("Unexpected gray root kind");
+    return true;
   }
-  js::BaseShape* onBaseShapeEdge(js::BaseShape* base) override {
-    unsupportedEdge();
-    return nullptr;
-  }
-  js::jit::JitCode* onJitCodeEdge(js::jit::JitCode* code) override {
-    unsupportedEdge();
-    return nullptr;
-  }
-  js::Scope* onScopeEdge(js::Scope* scope) override {
-    unsupportedEdge();
-    return nullptr;
-  }
-  js::RegExpShared* onRegExpSharedEdge(js::RegExpShared* shared) override {
-    unsupportedEdge();
-    return nullptr;
-  }
-
-  void unsupportedEdge() { MOZ_CRASH("Unsupported gray root edge kind"); }
 
   template <typename T>
-  inline T* bufferRoot(T* thing);
+  inline bool bufferRoot(T* thing);
 
  public:
   explicit BufferGrayRootsTracer(JSRuntime* rt)
-      : GenericTracer(rt, JS::TracerKind::GrayBuffering),
-        bufferingGrayRootsFailed(false) {}
+      : JS::CallbackTracer(rt), bufferingGrayRootsFailed(false) {}
 
   bool failed() const { return bufferingGrayRootsFailed; }
   void setFailed() { bufferingGrayRootsFailed = true; }
+
+#ifdef DEBUG
+  TracerKind getTracerKind() const override {
+    return TracerKind::GrayBuffering;
+  }
+#endif
 };
 
 void js::gc::GCRuntime::bufferGrayRoots() {
@@ -570,7 +560,7 @@ void js::gc::GCRuntime::bufferGrayRoots() {
 }
 
 template <typename T>
-inline T* BufferGrayRootsTracer::bufferRoot(T* thing) {
+inline bool BufferGrayRootsTracer::bufferRoot(T* thing) {
   MOZ_ASSERT(JS::RuntimeHeapIsBusy());
   MOZ_ASSERT(thing);
   // Check if |thing| is corrupt by calling a method that touches the heap.
@@ -593,7 +583,7 @@ inline T* BufferGrayRootsTracer::bufferRoot(T* thing) {
     }
   }
 
-  return thing;
+  return true;
 }
 
 void GCRuntime::markBufferedGrayRoots(JS::Zone* zone) {
@@ -634,15 +624,13 @@ void GCRuntime::resetBufferedGrayRoots() {
   }
 }
 
-JS_PUBLIC_API void JS::AddPersistentRoot(
-    JS::RootingContext* cx, RootKind kind,
-    PersistentRooted<JS::detail::RootListEntry*>* root) {
+JS_PUBLIC_API void JS::AddPersistentRoot(JS::RootingContext* cx, RootKind kind,
+                                         PersistentRooted<void*>* root) {
   static_cast<JSContext*>(cx)->runtime()->heapRoots.ref()[kind].insertBack(
       root);
 }
 
-JS_PUBLIC_API void JS::AddPersistentRoot(
-    JSRuntime* rt, RootKind kind,
-    PersistentRooted<JS::detail::RootListEntry*>* root) {
+JS_PUBLIC_API void JS::AddPersistentRoot(JSRuntime* rt, RootKind kind,
+                                         PersistentRooted<void*>* root) {
   rt->heapRoots.ref()[kind].insertBack(root);
 }

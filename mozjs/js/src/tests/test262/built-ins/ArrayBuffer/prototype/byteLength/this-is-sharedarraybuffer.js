@@ -5,23 +5,16 @@
 /*---
 esid: sec-get-arraybuffer.prototype.bytelength
 description: Throws a TypeError exception when `this` is a SharedArrayBuffer
-features: [align-detached-buffer-semantics-with-web-reality, SharedArrayBuffer]
+features: [SharedArrayBuffer]
 ---*/
 
-var byteLength = Object.getOwnPropertyDescriptor(
+var getter = Object.getOwnPropertyDescriptor(
   ArrayBuffer.prototype, "byteLength"
-);
-
-var getter = byteLength.get;
-var sab = new SharedArrayBuffer(4);
+).get;
 
 assert.throws(TypeError, function() {
+  var sab = new SharedArrayBuffer(4);
   getter.call(sab);
-}, "`this` cannot be a SharedArrayBuffer");
-
-assert.throws(TypeError, function() {
-  Object.defineProperties(sab, { byteLength });
-  sab.byteLength;
 }, "`this` cannot be a SharedArrayBuffer");
 
 reportCompare(0, 0);

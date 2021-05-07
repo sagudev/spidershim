@@ -770,7 +770,7 @@ STRUCT!{struct NMHDFILTERBTNCLICK {
 }}
 pub type LPNMHDFILTERBTNCLICK = *mut NMHDFILTERBTNCLICK;
 pub const TOOLBARCLASSNAME: &'static str = "ToolbarWindow32";
-#[cfg(target_pointer_width = "32")]
+#[cfg(target_arch = "x86")]
 STRUCT!{struct TBBUTTON {
     iBitmap: c_int,
     idCommand: c_int,
@@ -1490,7 +1490,7 @@ STRUCT!{struct TTTOOLINFOW {
     uId: UINT_PTR,
     rect: RECT,
     hinst: HINSTANCE,
-    lpszText: LPWSTR,
+    lpszText: LPSTR,
     lParam: LPARAM,
     lpReserved: *mut c_void,
 }}

@@ -17,6 +17,16 @@ using namespace js::frontend;
 
 using mozilla::Maybe;
 
+AutoEmittingRunOnceLambda::AutoEmittingRunOnceLambda(BytecodeEmitter* bce)
+    : bce_(bce) {
+  MOZ_ASSERT(!bce_->emittingRunOnceLambda);
+  bce_->emittingRunOnceLambda = true;
+}
+
+AutoEmittingRunOnceLambda::~AutoEmittingRunOnceLambda() {
+  bce_->emittingRunOnceLambda = false;
+}
+
 CallOrNewEmitter::CallOrNewEmitter(BytecodeEmitter* bce, JSOp op,
                                    ArgumentsKind argumentsKind,
                                    ValueUsage valueUsage)
@@ -28,7 +38,7 @@ CallOrNewEmitter::CallOrNewEmitter(BytecodeEmitter* bce, JSOp op,
   MOZ_ASSERT(isCall() || isNew() || isSuperCall());
 }
 
-bool CallOrNewEmitter::emitNameCallee(TaggedParserAtomIndex name) {
+bool CallOrNewEmitter::emitNameCallee(Handle<JSAtom*> name) {
   MOZ_ASSERT(state_ == State::Start);
 
   NameOpEmitter noe(
@@ -43,7 +53,7 @@ bool CallOrNewEmitter::emitNameCallee(TaggedParserAtomIndex name) {
   return true;
 }
 
-[[nodiscard]] PropOpEmitter& CallOrNewEmitter::prepareForPropCallee(
+MOZ_MUST_USE PropOpEmitter& CallOrNewEmitter::prepareForPropCallee(
     bool isSuperProp) {
   MOZ_ASSERT(state_ == State::Start);
 
@@ -56,15 +66,14 @@ bool CallOrNewEmitter::emitNameCallee(TaggedParserAtomIndex name) {
   return *poe_;
 }
 
-[[nodiscard]] ElemOpEmitter& CallOrNewEmitter::prepareForElemCallee(
-    bool isSuperElem, bool isPrivate) {
+MOZ_MUST_USE ElemOpEmitter& CallOrNewEmitter::prepareForElemCallee(
+    bool isSuperElem) {
   MOZ_ASSERT(state_ == State::Start);
 
   eoe_.emplace(bce_,
                isCall() ? ElemOpEmitter::Kind::Call : ElemOpEmitter::Kind::Get,
                isSuperElem ? ElemOpEmitter::ObjKind::Super
-                           : ElemOpEmitter::ObjKind::Other,
-               isPrivate ? NameVisibility::Private : NameVisibility::Public);
+                           : ElemOpEmitter::ObjKind::Other);
 
   state_ = State::ElemCallee;
   return *eoe_;
@@ -72,6 +81,18 @@ bool CallOrNewEmitter::emitNameCallee(TaggedParserAtomIndex name) {
 
 bool CallOrNewEmitter::prepareForFunctionCallee() {
   MOZ_ASSERT(state_ == State::Start);
+
+  // Top level lambdas which are immediately invoked should be treated as
+  // only running once. Every time they execute we will create new types and
+  // scripts for their contents, to increase the quality of type information
+  // within them and enable more backend optimizations. Note that this does
+  // not depend on the lambda being invoked at most once (it may be named or
+  // be accessed via foo.caller indirection), as multiple executions will
+  // just cause the inner scripts to be repeatedly cloned.
+  MOZ_ASSERT(!bce_->emittingRunOnceLambda);
+  if (bce_->checkRunOnceContext()) {
+    autoEmittingRunOnceLambda_.emplace(bce_);
+  }
 
   state_ = State::FunctionCallee;
   return true;
@@ -129,6 +150,7 @@ bool CallOrNewEmitter::emitThis() {
       }
       break;
     case State::FunctionCallee:
+      autoEmittingRunOnceLambda_.reset();
       needsThis = true;
       break;
     case State::SuperCallee:
@@ -177,7 +199,7 @@ bool CallOrNewEmitter::wantSpreadOperand() {
   MOZ_ASSERT(isSpread());
 
   state_ = State::WantSpreadOperand;
-  return isSingleSpread() || isPassthroughRest();
+  return isSingleSpreadRest();
 }
 
 bool CallOrNewEmitter::emitSpreadArgumentsTest() {
@@ -185,15 +207,19 @@ bool CallOrNewEmitter::emitSpreadArgumentsTest() {
   MOZ_ASSERT(state_ == State::WantSpreadOperand);
   MOZ_ASSERT(isSpread());
 
-  if (isSingleSpread()) {
-    // Emit a preparation code to optimize the spread call:
+  if (isSingleSpreadRest()) {
+    // Emit a preparation code to optimize the spread call with a rest
+    // parameter:
     //
-    //   g(...args);
+    //   function f(...args) {
+    //     g(...args);
+    //   }
     //
-    // If the spread operand is a packed array, skip the spread
-    // operation and pass it directly to spread call operation.
-    // See the comment in OptimizeSpreadCall in Interpreter.cpp
-    // for the optimizable conditions.
+    // If the spread operand is a rest parameter and it's optimizable
+    // array, skip spread operation and pass it directly to spread call
+    // operation.  See the comment in OptimizeSpreadCall in
+    // Interpreter.cpp for the optimizable conditons.
+
     //              [stack] CALLEE THIS ARG0
 
     ifNotOptimizable_.emplace(bce_);
@@ -201,7 +227,11 @@ bool CallOrNewEmitter::emitSpreadArgumentsTest() {
       //            [stack] CALLEE THIS ARG0 OPTIMIZED
       return false;
     }
-    if (!ifNotOptimizable_->emitThen(IfEmitter::ConditionKind::Negative)) {
+    if (!bce_->emit1(JSOp::Not)) {
+      //            [stack] CALLEE THIS ARG0 !OPTIMIZED
+      return false;
+    }
+    if (!ifNotOptimizable_->emitThen()) {
       //            [stack] CALLEE THIS ARG0
       return false;
     }
@@ -211,22 +241,14 @@ bool CallOrNewEmitter::emitSpreadArgumentsTest() {
     }
   }
 
-  state_ = State::SpreadIteration;
-  return true;
-}
-
-bool CallOrNewEmitter::wantSpreadIteration() {
-  MOZ_ASSERT(state_ == State::SpreadIteration);
-  MOZ_ASSERT(isSpread());
-
   state_ = State::Arguments;
-  return !isPassthroughRest();
+  return true;
 }
 
 bool CallOrNewEmitter::emitEnd(uint32_t argc, const Maybe<uint32_t>& beginPos) {
   MOZ_ASSERT(state_ == State::Arguments);
 
-  if (isSingleSpread()) {
+  if (isSingleSpreadRest()) {
     if (!ifNotOptimizable_->emitEnd()) {
       //            [stack] CALLEE THIS ARR
       return false;

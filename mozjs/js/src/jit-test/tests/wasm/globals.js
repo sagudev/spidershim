@@ -44,8 +44,8 @@ testInner('f32', 13.37, 0.1989, Math.fround);
 testInner('f64', 13.37, 0.1989, x => +x);
 
 // Semantic errors.
-wasmFailValidateText(`(module (global (mut i32) (i32.const 1337)) (func (global.set 1 (i32.const 0))))`, /(out of range)|(global index out of bounds)/);
-wasmFailValidateText(`(module (global i32 (i32.const 1337)) (func (global.set 0 (i32.const 0))))`, /(can't write an immutable global)|(global is immutable)/);
+wasmFailValidateText(`(module (global (mut i32) (i32.const 1337)) (func (global.set 1 (i32.const 0))))`, /out of range/);
+wasmFailValidateText(`(module (global i32 (i32.const 1337)) (func (global.set 0 (i32.const 0))))`, /can't write an immutable global/);
 
 // Big module with many variables: test that setting one doesn't overwrite the
 // other ones.
@@ -300,11 +300,7 @@ wasmAssert(`(module
         let s = "";
         for ( let i in x )
             s = s + i + ",";
-        if (getBuildConfiguration().release_or_beta) {
-            assertEq(s, "valueOf,value,");
-        } else {
-            assertEq(s, "type,valueOf,value,");
-        }
+        assertEq(s, "valueOf,value,");
     }
 
     // "value" is defined on the prototype, not on the object

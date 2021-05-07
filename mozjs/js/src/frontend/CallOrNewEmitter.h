@@ -14,7 +14,6 @@
 
 #include "frontend/ElemOpEmitter.h"
 #include "frontend/IfEmitter.h"
-#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
 #include "frontend/PropOpEmitter.h"
 #include "frontend/ValueUsage.h"
 #include "js/TypeDecls.h"
@@ -25,6 +24,14 @@ namespace js {
 namespace frontend {
 
 struct BytecodeEmitter;
+
+class MOZ_RAII AutoEmittingRunOnceLambda {
+  BytecodeEmitter* bce_;
+
+ public:
+  explicit AutoEmittingRunOnceLambda(BytecodeEmitter* bce);
+  ~AutoEmittingRunOnceLambda();
+};
 
 // Class for emitting bytecode for call or new expression.
 //
@@ -97,7 +104,21 @@ struct BytecodeEmitter;
 //
 //   `print(...arg);`
 //     CallOrNewEmitter cone(this, JSOp::SpreadCall,
-//                           CallOrNewEmitter::ArgumentsKind::SingleSpread,
+//                           CallOrNewEmitter::ArgumentsKind::Other,
+//                           ValueUsage::WantValue);
+//     cone.emitNameCallee(print);
+//     cone.emitThis();
+//     if (cone.wantSpreadOperand()) {
+//       emit(arg)
+//     }
+//     cone.emitSpreadArgumentsTest();
+//     emit([...arg]);
+//     cone.emitEnd(1, Some(offset_of_callee));
+//
+//   `print(...rest);`
+//   where `rest` is rest parameter
+//     CallOrNewEmitter cone(this, JSOp::SpreadCall,
+//                           CallOrNewEmitter::ArgumentsKind::SingleSpreadRest,
 //                           ValueUsage::WantValue);
 //     cone.emitNameCallee(print);
 //     cone.emitThis();
@@ -125,23 +146,15 @@ class MOZ_STACK_CLASS CallOrNewEmitter {
 
     // Specify this for the following case:
     //
-    //   g(...input);
+    //   function f(...rest) {
+    //     g(...rest);
+    //   }
     //
     // This enables optimization to avoid allocating an intermediate array
     // for spread operation.
     //
     // wantSpreadOperand() returns true when this is specified.
-    SingleSpread,
-
-    // Used for default derived class constructors:
-    //
-    //   constructor(...args) {
-    //      super(...args);
-    //   }
-    //
-    // The rest-parameter is directly passed through to the `super` call without
-    // using the iteration protocol.
-    PassthroughRest,
+    SingleSpreadRest
   };
 
  private:
@@ -150,12 +163,14 @@ class MOZ_STACK_CLASS CallOrNewEmitter {
   // The opcode for the call or new.
   JSOp op_;
 
-  // Whether the call is a spread call with single parameter or not.
+  // Whether the call is a spread call with single rest parameter or not.
   // See the comment in emitSpreadArgumentsTest for more details.
   ArgumentsKind argumentsKind_;
 
   // The branch for spread call optimization.
   mozilla::Maybe<InternalIfEmitter> ifNotOptimizable_;
+
+  mozilla::Maybe<AutoEmittingRunOnceLambda> autoEmittingRunOnceLambda_;
 
   mozilla::Maybe<PropOpEmitter> poe_;
   mozilla::Maybe<ElemOpEmitter> eoe_;
@@ -199,11 +214,8 @@ class MOZ_STACK_CLASS CallOrNewEmitter {
   // +------------------------------->+->| Arguments |-------->| End |
   // |                                ^  +-----------+         +-----+
   // |                                |
-  // |                                | wantSpreadIteration
-  // |                                |
-  // |                                |         +-----------------+
-  // |                                +---------| SpreadIteration |------+
-  // |                                          +-----------------+      |
+  // |                                +----------------------------------+
+  // |                                                                   |
   // | [isSpread]                                                        |
   // |   wantSpreadOperand +-------------------+ emitSpreadArgumentsTest |
   // +-------------------->| WantSpreadOperand |-------------------------+
@@ -236,9 +248,6 @@ class MOZ_STACK_CLASS CallOrNewEmitter {
     // After calling wantSpreadOperand.
     WantSpreadOperand,
 
-    // After calling emitSpreadArgumentsTest.
-    SpreadIteration,
-
     // After calling prepareForNonSpreadArguments.
     Arguments,
 
@@ -252,59 +261,53 @@ class MOZ_STACK_CLASS CallOrNewEmitter {
                    ValueUsage valueUsage);
 
  private:
-  [[nodiscard]] bool isCall() const {
+  MOZ_MUST_USE bool isCall() const {
     return op_ == JSOp::Call || op_ == JSOp::CallIgnoresRv ||
            op_ == JSOp::SpreadCall || isEval() || isFunApply() || isFunCall();
   }
 
-  [[nodiscard]] bool isNew() const {
+  MOZ_MUST_USE bool isNew() const {
     return op_ == JSOp::New || op_ == JSOp::SpreadNew;
   }
 
-  [[nodiscard]] bool isSuperCall() const {
+  MOZ_MUST_USE bool isSuperCall() const {
     return op_ == JSOp::SuperCall || op_ == JSOp::SpreadSuperCall;
   }
 
-  [[nodiscard]] bool isEval() const {
+  MOZ_MUST_USE bool isEval() const {
     return op_ == JSOp::Eval || op_ == JSOp::StrictEval ||
            op_ == JSOp::SpreadEval || op_ == JSOp::StrictSpreadEval;
   }
 
-  [[nodiscard]] bool isFunApply() const { return op_ == JSOp::FunApply; }
+  MOZ_MUST_USE bool isFunApply() const { return op_ == JSOp::FunApply; }
 
-  [[nodiscard]] bool isFunCall() const { return op_ == JSOp::FunCall; }
+  MOZ_MUST_USE bool isFunCall() const { return op_ == JSOp::FunCall; }
 
-  [[nodiscard]] bool isSpread() const { return IsSpreadOp(op_); }
+  MOZ_MUST_USE bool isSpread() const { return JOF_OPTYPE(op_) == JOF_BYTE; }
 
-  [[nodiscard]] bool isSingleSpread() const {
-    return argumentsKind_ == ArgumentsKind::SingleSpread;
-  }
-
-  [[nodiscard]] bool isPassthroughRest() const {
-    return argumentsKind_ == ArgumentsKind::PassthroughRest;
+  MOZ_MUST_USE bool isSingleSpreadRest() const {
+    return argumentsKind_ == ArgumentsKind::SingleSpreadRest;
   }
 
  public:
-  [[nodiscard]] bool emitNameCallee(TaggedParserAtomIndex name);
-  [[nodiscard]] PropOpEmitter& prepareForPropCallee(bool isSuperProp);
-  [[nodiscard]] ElemOpEmitter& prepareForElemCallee(bool isSuperElem,
-                                                    bool isPrivateElem);
-  [[nodiscard]] bool prepareForFunctionCallee();
-  [[nodiscard]] bool emitSuperCallee();
-  [[nodiscard]] bool prepareForOtherCallee();
+  MOZ_MUST_USE bool emitNameCallee(Handle<JSAtom*> name);
+  MOZ_MUST_USE PropOpEmitter& prepareForPropCallee(bool isSuperProp);
+  MOZ_MUST_USE ElemOpEmitter& prepareForElemCallee(bool isSuperElem);
+  MOZ_MUST_USE bool prepareForFunctionCallee();
+  MOZ_MUST_USE bool emitSuperCallee();
+  MOZ_MUST_USE bool prepareForOtherCallee();
 
-  [[nodiscard]] bool emitThis();
+  MOZ_MUST_USE bool emitThis();
 
   // Used by BytecodeEmitter::emitPipeline to reuse CallOrNewEmitter instance
   // across multiple chained calls.
   void reset();
 
-  [[nodiscard]] bool prepareForNonSpreadArguments();
+  MOZ_MUST_USE bool prepareForNonSpreadArguments();
 
   // See the usage in the comment at the top of the class.
-  [[nodiscard]] bool wantSpreadOperand();
-  [[nodiscard]] bool emitSpreadArgumentsTest();
-  [[nodiscard]] bool wantSpreadIteration();
+  MOZ_MUST_USE bool wantSpreadOperand();
+  MOZ_MUST_USE bool emitSpreadArgumentsTest();
 
   // Parameters are the offset in the source code for each character below:
   //
@@ -314,8 +317,8 @@ class MOZ_STACK_CLASS CallOrNewEmitter {
   //   beginPos
   //
   // Can be Nothing() if not available.
-  [[nodiscard]] bool emitEnd(uint32_t argc,
-                             const mozilla::Maybe<uint32_t>& beginPos);
+  MOZ_MUST_USE bool emitEnd(uint32_t argc,
+                            const mozilla::Maybe<uint32_t>& beginPos);
 };
 
 } /* namespace frontend */

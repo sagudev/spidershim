@@ -2,30 +2,25 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::consts::PARAMETER_SIZE;
-use crate::errors;
-use crate::platform::device::Device;
-use crate::platform::transaction::Transaction;
-use crate::statecallback::StateCallback;
-use crate::u2fprotocol::{u2f_init_device, u2f_is_keyhandle_valid, u2f_register, u2f_sign};
-use crate::u2ftypes::U2FDevice;
-
-use std::sync::mpsc::Sender;
-use std::sync::Mutex;
+use consts::PARAMETER_SIZE;
+use platform::device::Device;
+use platform::transaction::Transaction;
 use std::thread;
 use std::time::Duration;
+use u2fprotocol::{u2f_init_device, u2f_is_keyhandle_valid, u2f_register, u2f_sign};
+use util::OnceCallback;
 
-fn is_valid_transport(transports: crate::AuthenticatorTransports) -> bool {
-    transports.is_empty() || transports.contains(crate::AuthenticatorTransports::USB)
+fn is_valid_transport(transports: ::AuthenticatorTransports) -> bool {
+    transports.is_empty() || transports.contains(::AuthenticatorTransports::USB)
 }
 
 fn find_valid_key_handles<'a, F>(
-    app_ids: &'a [crate::AppId],
-    key_handles: &'a [crate::KeyHandle],
+    app_ids: &'a [::AppId],
+    key_handles: &'a [::KeyHandle],
     mut is_valid: F,
-) -> (&'a crate::AppId, Vec<&'a crate::KeyHandle>)
+) -> (&'a ::AppId, Vec<&'a ::KeyHandle>)
 where
-    F: FnMut(&Vec<u8>, &crate::KeyHandle) -> bool,
+    F: FnMut(&Vec<u8>, &::KeyHandle) -> bool,
 {
     // Try all given app_ids in order.
     for app_id in app_ids {
@@ -44,18 +39,6 @@ where
     (&app_ids[0], vec![])
 }
 
-fn send_status(status_mutex: &Mutex<Sender<crate::StatusUpdate>>, msg: crate::StatusUpdate) {
-    match status_mutex.lock() {
-        Ok(s) => match s.send(msg) {
-            Ok(_) => {}
-            Err(e) => error!("Couldn't send status: {:?}", e),
-        },
-        Err(e) => {
-            error!("Couldn't obtain status mutex: {:?}", e);
-        }
-    };
-}
-
 #[derive(Default)]
 pub struct StateMachine {
     transaction: Option<Transaction>,
@@ -68,19 +51,17 @@ impl StateMachine {
 
     pub fn register(
         &mut self,
-        flags: crate::RegisterFlags,
+        flags: ::RegisterFlags,
         timeout: u64,
         challenge: Vec<u8>,
-        application: crate::AppId,
-        key_handles: Vec<crate::KeyHandle>,
-        status: Sender<crate::StatusUpdate>,
-        callback: StateCallback<crate::Result<crate::RegisterResult>>,
+        application: ::AppId,
+        key_handles: Vec<::KeyHandle>,
+        callback: OnceCallback<::RegisterResult>,
     ) {
         // Abort any prior register/sign calls.
         self.cancel();
 
         let cbc = callback.clone();
-        let status_mutex = Mutex::new(status);
 
         let transaction = Transaction::new(timeout, cbc.clone(), move |info, alive| {
             // Create a new device.
@@ -105,13 +86,6 @@ impl StateMachine {
                 return;
             }
 
-            send_status(
-                &status_mutex,
-                crate::StatusUpdate::DeviceAvailable {
-                    dev_info: dev.get_device_info(),
-                },
-            );
-
             // Iterate the exclude list and see if there are any matches.
             // If so, we'll keep polling the device anyway to test for user
             // consent, to be consistent with CTAP2 device behavior.
@@ -125,33 +99,17 @@ impl StateMachine {
                 if excluded {
                     let blank = vec![0u8; PARAMETER_SIZE];
                     if u2f_register(dev, &blank, &blank).is_ok() {
-                        callback.call(Err(errors::AuthenticatorError::U2FToken(
-                            errors::U2FTokenError::InvalidState,
-                        )));
+                        callback.call(Err(::Error::InvalidState));
                         break;
                     }
                 } else if let Ok(bytes) = u2f_register(dev, &challenge, &application) {
-                    let dev_info = dev.get_device_info();
-                    send_status(
-                        &status_mutex,
-                        crate::StatusUpdate::Success {
-                            dev_info: dev.get_device_info(),
-                        },
-                    );
-                    callback.call(Ok((bytes, dev_info)));
+                    callback.call(Ok(bytes));
                     break;
                 }
 
                 // Sleep a bit before trying again.
                 thread::sleep(Duration::from_millis(100));
             }
-
-            send_status(
-                &status_mutex,
-                crate::StatusUpdate::DeviceUnavailable {
-                    dev_info: dev.get_device_info(),
-                },
-            );
         });
 
         self.transaction = Some(try_or!(transaction, |e| cbc.call(Err(e))));
@@ -159,20 +117,17 @@ impl StateMachine {
 
     pub fn sign(
         &mut self,
-        flags: crate::SignFlags,
+        flags: ::SignFlags,
         timeout: u64,
         challenge: Vec<u8>,
-        app_ids: Vec<crate::AppId>,
-        key_handles: Vec<crate::KeyHandle>,
-        status: Sender<crate::StatusUpdate>,
-        callback: StateCallback<crate::Result<crate::SignResult>>,
+        app_ids: Vec<::AppId>,
+        key_handles: Vec<::KeyHandle>,
+        callback: OnceCallback<::SignResult>,
     ) {
         // Abort any prior register/sign calls.
         self.cancel();
 
         let cbc = callback.clone();
-
-        let status_mutex = Mutex::new(status);
 
         let transaction = Transaction::new(timeout, cbc.clone(), move |info, alive| {
             // Create a new device.
@@ -208,9 +163,7 @@ impl StateMachine {
             // Aggregate distinct transports from all given credentials.
             let transports = key_handles
                 .iter()
-                .fold(crate::AuthenticatorTransports::empty(), |t, k| {
-                    t | k.transports
-                });
+                .fold(::AuthenticatorTransports::empty(), |t, k| t | k.transports);
 
             // We currently only support USB. If the RP specifies transports
             // and doesn't include USB it's probably lying.
@@ -218,22 +171,13 @@ impl StateMachine {
                 return;
             }
 
-            send_status(
-                &status_mutex,
-                crate::StatusUpdate::DeviceAvailable {
-                    dev_info: dev.get_device_info(),
-                },
-            );
-
-            'outer: while alive() {
+            while alive() {
                 // If the device matches none of the given key handles
                 // then just make it blink with bogus data.
                 if valid_handles.is_empty() {
                     let blank = vec![0u8; PARAMETER_SIZE];
                     if u2f_register(dev, &blank, &blank).is_ok() {
-                        callback.call(Err(errors::AuthenticatorError::U2FToken(
-                            errors::U2FTokenError::InvalidState,
-                        )));
+                        callback.call(Err(::Error::InvalidState));
                         break;
                     }
                 } else {
@@ -241,20 +185,12 @@ impl StateMachine {
                     for key_handle in &valid_handles {
                         if let Ok(bytes) = u2f_sign(dev, &challenge, app_id, &key_handle.credential)
                         {
-                            let dev_info = dev.get_device_info();
-                            send_status(
-                                &status_mutex,
-                                crate::StatusUpdate::Success {
-                                    dev_info: dev.get_device_info(),
-                                },
-                            );
                             callback.call(Ok((
                                 app_id.clone(),
                                 key_handle.credential.clone(),
                                 bytes,
-                                dev_info,
                             )));
-                            break 'outer;
+                            break;
                         }
                     }
                 }
@@ -262,13 +198,6 @@ impl StateMachine {
                 // Sleep a bit before trying again.
                 thread::sleep(Duration::from_millis(100));
             }
-
-            send_status(
-                &status_mutex,
-                crate::StatusUpdate::DeviceUnavailable {
-                    dev_info: dev.get_device_info(),
-                },
-            );
         });
 
         self.transaction = Some(try_or!(transaction, |e| cbc.call(Err(e))));

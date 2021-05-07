@@ -36,9 +36,3 @@ impl<T> Stream for Pending<T> {
         (0, Some(0))
     }
 }
-
-impl<T> Clone for Pending<T> {
-    fn clone(&self) -> Self {
-        pending()
-    }
-}

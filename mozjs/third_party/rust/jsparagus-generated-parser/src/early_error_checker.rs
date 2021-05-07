@@ -649,8 +649,4 @@ pub trait EarlyErrorChecker<'alloc> {
 
         Ok(())
     }
-
-    fn check_super(&self) -> Result<'alloc, ()> {
-        Err(ParseError::NotImplemented("EarlyError for super").into())
-    }
 }

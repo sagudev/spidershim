@@ -7,41 +7,25 @@
 #ifndef jit_Ion_h
 #define jit_Ion_h
 
-#include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
-#include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
-
-#include <stddef.h>
-#include <stdint.h>
-
-#include "jsfriendapi.h"
-#include "jspubtd.h"
+#include "mozilla/Result.h"
 
 #include "jit/BaselineJIT.h"
-#include "jit/IonTypes.h"
+#include "jit/CompileWrappers.h"
 #include "jit/JitContext.h"
 #include "jit/JitOptions.h"
-#include "js/Principals.h"
-#include "js/TypeDecls.h"
-#include "vm/BytecodeUtil.h"
 #include "vm/JSContext.h"
-#include "vm/JSFunction.h"
-#include "vm/JSScript.h"
+#include "vm/Realm.h"
+#include "vm/TypeInference.h"
 
 namespace js {
-
-class RunState;
-
 namespace jit {
-
-class BaselineFrame;
 
 bool CanIonCompileScript(JSContext* cx, JSScript* script);
 bool CanIonInlineScript(JSScript* script);
 
-[[nodiscard]] bool IonCompileScriptForBaselineAtEntry(JSContext* cx,
-                                                      BaselineFrame* frame);
+MOZ_MUST_USE bool IonCompileScriptForBaselineAtEntry(JSContext* cx,
+                                                     BaselineFrame* frame);
 
 struct IonOsrTempData {
   void* jitcode;
@@ -55,13 +39,26 @@ struct IonOsrTempData {
   }
 };
 
-[[nodiscard]] bool IonCompileScriptForBaselineOSR(JSContext* cx,
-                                                  BaselineFrame* frame,
-                                                  uint32_t frameSize,
-                                                  jsbytecode* pc,
-                                                  IonOsrTempData** infoPtr);
+MOZ_MUST_USE bool IonCompileScriptForBaselineOSR(JSContext* cx,
+                                                 BaselineFrame* frame,
+                                                 uint32_t frameSize,
+                                                 jsbytecode* pc,
+                                                 IonOsrTempData** infoPtr);
 
 MethodStatus CanEnterIon(JSContext* cx, RunState& state);
+
+MethodStatus Recompile(JSContext* cx, HandleScript script, bool force);
+
+struct EnterJitData;
+
+// Walk the stack and invalidate active Ion frames for the invalid scripts.
+void Invalidate(TypeZone& types, JSFreeOp* fop,
+                const RecompileInfoVector& invalid, bool resetUses = true,
+                bool cancelOffThread = true);
+void Invalidate(JSContext* cx, const RecompileInfoVector& invalid,
+                bool resetUses = true, bool cancelOffThread = true);
+void Invalidate(JSContext* cx, JSScript* script, bool resetUses = true,
+                bool cancelOffThread = true);
 
 class MIRGenerator;
 class LIRGraph;
@@ -69,7 +66,7 @@ class CodeGenerator;
 class LazyLinkExitFrameLayout;
 class WarpSnapshot;
 
-[[nodiscard]] bool OptimizeMIR(MIRGenerator* mir);
+MOZ_MUST_USE bool OptimizeMIR(MIRGenerator* mir);
 LIRGraph* GenerateLIR(MIRGenerator* mir);
 CodeGenerator* GenerateCode(MIRGenerator* mir, LIRGraph* lir);
 CodeGenerator* CompileBackEnd(MIRGenerator* mir, WarpSnapshot* snapshot);
@@ -110,10 +107,13 @@ inline size_t NumLocalsAndArgs(JSScript* script) {
 // backend compilation.
 class MOZ_RAII AutoEnterIonBackend {
  public:
-  AutoEnterIonBackend() {
+  explicit AutoEnterIonBackend(
+      bool safeForMinorGC MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+
 #ifdef DEBUG
     JitContext* jcx = GetJitContext();
-    jcx->enterIonBackend();
+    jcx->enterIonBackend(safeForMinorGC);
 #endif
   }
 
@@ -123,6 +123,8 @@ class MOZ_RAII AutoEnterIonBackend {
     jcx->leaveIonBackend();
   }
 #endif
+
+  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 bool OffThreadCompilationAvailable(JSContext* cx);
@@ -134,6 +136,16 @@ size_t SizeOfIonData(JSScript* script, mozilla::MallocSizeOf mallocSizeOf);
 inline bool IsIonEnabled(JSContext* cx) {
   if (MOZ_UNLIKELY(!IsBaselineJitEnabled(cx) || cx->options().disableIon())) {
     return false;
+  }
+
+  // If TI is disabled, Ion can only be used if WarpBuilder is enabled.
+  if (MOZ_LIKELY(IsTypeInferenceEnabled())) {
+    MOZ_ASSERT(!JitOptions.warpBuilder,
+               "Shouldn't enable WarpBuilder without disabling TI!");
+  } else {
+    if (!JitOptions.warpBuilder) {
+      return false;
+    }
   }
 
   if (MOZ_LIKELY(JitOptions.ion)) {

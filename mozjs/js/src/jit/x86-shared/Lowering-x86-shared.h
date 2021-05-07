@@ -34,9 +34,6 @@ class LIRGeneratorX86Shared : public LIRGeneratorShared {
       LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, Temps>* ins,
       MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
 
-  void lowerForCompareI64AndBranch(MTest* mir, MCompare* comp, JSOp op,
-                                   MDefinition* left, MDefinition* right,
-                                   MBasicBlock* ifTrue, MBasicBlock* ifFalse);
   template <size_t Temps>
   void lowerForFPU(LInstructionHelper<1, 2, Temps>* ins, MDefinition* mir,
                    MDefinition* lhs, MDefinition* rhs);
@@ -48,10 +45,6 @@ class LIRGeneratorX86Shared : public LIRGeneratorShared {
   void lowerUDiv(MDiv* div);
   void lowerUMod(MMod* mod);
   void lowerUrshD(MUrsh* mir);
-  void lowerPowOfTwoI(MPow* mir);
-  void lowerBigIntLsh(MBigIntLsh* ins);
-  void lowerBigIntRsh(MBigIntRsh* ins);
-  void lowerWasmBuiltinTruncateToInt32(MWasmBuiltinTruncateToInt32* ins);
   void lowerTruncateDToInt32(MTruncateToInt32* ins);
   void lowerTruncateFToInt32(MTruncateToInt32* ins);
   void lowerCompareExchangeTypedArrayElement(
@@ -60,11 +53,6 @@ class LIRGeneratorX86Shared : public LIRGeneratorShared {
       MAtomicExchangeTypedArrayElement* ins, bool useI386ByteRegisters);
   void lowerAtomicTypedArrayElementBinop(MAtomicTypedArrayElementBinop* ins,
                                          bool useI386ByteRegisters);
-
-#ifdef ENABLE_WASM_SIMD
-  bool canFoldReduceSimd128AndBranch(wasm::SimdOp op);
-  bool canEmitWasmReduceSimd128AtUses(MWasmReduceSimd128* ins);
-#endif
 };
 
 }  // namespace jit

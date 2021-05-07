@@ -7,6 +7,8 @@
 #ifndef builtin_intl_IntlObject_h
 #define builtin_intl_IntlObject_h
 
+#include "mozilla/Attributes.h"
+
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
 
@@ -38,8 +40,8 @@ extern const JSClass IntlClass;
  *
  * NOTE: "calendar" and "locale" properties are *not* added to the object.
  */
-[[nodiscard]] extern bool intl_GetCalendarInfo(JSContext* cx, unsigned argc,
-                                               JS::Value* vp);
+extern MOZ_MUST_USE bool intl_GetCalendarInfo(JSContext* cx, unsigned argc,
+                                              JS::Value* vp);
 
 /**
  * Returns a plain object with locale information for a single valid locale
@@ -52,8 +54,8 @@ extern const JSClass IntlClass;
  *   locale
  *     a BCP47 compilant locale string for the resolved locale.
  */
-[[nodiscard]] extern bool intl_GetLocaleInfo(JSContext* cx, unsigned argc,
-                                             JS::Value* vp);
+extern MOZ_MUST_USE bool intl_GetLocaleInfo(JSContext* cx, unsigned argc,
+                                            JS::Value* vp);
 
 /**
  * Returns an Array with CLDR-based fields display names.
@@ -94,8 +96,8 @@ extern const JSClass IntlClass;
  *   'AM'
  * ]
  */
-[[nodiscard]] extern bool intl_ComputeDisplayNames(JSContext* cx, unsigned argc,
-                                                   JS::Value* vp);
+extern MOZ_MUST_USE bool intl_ComputeDisplayNames(JSContext* cx, unsigned argc,
+                                                  JS::Value* vp);
 /**
  * Compares a BCP 47 language tag against the locales in availableLocales and
  * returns the best available match -- or |undefined| if no match was found.
@@ -112,8 +114,8 @@ extern const JSClass IntlClass;
  *
  * Usage: result = intl_BestAvailableLocale("Collator", locale, defaultOrNull)
  */
-[[nodiscard]] extern bool intl_BestAvailableLocale(JSContext* cx, unsigned argc,
-                                                   JS::Value* vp);
+extern MOZ_MUST_USE bool intl_BestAvailableLocale(JSContext* cx, unsigned argc,
+                                                  JS::Value* vp);
 
 /**
  * Returns the input locale in its canonicalized form if ICU supports that
@@ -122,9 +124,9 @@ extern const JSClass IntlClass;
  *
  * Usage: result = intl_supportedLocaleOrFallback(locale)
  */
-[[nodiscard]] extern bool intl_supportedLocaleOrFallback(JSContext* cx,
-                                                         unsigned argc,
-                                                         JS::Value* vp);
+extern MOZ_MUST_USE bool intl_supportedLocaleOrFallback(JSContext* cx,
+                                                        unsigned argc,
+                                                        JS::Value* vp);
 
 }  // namespace js
 

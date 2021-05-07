@@ -5,7 +5,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "js/Object.h"  // JS::GetPrivate, JS::SetPrivate
 #include "jsapi-tests/tests.h"
 
 /*
@@ -34,8 +33,8 @@ BEGIN_TEST(testResolveRecursion) {
   CHECK(obj1);
   obj2.init(cx, JS_NewObject(cx, &my_resolve_class));
   CHECK(obj2);
-  JS::SetPrivate(obj1, this);
-  JS::SetPrivate(obj2, this);
+  JS_SetPrivate(obj1, this);
+  JS_SetPrivate(obj2, this);
 
   JS::RootedValue obj1Val(cx, JS::ObjectValue(*obj1));
   JS::RootedValue obj2Val(cx, JS::ObjectValue(*obj2));
@@ -132,7 +131,7 @@ bool doResolve(JS::HandleObject obj, JS::HandleId id, bool* resolvedp) {
 
 static bool my_resolve(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
                        bool* resolvedp) {
-  return static_cast<cls_testResolveRecursion*>(JS::GetPrivate(obj))
+  return static_cast<cls_testResolveRecursion*>(JS_GetPrivate(obj))
       ->doResolve(obj, id, resolvedp);
 }
 END_TEST(testResolveRecursion)

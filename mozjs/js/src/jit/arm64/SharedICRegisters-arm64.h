@@ -7,9 +7,7 @@
 #ifndef jit_arm64_SharedICRegisters_arm64_h
 #define jit_arm64_SharedICRegisters_arm64_h
 
-#include "jit/arm64/Assembler-arm64.h"
-#include "jit/Registers.h"
-#include "jit/RegisterSets.h"
+#include "jit/MacroAssembler.h"
 
 namespace js {
 namespace jit {
@@ -55,10 +53,6 @@ static constexpr Register ExtractTemp1 = r25;
 static constexpr FloatRegister FloatReg0 = {FloatRegisters::d0,
                                             FloatRegisters::Double};
 static constexpr FloatRegister FloatReg1 = {FloatRegisters::d1,
-                                            FloatRegisters::Double};
-static constexpr FloatRegister FloatReg2 = {FloatRegisters::d2,
-                                            FloatRegisters::Double};
-static constexpr FloatRegister FloatReg3 = {FloatRegisters::d3,
                                             FloatRegisters::Double};
 
 }  // namespace jit

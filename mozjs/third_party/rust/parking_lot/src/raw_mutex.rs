@@ -10,9 +10,9 @@ use core::{
     sync::atomic::{AtomicU8, Ordering},
     time::Duration,
 };
-use instant::Instant;
-use lock_api::RawMutex as RawMutex_;
+use lock_api::{GuardNoSend, RawMutex as RawMutex_};
 use parking_lot_core::{self, ParkResult, SpinWait, UnparkResult, UnparkToken, DEFAULT_PARK_TOKEN};
+use std::time::Instant;
 
 // UnparkToken used to indicate that that the target thread should attempt to
 // lock the mutex again as soon as it is unparked.
@@ -60,7 +60,7 @@ unsafe impl lock_api::RawMutex for RawMutex {
         state: AtomicU8::new(0),
     };
 
-    type GuardMarker = crate::GuardMarker;
+    type GuardMarker = GuardNoSend;
 
     #[inline]
     fn lock(&self) {
@@ -97,8 +97,8 @@ unsafe impl lock_api::RawMutex for RawMutex {
     }
 
     #[inline]
-    unsafe fn unlock(&self) {
-        deadlock::release_resource(self as *const _ as usize);
+    fn unlock(&self) {
+        unsafe { deadlock::release_resource(self as *const _ as usize) };
         if self
             .state
             .compare_exchange(LOCKED_BIT, 0, Ordering::Release, Ordering::Relaxed)
@@ -108,18 +108,12 @@ unsafe impl lock_api::RawMutex for RawMutex {
         }
         self.unlock_slow(false);
     }
-
-    #[inline]
-    fn is_locked(&self) -> bool {
-        let state = self.state.load(Ordering::Relaxed);
-        state & LOCKED_BIT != 0
-    }
 }
 
 unsafe impl lock_api::RawMutexFair for RawMutex {
     #[inline]
-    unsafe fn unlock_fair(&self) {
-        deadlock::release_resource(self as *const _ as usize);
+    fn unlock_fair(&self) {
+        unsafe { deadlock::release_resource(self as *const _ as usize) };
         if self
             .state
             .compare_exchange(LOCKED_BIT, 0, Ordering::Release, Ordering::Relaxed)
@@ -131,7 +125,7 @@ unsafe impl lock_api::RawMutexFair for RawMutex {
     }
 
     #[inline]
-    unsafe fn bump(&self) {
+    fn bump(&self) {
         if self.state.load(Ordering::Relaxed) & PARKED_BIT != 0 {
             self.bump_slow();
         }

@@ -20,7 +20,7 @@
 #include "mozilla/Types.h"
 
 #include "builtin/AtomicsObject.h"
-#include "vm/Uint8Clamped.h"
+#include "vm/ArrayBufferObject.h"
 
 #if !defined(__clang__) && !defined(__GNUC__)
 #  error "This file only for gcc-compatible compilers"

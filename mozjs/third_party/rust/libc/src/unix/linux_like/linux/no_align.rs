@@ -7,7 +7,6 @@ macro_rules! expand_align {
                           target_arch = "mips64",
                           target_arch = "s390x",
                           target_arch = "sparc64",
-                          target_arch = "riscv64",
                           all(target_arch = "aarch64",
                               target_env = "musl")))]
                 __align: [::c_int; 0],
@@ -16,7 +15,6 @@ macro_rules! expand_align {
                               target_arch = "mips64",
                               target_arch = "s390x",
                               target_arch = "sparc64",
-                              target_arch = "riscv64",
                               all(target_arch = "aarch64",
                                   target_env = "musl"))))]
                 __align: [::c_long; 0],
@@ -35,17 +33,6 @@ macro_rules! expand_align {
                 __align: [::c_int; 0],
                 size: [u8; ::__SIZEOF_PTHREAD_CONDATTR_T],
             }
-
-            pub struct fanotify_event_metadata {
-                __align: [::c_long; 0],
-                pub event_len: __u32,
-                pub vers: __u8,
-                pub reserved: __u8,
-                pub metadata_len: __u16,
-                pub mask: __u64,
-                pub fd: ::c_int,
-                pub pid: ::c_int,
-            }
         }
 
         s_no_extra_traits! {
@@ -61,14 +48,12 @@ macro_rules! expand_align {
                 #[cfg(any(target_arch = "mips",
                           target_arch = "arm",
                           target_arch = "powerpc",
-                          target_arch = "sparc",
                           all(target_arch = "x86_64",
                               target_pointer_width = "32")))]
                 __align: [::c_long; 0],
                 #[cfg(not(any(target_arch = "mips",
                               target_arch = "arm",
                               target_arch = "powerpc",
-                              target_arch = "sparc",
                               all(target_arch = "x86_64",
                                   target_pointer_width = "32"))))]
                 __align: [::c_longlong; 0],
@@ -79,19 +64,17 @@ macro_rules! expand_align {
                 #[cfg(any(target_arch = "mips",
                           target_arch = "arm",
                           target_arch = "powerpc",
-                          target_arch = "sparc",
                           all(target_arch = "x86_64",
                               target_pointer_width = "32")))]
                 __align: [::c_long; 0],
                 #[cfg(not(any(target_arch = "mips",
                               target_arch = "arm",
                               target_arch = "powerpc",
-                              target_arch = "sparc",
                               all(target_arch = "x86_64",
                                   target_pointer_width = "32"))))]
                 __align: [::c_longlong; 0],
                 size: [u8; ::__SIZEOF_PTHREAD_RWLOCK_T],
             }
         }
-    };
+    }
 }

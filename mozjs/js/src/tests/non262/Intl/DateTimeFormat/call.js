@@ -25,27 +25,19 @@ function thisValues() {
         ...[{}, [], /(?:)/, function(){}, new Proxy({}, {})],
 
         // Intl objects.
-        ...[].concat(...intlConstructors.map(ctor => {
-            let args = [];
-            if (ctor === Intl.DisplayNames) {
-                // Intl.DisplayNames can't be constructed without any arguments.
-                args = [undefined, {type: "language"}];
-            }
+        ...[].concat(...intlConstructors.map(ctor => [
+            // Instance of an Intl constructor.
+            new ctor(),
 
-            return [
-                // Instance of an Intl constructor.
-                new ctor(...args),
+            // Instance of a subclassed Intl constructor.
+            new class extends ctor {},
 
-                // Instance of a subclassed Intl constructor.
-                new class extends ctor {}(...args),
+            // Object inheriting from an Intl constructor prototype.
+            Object.create(ctor.prototype),
 
-                // Object inheriting from an Intl constructor prototype.
-                Object.create(ctor.prototype),
-
-                // Intl object not inheriting from its default prototype.
-                Object.setPrototypeOf(new ctor(...args), Object.prototype),
-            ];
-        })),
+            // Intl object not inheriting from its default prototype.
+            Object.setPrototypeOf(new ctor(), Object.prototype),
+        ])),
     ];
 }
 
@@ -71,7 +63,6 @@ for (let thisValue of thisValues()) {
 // Intl.DateTimeFormat uses the legacy Intl constructor compromise semantics.
 // - Test when InstanceofOperator(thisValue, %DateTimeFormat%) returns true.
 for (let thisValue of thisValues().filter(IsObject)) {
-    let isPrototypeOf = Intl.DateTimeFormat.prototype.isPrototypeOf(thisValue);
     let hasInstanceCalled = false;
     Object.defineProperty(Intl.DateTimeFormat, Symbol.hasInstance, {
         value() {
@@ -83,13 +74,12 @@ for (let thisValue of thisValues().filter(IsObject)) {
     let obj = Intl.DateTimeFormat.call(thisValue);
     delete Intl.DateTimeFormat[Symbol.hasInstance];
 
-    assertEq(Object.is(obj, thisValue), isPrototypeOf);
-    assertEq(hasInstanceCalled, false);
-    assertEqArray(Object.getOwnPropertySymbols(thisValue), isPrototypeOf ? [intlFallbackSymbol] : []);
+    assertEq(Object.is(obj, thisValue), true);
+    assertEq(hasInstanceCalled, true);
+    assertEqArray(Object.getOwnPropertySymbols(thisValue), [intlFallbackSymbol]);
 }
 // - Test when InstanceofOperator(thisValue, %DateTimeFormat%) returns false.
 for (let thisValue of thisValues().filter(IsObject)) {
-    let isPrototypeOf = Intl.DateTimeFormat.prototype.isPrototypeOf(thisValue);
     let hasInstanceCalled = false;
     Object.defineProperty(Intl.DateTimeFormat, Symbol.hasInstance, {
         value() {
@@ -101,10 +91,10 @@ for (let thisValue of thisValues().filter(IsObject)) {
     let obj = Intl.DateTimeFormat.call(thisValue);
     delete Intl.DateTimeFormat[Symbol.hasInstance];
 
-    assertEq(Object.is(obj, thisValue), isPrototypeOf);
+    assertEq(Object.is(obj, thisValue), false);
     assertEq(obj instanceof Intl.DateTimeFormat, true);
-    assertEq(hasInstanceCalled, false);
-    assertEqArray(Object.getOwnPropertySymbols(thisValue), isPrototypeOf ? [intlFallbackSymbol] : []);
+    assertEq(hasInstanceCalled, true);
+    assertEqArray(Object.getOwnPropertySymbols(thisValue), []);
 }
 // - Test with primitive values.
 for (let thisValue of thisValues().filter(IsPrimitive)) {

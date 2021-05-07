@@ -48,19 +48,6 @@ enum class CompartmentSpecifier {
 
   // Create a new realm in an existing compartment.
   ExistingCompartment,
-
-  // Internal use only. Create the self-hosting compartment.
-  NewCompartmentInSelfHostingZone,
-};
-
-/**
- * Specification for whether weak refs should be enabled and if so whether the
- * FinalizationRegistry.cleanupSome method should be present.
- */
-enum class WeakRefSpecifier {
-  Disabled,
-  EnabledWithCleanupSome,
-  EnabledWithoutCleanupSome
 };
 
 /**
@@ -98,7 +85,6 @@ class JS_PUBLIC_API RealmCreationOptions {
   RealmCreationOptions& setNewCompartmentAndZone();
   RealmCreationOptions& setExistingCompartment(JSObject* obj);
   RealmCreationOptions& setExistingCompartment(Compartment* compartment);
-  RealmCreationOptions& setNewCompartmentInSelfHostingZone();
 
   // Certain compartments are implementation details of the embedding, and
   // references to them should never leak out to script. This flag causes this
@@ -130,6 +116,12 @@ class JS_PUBLIC_API RealmCreationOptions {
   bool preserveJitCode() const { return preserveJitCode_; }
   RealmCreationOptions& setPreserveJitCode(bool flag) {
     preserveJitCode_ = flag;
+    return *this;
+  }
+
+  bool cloneSingletons() const { return cloneSingletons_; }
+  RealmCreationOptions& setCloneSingletons(bool flag) {
+    cloneSingletons_ = flag;
     return *this;
   }
 
@@ -216,9 +208,9 @@ class JS_PUBLIC_API RealmCreationOptions {
     return *this;
   }
 
-  WeakRefSpecifier getWeakRefsEnabled() const { return weakRefs_; }
-  RealmCreationOptions& setWeakRefsEnabled(WeakRefSpecifier spec) {
-    weakRefs_ = spec;
+  bool getWeakRefsEnabled() const { return weakRefs_; }
+  RealmCreationOptions& setWeakRefsEnabled(bool flag) {
+    weakRefs_ = flag;
     return *this;
   }
 
@@ -266,10 +258,10 @@ class JS_PUBLIC_API RealmCreationOptions {
     Zone* zone_;
   };
   uint64_t profilerRealmID_ = 0;
-  WeakRefSpecifier weakRefs_ = WeakRefSpecifier::Disabled;
   bool invisibleToDebugger_ = false;
   bool mergeable_ = false;
   bool preserveJitCode_ = false;
+  bool cloneSingletons_ = false;
   bool sharedMemoryAndAtomics_ = false;
   bool defineSharedArrayBufferConstructor_ = true;
   bool coopAndCoep_ = false;
@@ -278,6 +270,7 @@ class JS_PUBLIC_API RealmCreationOptions {
   bool byobStreamReaders_ = false;
   bool writableStreams_ = false;
   bool readableStreamPipeTo_ = false;
+  bool weakRefs_ = false;
   bool toSource_ = false;
   bool propertyErrorMessageFix_ = false;
   bool iteratorHelpers_ = false;
@@ -297,6 +290,12 @@ class JS_PUBLIC_API RealmBehaviors {
   bool discardSource() const { return discardSource_; }
   RealmBehaviors& setDiscardSource(bool flag) {
     discardSource_ = flag;
+    return *this;
+  }
+
+  bool disableLazyParsing() const { return disableLazyParsing_; }
+  RealmBehaviors& setDisableLazyParsing(bool flag) {
+    disableLazyParsing_ = flag;
     return *this;
   }
 
@@ -329,6 +328,12 @@ class JS_PUBLIC_API RealmBehaviors {
     Mode mode_;
   };
 
+  bool getSingletonsAsTemplates() const { return singletonsAsTemplates_; }
+  RealmBehaviors& setSingletonsAsValues() {
+    singletonsAsTemplates_ = false;
+    return *this;
+  }
+
   // A Realm can stop being "live" in all the ways that matter before its global
   // is actually GCed.  Consumers that tear down parts of a Realm or its global
   // before that point should set isNonLive accordingly.
@@ -340,7 +345,13 @@ class JS_PUBLIC_API RealmBehaviors {
 
  private:
   bool discardSource_ = false;
+  bool disableLazyParsing_ = false;
   bool clampAndJitterTime_ = true;
+
+  // To XDR singletons, we need to ensure that all singletons are all used as
+  // templates, by making JSOP_OBJECT return a clone of the JSScript
+  // singleton, instead of returning the value which is baked in the JSScript.
+  bool singletonsAsTemplates_ = true;
   bool isNonLive_ = false;
 };
 
@@ -381,11 +392,9 @@ extern JS_PUBLIC_API const RealmCreationOptions& RealmCreationOptionsRef(
 extern JS_PUBLIC_API const RealmCreationOptions& RealmCreationOptionsRef(
     JSContext* cx);
 
-extern JS_PUBLIC_API const RealmBehaviors& RealmBehaviorsRef(Realm* realm);
+extern JS_PUBLIC_API RealmBehaviors& RealmBehaviorsRef(Realm* realm);
 
-extern JS_PUBLIC_API const RealmBehaviors& RealmBehaviorsRef(JSContext* cx);
-
-extern JS_PUBLIC_API void SetRealmNonLive(Realm* realm);
+extern JS_PUBLIC_API RealmBehaviors& RealmBehaviorsRef(JSContext* cx);
 
 }  // namespace JS
 

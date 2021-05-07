@@ -50,7 +50,7 @@ int FuzzerRunner::Run(int* argc, char*** argv) {
   if (!fuzzerEnv) {
     fprintf(stderr,
             "Must specify fuzzing target in FUZZER environment variable\n");
-    exit(1);
+    return 1;
   }
 
   std::string moduleNameStr(fuzzerEnv);
@@ -62,13 +62,13 @@ int FuzzerRunner::Run(int* argc, char*** argv) {
     int ret = initFunc(argc, argv);
     if (ret) {
       fprintf(stderr, "Fuzzing Interface: Error: Initialize callback failed\n");
-      exit(1);
+      return ret;
     }
   }
 
   if (!testingFunc) {
     fprintf(stderr, "Fuzzing Interface: Error: No testing callback found\n");
-    exit(1);
+    return 1;
   }
 
 #ifdef LIBFUZZER

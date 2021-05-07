@@ -29,35 +29,35 @@ typedef int pid_t;
  *
  * Returns true if no profilers fail to start.
  */
-[[nodiscard]] extern JS_PUBLIC_API bool JS_StartProfiling(
+extern MOZ_MUST_USE JS_PUBLIC_API bool JS_StartProfiling(
     const char* profileName, pid_t pid);
 
 /**
  * Stop any profilers that were previously started with JS_StartProfiling.
  * Returns true if no profilers fail to stop.
  */
-[[nodiscard]] extern JS_PUBLIC_API bool JS_StopProfiling(
+extern MOZ_MUST_USE JS_PUBLIC_API bool JS_StopProfiling(
     const char* profileName);
 
 /**
  * Write the current profile data to the given file, if applicable to whatever
  * profiler is being used.
  */
-[[nodiscard]] extern JS_PUBLIC_API bool JS_DumpProfile(const char* outfile,
-                                                       const char* profileName);
+extern MOZ_MUST_USE JS_PUBLIC_API bool JS_DumpProfile(const char* outfile,
+                                                      const char* profileName);
 
 /**
  * Pause currently active profilers (only supported by some profilers). Returns
  * whether any profilers failed to pause. (Profilers that do not support
  * pause/resume do not count.)
  */
-[[nodiscard]] extern JS_PUBLIC_API bool JS_PauseProfilers(
+extern MOZ_MUST_USE JS_PUBLIC_API bool JS_PauseProfilers(
     const char* profileName);
 
 /**
  * Resume suspended profilers
  */
-[[nodiscard]] extern JS_PUBLIC_API bool JS_ResumeProfilers(
+extern MOZ_MUST_USE JS_PUBLIC_API bool JS_ResumeProfilers(
     const char* profileName);
 
 /**
@@ -69,19 +69,19 @@ JS_PUBLIC_API const char* JS_UnsafeGetLastProfilingError();
 
 #ifdef MOZ_CALLGRIND
 
-[[nodiscard]] extern JS_FRIEND_API bool js_StopCallgrind();
+extern MOZ_MUST_USE JS_FRIEND_API bool js_StopCallgrind();
 
-[[nodiscard]] extern JS_FRIEND_API bool js_StartCallgrind();
+extern MOZ_MUST_USE JS_FRIEND_API bool js_StartCallgrind();
 
-[[nodiscard]] extern JS_FRIEND_API bool js_DumpCallgrind(const char* outfile);
+extern MOZ_MUST_USE JS_FRIEND_API bool js_DumpCallgrind(const char* outfile);
 
 #endif /* MOZ_CALLGRIND */
 
 #ifdef __linux__
 
-[[nodiscard]] extern JS_FRIEND_API bool js_StartPerf();
+extern MOZ_MUST_USE JS_FRIEND_API bool js_StartPerf();
 
-[[nodiscard]] extern JS_FRIEND_API bool js_StopPerf();
+extern MOZ_MUST_USE JS_FRIEND_API bool js_StopPerf();
 
 #endif /* __linux__ */
 

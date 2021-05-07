@@ -1,7 +1,7 @@
 use crate::pso;
 use std::fmt;
 
-/// A clear color union, which can be either `f32`, `i32`, or `u32`.
+/// A clear color union, which can be either f32, i32, or u32.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union ClearColor {
@@ -31,9 +31,6 @@ pub struct ClearDepthStencil {
 }
 
 /// A set of clear values for a single attachment.
-///
-/// These are passed to a command buffer by
-/// [beginning a render pass][crate::command::CommandBuffer::begin_render_pass].
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union ClearValue {
@@ -50,12 +47,6 @@ impl fmt::Debug for ClearValue {
             .field("color", unsafe { &self.color.uint32 })
             .field("depth_stencil", unsafe { &self.depth_stencil })
             .finish()
-    }
-}
-
-impl Default for ClearValue {
-    fn default() -> Self {
-        ClearValue { _align: [0; 4] }
     }
 }
 

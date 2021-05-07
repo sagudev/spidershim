@@ -45,7 +45,7 @@ pub trait Configurable {
 }
 
 /// Collect settings values based on a template.
-#[derive(Clone, Hash)]
+#[derive(Clone)]
 pub struct Builder {
     template: &'static detail::Template,
     bytes: Box<[u8]>,
@@ -212,10 +212,8 @@ impl<'a> PredicateView<'a> {
 pub mod detail {
     use crate::constant_hash;
     use core::fmt;
-    use core::hash::Hash;
 
     /// An instruction group template.
-    #[derive(Hash)]
     pub struct Template {
         /// Name of the instruction group.
         pub name: &'static str,
@@ -283,7 +281,6 @@ pub mod detail {
     /// A setting descriptor holds the information needed to generically set and print a setting.
     ///
     /// Each settings group will be represented as a constant DESCRIPTORS array.
-    #[derive(Hash)]
     pub struct Descriptor {
         /// Lower snake-case name of setting as defined in meta.
         pub name: &'static str,
@@ -296,7 +293,7 @@ pub mod detail {
     }
 
     /// The different kind of settings along with descriptor bits that depend on the kind.
-    #[derive(Clone, Copy, Hash)]
+    #[derive(Clone, Copy)]
     pub enum Detail {
         /// A boolean setting only uses one bit, numbered from LSB.
         Bool {
@@ -402,7 +399,6 @@ emit_all_ones_funcaddrs = false
 enable_probestack = true
 probestack_func_adjusts_sp = false
 enable_jump_tables = true
-enable_heap_access_spectre_mitigation = true
 "#
         );
         assert_eq!(f.opt_level(), super::OptLevel::None);

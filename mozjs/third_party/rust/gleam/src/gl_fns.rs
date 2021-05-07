@@ -112,16 +112,7 @@ impl Gl for GlFns {
         dst_buffer: &mut [u8],
     ) {
         // Assumes that the user properly allocated the size for dst_buffer.
-        let mut row_length = 0;
-        unsafe {
-            self.ffi_gl_.GetIntegerv(ffi::PACK_ROW_LENGTH, &mut row_length as _);
-        }
-        if row_length == 0 {
-            row_length = width;
-        } else {
-            assert!(row_length >= width);
-        }
-        assert_eq!(calculate_length(row_length, height, format, pixel_type), dst_buffer.len());
+        assert!(calculate_length(width, height, format, pixel_type) == dst_buffer.len());
 
         unsafe {
             // We don't want any alignment padding on pixel rows.
@@ -2011,10 +2002,10 @@ impl Gl for GlFns {
         unsafe { self.ffi_gl_.FenceSync(condition, flags) as *const _ }
     }
 
-    fn client_wait_sync(&self, sync: GLsync, flags: GLbitfield, timeout: GLuint64) -> GLenum {
+    fn client_wait_sync(&self, sync: GLsync, flags: GLbitfield, timeout: GLuint64) {
         unsafe {
             self.ffi_gl_
-                .ClientWaitSync(sync as *const _, flags, timeout)
+                .ClientWaitSync(sync as *const _, flags, timeout);
         }
     }
 
@@ -2245,23 +2236,5 @@ impl Gl for GlFns {
         _unpack_unmultiply_alpha: GLboolean,
     ) {
         unimplemented!("This extension is ANGLE only");
-    }
-
-    fn buffer_storage(
-        &self,
-        target: GLenum,
-        size: GLsizeiptr,
-        data: *const GLvoid,
-        flags: GLbitfield,
-    ) {
-        unsafe {
-            self.ffi_gl_.BufferStorage(target, size, data, flags);
-        }
-    }
-
-    fn flush_mapped_buffer_range(&self, target: GLenum, offset: GLintptr, length: GLsizeiptr) {
-        unsafe {
-            self.ffi_gl_.FlushMappedBufferRange(target, offset, length);
-        }
     }
 }

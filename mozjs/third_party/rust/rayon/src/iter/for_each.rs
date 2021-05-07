@@ -12,7 +12,7 @@ where
     pi.drive_unindexed(consumer)
 }
 
-struct ForEachConsumer<'f, F> {
+struct ForEachConsumer<'f, F: 'f> {
     op: &'f F,
 }
 

@@ -31,21 +31,15 @@ function IsPrimitive(o) {
 }
 
 function intlObjects(ctor) {
-    let args = [];
-    if (ctor === Intl.DisplayNames) {
-        // Intl.DisplayNames can't be constructed without any arguments.
-        args = [undefined, {type: "language"}];
-    }
-
     return [
         // Instance of an Intl constructor.
-        new ctor(...args),
+        new ctor(),
 
         // Instance of a subclassed Intl constructor.
-        new class extends ctor {}(...args),
+        new class extends ctor {},
 
         // Intl object not inheriting from its default prototype.
-        Object.setPrototypeOf(new ctor(...args), Object.prototype),
+        Object.setPrototypeOf(new ctor(), Object.prototype),
     ];
 }
 
@@ -121,9 +115,8 @@ for (let {function: numberFormatFunction, unwrap} of numberFormatFunctions) {
     }
 
     // Repeat the test from above, but also change Intl.NumberFormat[@@hasInstance]
-    // so it always returns |true|.
+    // so it always returns |null|.
     for (let thisValue of thisValues(Intl.NumberFormat).filter(IsObject)) {
-        let isPrototypeOf = Intl.NumberFormat.prototype.isPrototypeOf(thisValue);
         let hasInstanceCalled = false, symbolGetterCalled = false;
         Object.defineProperty(Intl.NumberFormat, Symbol.hasInstance, {
             value() {
@@ -144,8 +137,8 @@ for (let {function: numberFormatFunction, unwrap} of numberFormatFunctions) {
 
         delete Intl.NumberFormat[Symbol.hasInstance];
 
-        assertEq(hasInstanceCalled, false);
-        assertEq(symbolGetterCalled, unwrap && isPrototypeOf);
+        assertEq(hasInstanceCalled, unwrap);
+        assertEq(symbolGetterCalled, unwrap);
     }
 
     // Test with primitive values.

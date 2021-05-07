@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-fields) shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) -- requires shell-options
+// |reftest| skip -- class-static-methods-private,class-static-fields-private is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/static-private-methods-with-fields.case
 // - src/class-elements/productions/cls-expr-multiple-definitions.template

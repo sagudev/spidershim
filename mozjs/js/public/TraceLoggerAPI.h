@@ -10,8 +10,6 @@
 
 #include "jstypes.h"
 
-#include "js/TypeDecls.h"
-
 namespace mozilla {
 class JSONWriteFunc;
 class TimeStamp;

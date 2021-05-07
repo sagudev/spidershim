@@ -289,15 +289,11 @@
     "StaticMemberExpressionTail": {
       "property": "IdentifierName"
     },
-    "PrivateFieldExpressionTail": {
-      "field": "PrivateIdentifier"
-    },
     "CallExpressionTail": {
       "arguments": "Arguments"
     },
     "ComputedMemberExpression": "ComputedMemberExpression",
     "StaticMemberExpression": "StaticMemberExpression",
-    "PrivateFieldExpression": "PrivateFieldExpression",
     "CallExpression": "CallExpression"
   },
   "PropertyName": {
@@ -404,18 +400,12 @@
   "MemberAssignmentTarget": {
     "_type": "enum",
     "ComputedMemberAssignmentTarget": "ComputedMemberAssignmentTarget",
-    "PrivateFieldAssignmentTarget": "PrivateFieldAssignmentTarget",
     "StaticMemberAssignmentTarget": "StaticMemberAssignmentTarget"
   },
   "ComputedMemberAssignmentTarget": {
     "_type": "struct",
     "object": "ExpressionOrSuper",
     "expression": "Box<Expression>"
-  },
-  "PrivateFieldAssignmentTarget": {
-    "_type": "struct",
-    "object": "ExpressionOrSuper",
-    "field": "PrivateIdentifier"
   },
   "StaticMemberAssignmentTarget": {
     "_type": "struct",
@@ -570,7 +560,7 @@
   },
   "Method": {
     "_type": "struct",
-    "name": "ClassElementName",
+    "name": "PropertyName",
     "is_async": "bool",
     "is_generator": "bool",
     "params": "FormalParameters",
@@ -578,12 +568,12 @@
   },
   "Getter": {
     "_type": "struct",
-    "property_name": "ClassElementName",
+    "property_name": "PropertyName",
     "body": "FunctionBody"
   },
   "Setter": {
     "_type": "struct",
-    "property_name": "ClassElementName",
+    "property_name": "PropertyName",
     "param": "Parameter",
     "body": "FunctionBody"
   },
@@ -643,7 +633,7 @@
   },
   "PrivateFieldExpression": {
     "_type": "struct",
-    "object": "ExpressionOrSuper",
+    "object": "Box<Expression>",
     "field": "PrivateIdentifier"
   },
   "TemplateExpressionElement": {

@@ -26,8 +26,9 @@
 
 #include "jstypes.h"  // JS_PUBLIC_API
 
-#include "js/AllocPolicy.h"
+#include "js/AllocPolicy.h"        // js::SystemAllocPolicy
 #include "js/CharacterEncoding.h"  // JS::ConstUTF8CharsZ
+#include "js/Exception.h"          // JS::ExceptionStack
 #include "js/RootingAPI.h"         // JS::HandleObject, JS::RootedObject
 #include "js/UniquePtr.h"          // js::UniquePtr
 #include "js/Vector.h"             // js::Vector
@@ -35,20 +36,12 @@
 struct JS_PUBLIC_API JSContext;
 class JS_PUBLIC_API JSString;
 
-namespace JS {
-class ExceptionStack;
-}
-namespace js {
-class SystemAllocPolicy;
-}
-
 /**
  * Possible exception types. These types are part of a JSErrorFormatString
  * structure. They define which error to throw in case of a runtime error.
  *
- * JSEXN_WARN is used for warnings, that are not strictly errors but are handled
- * using the generalized error reporting mechanism.  (One side effect of this
- * type is to not prepend 'Error:' to warning messages.)  This value can go away
+ * JSEXN_WARN is used for warnings in js.msg files (for instance because we
+ * don't want to prepend 'Error:' to warning messages). This value can go away
  * if we ever decide to use an entirely separate mechanism for warnings.
  */
 enum JSExnType {
@@ -112,7 +105,7 @@ class JSErrorBase {
   // Zero-based column index in line.
   unsigned column;
 
-  // the error number, e.g. see js/public/friend/ErrorNumbers.msg.
+  // the error number, e.g. see js.msg.
   unsigned errorNumber;
 
   // Points to JSErrorFormatString::name.

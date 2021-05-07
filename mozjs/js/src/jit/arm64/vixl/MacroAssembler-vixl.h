@@ -862,6 +862,7 @@ class MacroAssembler : public js::jit::Assembler {
     }
   }
   void Fmov(VRegister vd, Register rn) {
+    VIXL_ASSERT(!rn.IsZero());
     SingleEmissionCheckScope guard(this);
     fmov(vd, rn);
   }

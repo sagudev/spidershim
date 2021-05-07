@@ -6,31 +6,76 @@
 
 #include "jit/JitContext.h"
 
-#include "mozilla/Assertions.h"
+#include "mozilla/DebugOnly.h"
+#include "mozilla/IntegerPrintfMacros.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/ThreadLocal.h"
+#include "mozilla/Unused.h"
 
-#include <stdlib.h>
-
+#include "gc/FreeOp.h"
+#include "gc/Marking.h"
+#include "gc/PublicIterators.h"
+#include "jit/AliasAnalysis.h"
+#include "jit/AlignmentMaskAnalysis.h"
+#include "jit/BacktrackingAllocator.h"
+#include "jit/BaselineFrame.h"
+#include "jit/BaselineInspector.h"
+#include "jit/BaselineJIT.h"
 #include "jit/CacheIRSpewer.h"
-#include "jit/CompileWrappers.h"
-#include "jit/JitCode.h"
-#include "jit/JitOptions.h"
+#include "jit/CodeGenerator.h"
+#include "jit/EdgeCaseAnalysis.h"
+#include "jit/EffectiveAddressAnalysis.h"
+#include "jit/FoldLinearArithConstants.h"
+#include "jit/InstructionReordering.h"
+#include "jit/IonAnalysis.h"
+#include "jit/IonBuilder.h"
+#include "jit/IonIC.h"
+#include "jit/IonOptimizationLevels.h"
+#include "jit/JitcodeMap.h"
+#include "jit/JitCommon.h"
+#include "jit/JitRealm.h"
 #include "jit/JitSpewer.h"
-#include "jit/MacroAssembler.h"
+#include "jit/LICM.h"
+#include "jit/Linker.h"
+#include "jit/LIR.h"
+#include "jit/Lowering.h"
 #include "jit/PerfSpewer.h"
-#include "js/HeapAPI.h"
-#include "vm/JSContext.h"
+#include "jit/RangeAnalysis.h"
+#include "jit/ScalarReplacement.h"
+#include "jit/Sink.h"
+#include "jit/ValueNumbering.h"
+#include "jit/WasmBCE.h"
+#include "js/Printf.h"
+#include "js/UniquePtr.h"
+#include "util/Memory.h"
+#include "util/Windows.h"
+#include "vm/HelperThreads.h"
+#include "vm/Realm.h"
+#include "vm/TraceLogging.h"
+#ifdef MOZ_VTUNE
+#  include "vtune/VTuneWrapper.h"
+#endif
+
+#include "debugger/DebugAPI-inl.h"
+#include "gc/GC-inl.h"
+#include "jit/JitFrames-inl.h"
+#include "jit/MacroAssembler-inl.h"
+#include "jit/shared/Lowering-shared-inl.h"
+#include "vm/EnvironmentObject-inl.h"
+#include "vm/GeckoProfiler-inl.h"
+#include "vm/JSObject-inl.h"
+#include "vm/JSScript-inl.h"
+#include "vm/Realm-inl.h"
+#include "vm/Stack-inl.h"
 
 #if defined(ANDROID)
 #  include <sys/system_properties.h>
 #endif
 
+using mozilla::DebugOnly;
+
 using namespace js;
 using namespace js::jit;
-
-namespace js::jit {
-class TempAllocator;
-}
 
 // Assert that JitCode is gc::Cell aligned.
 static_assert(sizeof(JitCode) % gc::CellAlignBytes == 0);
@@ -101,17 +146,13 @@ bool jit::InitializeJit() {
   InitARMFlags();
 #endif
 
-  // Note: jit flags need to be initialized after the InitARMFlags call above.
-  ComputeJitSupportFlags();
-
-  CheckPerf();
-  return true;
-}
-
-void jit::ComputeJitSupportFlags() {
+  // Note: these flags need to be initialized after the InitARMFlags call above.
   JitOptions.supportsFloatingPoint = MacroAssembler::SupportsFloatingPoint();
   JitOptions.supportsUnalignedAccesses =
       MacroAssembler::SupportsUnalignedAccesses();
+
+  CheckPerf();
+  return true;
 }
 
 bool jit::JitSupportsWasmSimd() {

@@ -78,11 +78,9 @@ fi
 
 if [[ "${TARGET}" == "x86_64-unknown-linux-gnu" ]] || [[ "${TARGET}" == "x86_64-pc-windows-msvc" ]]; then
     # use sleef on linux and windows x86_64 builds
-    # FIXME: Use `core_arch,sleef-sys` features once they works again
-    cargo_test_impl --release --features=into_bits
+    cargo_test_impl --release --features=into_bits,core_arch,sleef-sys
 else
-    # FIXME: Use `core_arch` feature once it works again
-    cargo_test_impl --release --features=into_bits
+    cargo_test_impl --release --features=into_bits,core_arch
 fi
 
 # Verify code generation

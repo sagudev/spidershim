@@ -37,8 +37,6 @@ class MOZ_STACK_CLASS BranchEmitterBase {
   // same number of values.
   int32_t thenDepth_ = 0;
 
-  enum class ConditionKind { Positive, Negative };
-
   // Whether the then-clause, the else-clause, or else-if condition may
   // contain declaration or access to lexical variables, which means they
   // should have their own TDZCheckCache.  Basically TDZCheckCache should be
@@ -48,7 +46,7 @@ class MOZ_STACK_CLASS BranchEmitterBase {
   // for them.
   //
   // See the comment for TDZCheckCache class for more details.
-  enum class LexicalKind {
+  enum class Kind {
     // For syntactic branches (if, if-else, and conditional expression),
     // which basically may contain declaration or accesses to lexical
     // variables inside then-clause, else-clause, and else-if condition.
@@ -58,7 +56,7 @@ class MOZ_STACK_CLASS BranchEmitterBase {
     // inside then-clause, else-clause, nor else-if condition.
     NoLexicalAccessInBranch
   };
-  LexicalKind lexicalKind_;
+  Kind kind_;
 
   mozilla::Maybe<TDZCheckCache> tdzCache_;
 
@@ -69,12 +67,12 @@ class MOZ_STACK_CLASS BranchEmitterBase {
 #endif
 
  protected:
-  BranchEmitterBase(BytecodeEmitter* bce, LexicalKind lexicalKind);
+  BranchEmitterBase(BytecodeEmitter* bce, Kind kind);
 
-  [[nodiscard]] bool emitThenInternal(ConditionKind conditionKind);
+  MOZ_MUST_USE bool emitThenInternal();
   void calculateOrCheckPushed();
-  [[nodiscard]] bool emitElseInternal();
-  [[nodiscard]] bool emitEndInternal();
+  MOZ_MUST_USE bool emitElseInternal();
+  MOZ_MUST_USE bool emitEndInternal();
 
  public:
 #ifdef DEBUG
@@ -102,14 +100,6 @@ class MOZ_STACK_CLASS BranchEmitterBase {
 //     ifThen.emitIf(Some(offset_of_if));
 //     emit(cond);
 //     ifThen.emitThen();
-//     emit(then_block);
-//     ifThen.emitEnd();
-//
-//   `if (!cond) then_block`
-//     IfEmitter ifThen(this);
-//     ifThen.emitIf(Some(offset_of_if));
-//     emit(cond);
-//     ifThen.emitThen(IfEmitter::ConditionKind::Negative);
 //     emit(then_block);
 //     ifThen.emitEnd();
 //
@@ -142,9 +132,6 @@ class MOZ_STACK_CLASS BranchEmitterBase {
 //     ifThenElse.emitEnd();
 //
 class MOZ_STACK_CLASS IfEmitter : public BranchEmitterBase {
- public:
-  using ConditionKind = BranchEmitterBase::ConditionKind;
-
  protected:
 #ifdef DEBUG
   // The state of this emitter.
@@ -197,7 +184,7 @@ class MOZ_STACK_CLASS IfEmitter : public BranchEmitterBase {
 
  protected:
   // For InternalIfEmitter.
-  IfEmitter(BytecodeEmitter* bce, LexicalKind lexicalKind);
+  IfEmitter(BytecodeEmitter* bce, Kind kind);
 
  public:
   explicit IfEmitter(BytecodeEmitter* bce);
@@ -212,17 +199,15 @@ class MOZ_STACK_CLASS IfEmitter : public BranchEmitterBase {
   //   ifPos for emitIf
   //
   // Can be Nothing() if not available.
-  [[nodiscard]] bool emitIf(const mozilla::Maybe<uint32_t>& ifPos);
+  MOZ_MUST_USE bool emitIf(const mozilla::Maybe<uint32_t>& ifPos);
 
-  [[nodiscard]] bool emitThen(
-      ConditionKind conditionKind = ConditionKind::Positive);
-  [[nodiscard]] bool emitThenElse(
-      ConditionKind conditionKind = ConditionKind::Positive);
+  MOZ_MUST_USE bool emitThen();
+  MOZ_MUST_USE bool emitThenElse();
 
-  [[nodiscard]] bool emitElseIf(const mozilla::Maybe<uint32_t>& ifPos);
-  [[nodiscard]] bool emitElse();
+  MOZ_MUST_USE bool emitElseIf(const mozilla::Maybe<uint32_t>& ifPos);
+  MOZ_MUST_USE bool emitElse();
 
-  [[nodiscard]] bool emitEnd();
+  MOZ_MUST_USE bool emitEnd();
 };
 
 // Class for emitting bytecode for blocks like if-then-else which doesn't touch
@@ -299,11 +284,10 @@ class MOZ_STACK_CLASS CondEmitter : public BranchEmitterBase {
  public:
   explicit CondEmitter(BytecodeEmitter* bce);
 
-  [[nodiscard]] bool emitCond();
-  [[nodiscard]] bool emitThenElse(
-      ConditionKind conditionKind = ConditionKind::Positive);
-  [[nodiscard]] bool emitElse();
-  [[nodiscard]] bool emitEnd();
+  MOZ_MUST_USE bool emitCond();
+  MOZ_MUST_USE bool emitThenElse();
+  MOZ_MUST_USE bool emitElse();
+  MOZ_MUST_USE bool emitEnd();
 };
 
 } /* namespace frontend */

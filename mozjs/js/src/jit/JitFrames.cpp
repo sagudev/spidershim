@@ -10,7 +10,6 @@
 
 #include <algorithm>
 
-#include "builtin/ModuleObject.h"
 #include "gc/Marking.h"
 #include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineFrame.h"
@@ -19,24 +18,22 @@
 #include "jit/Ion.h"
 #include "jit/IonScript.h"
 #include "jit/JitcodeMap.h"
-#include "jit/JitRuntime.h"
+#include "jit/JitRealm.h"
 #include "jit/JitSpewer.h"
-#include "jit/LIR.h"
+#include "jit/MacroAssembler.h"
 #include "jit/PcScriptCache.h"
 #include "jit/Recover.h"
 #include "jit/Safepoints.h"
-#include "jit/ScriptFromCalleeToken.h"
 #include "jit/Snapshots.h"
 #include "jit/VMFunctions.h"
-#include "js/friend/DumpFunctions.h"  // js::DumpObject, js::DumpValue
 #include "vm/ArgumentsObject.h"
 #include "vm/GeckoProfiler.h"
 #include "vm/Interpreter.h"
-#include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
 #include "vm/TraceLogging.h"
+#include "vm/TypeInference.h"
 #include "wasm/WasmBuiltins.h"
 #include "wasm/WasmInstance.h"
 
@@ -46,6 +43,7 @@
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Probes-inl.h"
+#include "vm/TypeInference-inl.h"
 
 namespace js {
 namespace jit {
@@ -422,7 +420,7 @@ static bool ProcessTryNotesBaseline(JSContext* cx, const JSJitFrameIter& frame,
         BaselineFrameAndStackPointersFromTryNote(tn, frame, &framePointer,
                                                  &stackPointer);
         // Note: if this ever changes, also update the
-        // TryNoteKind::Destructuring code in WarpBuilder.cpp!
+        // TryNoteKind::Destructuring code in IonBuilder.cpp!
         RootedValue doneValue(cx, *(reinterpret_cast<Value*>(stackPointer)));
         MOZ_RELEASE_ASSERT(!doneValue.isMagic());
         bool done = ToBoolean(doneValue);
@@ -564,7 +562,9 @@ static void* GetLastProfilingFrame(ResumeFromException* rfe) {
 void HandleExceptionWasm(JSContext* cx, wasm::WasmFrameIter* iter,
                          ResumeFromException* rfe) {
   MOZ_ASSERT(cx->activation()->asJit()->hasWasmExitFP());
-  wasm::HandleThrow(cx, *iter, rfe);
+  rfe->kind = ResumeFromException::RESUME_WASM;
+  rfe->framePointer = (uint8_t*)wasm::FailFP;
+  rfe->stackPointer = (uint8_t*)wasm::HandleThrow(cx, *iter);
   MOZ_ASSERT(iter->done());
 }
 
@@ -592,6 +592,14 @@ void HandleException(ResumeFromException* rfe) {
 
   JitSpew(JitSpew_IonInvalidate, "handling exception");
 
+  // Clear any Ion return override that's been set.
+  // This may happen if a callVM function causes an invalidation (setting the
+  // override), and then fails, bypassing the bailout handlers that would
+  // otherwise clear the return override.
+  if (cx->hasIonReturnOverride()) {
+    cx->takeIonReturnOverride();
+  }
+
   JitActivation* activation = cx->activation()->asJit();
 
 #ifdef CHECK_OSIPOINT_REGISTERS
@@ -607,11 +615,6 @@ void HandleException(ResumeFromException* rfe) {
     if (iter.isWasm()) {
       prevJitFrame = nullptr;
       HandleExceptionWasm(cx, &iter.asWasm(), rfe);
-      // If a wasm try-catch handler is found, we can immediately jump to it
-      // and quit iterating through the stack.
-      if (rfe->kind == ResumeFromException::RESUME_WASM_CATCH) {
-        return;
-      }
       if (!iter.done()) {
         ++iter;
       }
@@ -882,6 +885,11 @@ static void TraceIonJSFrame(JSTracer* trc, const JSJitFrameIter& frame) {
                             "ion-gc-slot");
   }
 
+  while (safepoint.getValueSlot(&entry)) {
+    Value* v = (Value*)layout->slotRef(entry);
+    TraceRoot(trc, v, "ion-gc-slot");
+  }
+
   uintptr_t* spill = frame.spillBase();
   LiveGeneralRegisterSet gcRegs = safepoint.gcSpills();
   LiveGeneralRegisterSet valueRegs = safepoint.valueSpills();
@@ -896,12 +904,7 @@ static void TraceIonJSFrame(JSTracer* trc, const JSJitFrameIter& frame) {
     }
   }
 
-#ifdef JS_PUNBOX64
-  while (safepoint.getValueSlot(&entry)) {
-    Value* v = (Value*)layout->slotRef(entry);
-    TraceRoot(trc, v, "ion-gc-slot");
-  }
-#else
+#ifdef JS_NUNBOX32
   LAllocation type, payload;
   while (safepoint.getNunboxSlot(&type, &payload)) {
     JSValueTag tag = JSValueTag(ReadAllocation(frame, &type));
@@ -989,16 +992,14 @@ static void UpdateIonJSFrameForMinorGC(JSRuntime* rt,
 
   // Skip to the right place in the safepoint
   SafepointSlotEntry entry;
-  while (safepoint.getGcSlot(&entry)) {
-  }
-
-#ifdef JS_PUNBOX64
-  while (safepoint.getValueSlot(&entry)) {
-  }
-#else
+  while (safepoint.getGcSlot(&entry))
+    ;
+  while (safepoint.getValueSlot(&entry))
+    ;
+#ifdef JS_NUNBOX32
   LAllocation type, payload;
-  while (safepoint.getNunboxSlot(&type, &payload)) {
-  }
+  while (safepoint.getNunboxSlot(&type, &payload))
+    ;
 #endif
 
   while (safepoint.getSlotsOrElementsSlot(&entry)) {
@@ -1014,12 +1015,8 @@ static void TraceBaselineStubFrame(JSTracer* trc, const JSJitFrameIter& frame) {
   JitStubFrameLayout* layout = (JitStubFrameLayout*)frame.fp();
 
   if (ICStub* stub = layout->maybeStubPtr()) {
-    if (stub->isFallback()) {
-      stub->toFallbackStub()->trace(trc);
-    } else {
-      MOZ_ASSERT(stub->toCacheIRStub()->makesGCCalls());
-      stub->toCacheIRStub()->trace(trc);
-    }
+    MOZ_ASSERT(stub->makesGCCalls());
+    stub->trace(trc);
   }
 }
 
@@ -1329,20 +1326,6 @@ void UpdateJitActivationsForMinorGC(JSRuntime* rt) {
   }
 }
 
-JSScript* GetTopJitJSScript(JSContext* cx) {
-  JSJitFrameIter frame(cx->activation()->asJit());
-  MOZ_ASSERT(frame.type() == FrameType::Exit);
-  ++frame;
-
-  if (frame.isBaselineStub()) {
-    ++frame;
-    MOZ_ASSERT(frame.isBaselineJS());
-  }
-
-  MOZ_ASSERT(frame.isScripted());
-  return frame.script();
-}
-
 void GetPcScript(JSContext* cx, JSScript** scriptRes, jsbytecode** pcRes) {
   JitSpew(JitSpew_IonSnapshots, "Recover PC & Script from the last frame.");
 
@@ -1419,6 +1402,13 @@ void GetPcScript(JSContext* cx, JSScript** scriptRes, jsbytecode** pcRes) {
   if (cx->ionPcScriptCache.ref()) {
     cx->ionPcScriptCache->add(hash, retAddr, *pcRes, *scriptRes);
   }
+}
+
+uint32_t OsiIndex::returnPointDisplacement() const {
+  // In general, pointer arithmetic on code is bad, but in this case,
+  // getting the return address from a call instruction, stepping over pools
+  // would be wrong.
+  return callPointDisplacement_ + Assembler::PatchWrite_NearCallSize();
 }
 
 RInstructionResults::RInstructionResults(JitFrameLayout* fp)
@@ -1498,13 +1488,18 @@ SnapshotIterator::SnapshotIterator()
       ionScript_(nullptr),
       instructionResults_(nullptr) {}
 
+int32_t SnapshotIterator::readOuterNumActualArgs() const {
+  return fp_->numActualArgs();
+}
+
 uintptr_t SnapshotIterator::fromStack(int32_t offset) const {
   return ReadFrameSlot(fp_, offset);
 }
 
 static Value FromObjectPayload(uintptr_t payload) {
-  MOZ_ASSERT(payload != 0);
-  return ObjectValue(*reinterpret_cast<JSObject*>(payload));
+  // Note: Both MIRType::Object and MIRType::ObjectOrNull are encoded in
+  // snapshots using JSVAL_TYPE_OBJECT.
+  return ObjectOrNullValue(reinterpret_cast<JSObject*>(payload));
 }
 
 static Value FromStringPayload(uintptr_t payload) {
@@ -1906,10 +1901,9 @@ bool SnapshotIterator::computeInstructionResults(
       return true;
     }
 
-    // Avoid invoking the object metadata callback, which could try to walk the
-    // stack while bailing out.
-    gc::AutoSuppressGC suppressGC(cx);
-    js::AutoSuppressAllocationMetadataBuilder suppressMetadata(cx);
+    // Use AutoEnterAnalysis to avoid invoking the object metadata callback,
+    // which could try to walk the stack while bailing out.
+    AutoEnterAnalysis enter(cx);
 
     // Fill with the results of recover instructions.
     SnapshotIterator s(*this);
@@ -2056,9 +2050,8 @@ void InlineFrameIterator::findNextFrame() {
       numActualArgs_ = GET_ARGC(pc_);
     }
     if (JSOp(*pc_) == JSOp::FunCall) {
-      if (numActualArgs_ > 0) {
-        numActualArgs_--;
-      }
+      MOZ_ASSERT(GET_ARGC(pc_) > 0);
+      numActualArgs_ = GET_ARGC(pc_) - 1;
     } else if (IsGetPropPC(pc_) || IsGetElemPC(pc_)) {
       numActualArgs_ = 0;
     } else if (IsSetPropPC(pc_)) {
@@ -2222,7 +2215,9 @@ MachineState MachineState::FromBailout(RegisterDump::GPRArray& regs,
     machine.setRegisterLocation(
         FloatRegister(FloatRegisters::Encoding(i), FloatRegisters::Double),
         &fpregs[i]);
-    // No SIMD support in bailouts, SIMD is internal to wasm
+#  ifdef ENABLE_WASM_SIMD
+#    error "More care needed here"
+#  endif
   }
 
 #elif defined(JS_CODEGEN_NONE)

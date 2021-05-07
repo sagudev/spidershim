@@ -19,7 +19,7 @@ try {
 } catch(err) {
   threw = true;
   if (err.constructor !== ReferenceError) {
-    throw new Error(
+    $ERROR(
       'Expected a ReferenceError, but a "' + err.constructor.name +
       '" was thrown.'
     );
@@ -27,7 +27,7 @@ try {
 }
 
 if (threw === false) {
-  throw new Error('Expected a ReferenceError, but no error was thrown.');
+  $ERROR('Expected a ReferenceError, but no error was thrown.');
 }
 
 

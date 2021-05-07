@@ -13,9 +13,9 @@
 #include <stdint.h>
 
 #include "frontend/ForOfLoopControl.h"
-#include "frontend/IteratorKind.h"
 #include "frontend/JumpList.h"
 #include "frontend/TDZCheckCache.h"
+#include "vm/Iteration.h"
 
 namespace js {
 namespace frontend {
@@ -105,10 +105,10 @@ class MOZ_STACK_CLASS ForOfEmitter {
   //   forPos
   //
   // Can be Nothing() if not available.
-  [[nodiscard]] bool emitIterated();
-  [[nodiscard]] bool emitInitialize(const mozilla::Maybe<uint32_t>& forPos);
-  [[nodiscard]] bool emitBody();
-  [[nodiscard]] bool emitEnd(const mozilla::Maybe<uint32_t>& iteratedPos);
+  MOZ_MUST_USE bool emitIterated();
+  MOZ_MUST_USE bool emitInitialize(const mozilla::Maybe<uint32_t>& forPos);
+  MOZ_MUST_USE bool emitBody();
+  MOZ_MUST_USE bool emitEnd(const mozilla::Maybe<uint32_t>& iteratedPos);
 };
 
 } /* namespace frontend */

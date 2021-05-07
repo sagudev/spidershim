@@ -4,30 +4,31 @@
 esid: sec-%typedarray%.prototype.join
 description: Throws a TypeError if this has a detached buffer
 info: |
-  %TypedArray%.prototype.join ( separator )
+  22.2.3.15 %TypedArray%.prototype.join ( separator )
 
-  The interpretation and use of the arguments of %TypedArray%.prototype.join are the same as for Array.prototype.join as defined in 22.1.3.15.
+  This function is not generic. ValidateTypedArray is applied to the this value
+  prior to evaluating the algorithm. If its result is an abrupt completion that
+  exception is thrown instead of evaluating the algorithm.
 
-  When the join method is called with one argument separator, the following steps are taken:
+  22.2.3.5.1 Runtime Semantics: ValidateTypedArray ( O )
 
-  Let O be the this value.
-  Perform ? ValidateTypedArray(O).
   ...
-
+  5. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
+  ...
 includes: [testBigIntTypedArray.js, detachArrayBuffer.js]
 features: [BigInt, TypedArray]
 ---*/
 
-let obj = {
-  toString() {
+var obj = {
+  toString: function() {
     throw new Test262Error();
   }
 };
 
 testWithBigIntTypedArrayConstructors(function(TA) {
-  let sample = new TA(1);
+  var sample = new TA(1);
   $DETACHBUFFER(sample.buffer);
-  assert.throws(TypeError, () => {
+  assert.throws(TypeError, function() {
     sample.join(obj);
   });
 });

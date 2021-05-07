@@ -1,4 +1,4 @@
-// |reftest| skip-if(!this.hasOwnProperty('Intl'))
+// |reftest| skip-if(!this.hasOwnProperty('Intl')||(!this.Intl.DisplayNames&&!this.hasOwnProperty('addIntlExtras')))
 
 const tests = {
   "en": {
@@ -83,11 +83,14 @@ const tests = {
 };
 
 for (let [locale, localeTests] of Object.entries(tests)) {
+  let defaultCalendar = new Intl.DateTimeFormat(locale).resolvedOptions().calendar;
+
   for (let [style, styleTests] of Object.entries(localeTests)) {
     let dn = new Intl.DisplayNames(locale, {type: "currency", style});
 
     let resolved = dn.resolvedOptions();
     assertEq(resolved.locale, locale);
+    assertEq(resolved.calendar, defaultCalendar);
     assertEq(resolved.style, style);
     assertEq(resolved.type, "currency");
     assertEq(resolved.fallback, "code");
@@ -132,9 +135,9 @@ for (let [locale, localeTests] of Object.entries(tests)) {
   assertEq(dn2.of("AAA"), "AAA");
   assertEq(dn3.of("AAA"), undefined);
 
-  // The returned fallback is in canonical case.
-  assertEq(dn1.of("aaa"), "AAA");
-  assertEq(dn2.of("aaa"), "AAA");
+  // The returned fallback is in the same case as the input code.
+  assertEq(dn1.of("aaa"), "aaa");
+  assertEq(dn2.of("aaa"), "aaa");
   assertEq(dn3.of("aaa"), undefined);
 }
 

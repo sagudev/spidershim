@@ -55,8 +55,6 @@ class UnsafeBareWeakHeapPtr : public ReadBarriered<T> {
 };
 }  // namespace detail
 
-enum : bool { DuplicatesNotPossible, DuplicatesPossible };
-
 // The "nursery aware" hash map is a special case of GCHashMap that is able to
 // treat nursery allocated members weakly during a minor GC: e.g. it allows for
 // nursery allocated objects to be collected during nursery GC where a normal
@@ -70,8 +68,7 @@ enum : bool { DuplicatesNotPossible, DuplicatesPossible };
 // moment, but might serve as a useful base for other tables in future.
 template <typename Key, typename Value,
           typename HashPolicy = DefaultHasher<Key>,
-          typename AllocPolicy = TempAllocPolicy,
-          bool AllowDuplicates = DuplicatesNotPossible>
+          typename AllocPolicy = TempAllocPolicy>
 class NurseryAwareHashMap {
   using BarrieredValue = detail::UnsafeBareWeakHeapPtr<Value>;
   using MapType =
@@ -111,7 +108,7 @@ class NurseryAwareHashMap {
            nurseryEntries.sizeOfIncludingThis(mallocSizeOf);
   }
 
-  [[nodiscard]] bool put(const Key& k, const Value& v) {
+  MOZ_MUST_USE bool put(const Key& k, const Value& v) {
     auto p = map.lookupForAdd(k);
     if (p) {
       if (!JS::GCPolicy<Key>::isTenured(k) ||
@@ -167,30 +164,15 @@ class NurseryAwareHashMap {
         map.remove(key);
         continue;
       }
-      if (AllowDuplicates) {
-        // Drop duplicated keys.
-        //
-        // A key can be forwarded to another place. In this case, rekey the
-        // item. If two or more different keys are forwarded to the same new
-        // key, simply drop the later ones.
-        if (key == copy) {
-          // No rekey needed.
-        } else if (map.has(copy)) {
-          // Key was forwarded to the same place that another key was already
-          // forwarded to.
-          map.remove(key);
-        } else {
-          map.rekeyAs(key, copy, copy);
-        }
-      } else {
-        MOZ_ASSERT(key == copy || !map.has(copy));
-        map.rekeyIfMoved(key, copy);
-      }
+      map.rekeyIfMoved(key, copy);
     }
     nurseryEntries.clear();
   }
 
-  void sweep() { map.sweep(); }
+  void sweep() {
+    MOZ_ASSERT(nurseryEntries.empty());
+    map.sweep();
+  }
 
   void clear() {
     map.clear();

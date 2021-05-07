@@ -21,27 +21,19 @@ function thisValues() {
         ...[{}, [], /(?:)/, function(){}, new Proxy({}, {})],
 
         // Intl objects.
-        ...[].concat(...intlConstructors.map(ctor => {
-            let args = [];
-            if (ctor === Intl.DisplayNames) {
-                // Intl.DisplayNames can't be constructed without any arguments.
-                args = [undefined, {type: "language"}];
-            }
+        ...[].concat(...intlConstructors.map(ctor => [
+            // Instance of an Intl constructor.
+            new ctor(),
 
-            return [
-                // Instance of an Intl constructor.
-                new ctor(...args),
+            // Instance of a subclassed Intl constructor.
+            new class extends ctor {},
 
-                // Instance of a subclassed Intl constructor.
-                new class extends ctor {}(...args),
+            // Object inheriting from an Intl constructor prototype.
+            Object.create(ctor.prototype),
 
-                // Object inheriting from an Intl constructor prototype.
-                Object.create(ctor.prototype),
-
-                // Intl object not inheriting from its default prototype.
-                Object.setPrototypeOf(new ctor(...args), Object.prototype),
-            ];
-        })),
+            // Intl object not inheriting from its default prototype.
+            Object.setPrototypeOf(new ctor(), Object.prototype),
+        ])),
     ];
 }
 

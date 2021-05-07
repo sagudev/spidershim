@@ -6,12 +6,13 @@ import io
 import typing
 
 from ..grammar import ErrorSymbol, Nt, Some
-from ..actions import (Accept, Action, CheckNotOnNewLine, FilterFlag, FilterStates, FunCall,
-                       Lookahead, OutputExpr, PopFlag, PushFlag, Reduce, Replay, Seq, Unwind)
+from ..actions import (Accept, Action, CheckNotOnNewLine, FilterFlag, FunCall,
+                       Lookahead, OutputExpr, PopFlag, PushFlag, Reduce, Seq)
 from ..runtime import ErrorToken, ErrorTokenClass
 from ..ordered import OrderedSet
 from ..lr0 import Term
-from ..parse_table import StateId, ParseTable
+from ..aps import StateId
+from ..parse_table import ParseTable
 
 
 def method_name_to_python(name: str) -> str:
@@ -22,6 +23,8 @@ def write_python_parse_table(out: io.TextIOBase, parse_table: ParseTable) -> Non
     # Disable MyPy type checking for everything in this module.
     out.write("# type: ignore\n\n")
 
+    shift_count = parse_table.count_shift_states()
+    action_count = parse_table.count_action_states()
     out.write("from jsparagus import runtime\n")
     if any(isinstance(key, Nt) for key in parse_table.nonterminals):
         out.write(
@@ -29,45 +32,18 @@ def write_python_parse_table(out: io.TextIOBase, parse_table: ParseTable) -> Non
             "                               ShiftError, ShiftAccept)\n")
     out.write("\n")
 
-    methods: OrderedSet[typing.Tuple[str, int]] = OrderedSet()
-
-    def write_epsilon_transition(indent: str, dest_idx: StateId):
-        dest = parse_table.states[dest_idx]
-        if dest.epsilon != []:
-            assert dest.index < len(parse_table.states)
-            # This is a transition to an action.
-            args = ""
-            for i in range(dest.arguments):
-                out.write("{}r{} = parser.replay.pop()\n".format(indent, i))
-                args += ", r{}".format(i)
-            out.write("{}state_{}_actions(parser, lexer{})\n".format(indent, dest.index, args))
-        else:
-            # This is a transition to a shift.
-            assert dest.arguments == 0
-            out.write("{}top = parser.stack.pop()\n".format(indent))
-            out.write("{}top = StateTermValue({}, top.term, top.value, top.new_line)\n"
-                      .format(indent, dest.index))
-            out.write("{}parser.stack.append(top)\n".format(indent))
+    methods: OrderedSet[FunCall] = OrderedSet()
 
     def write_action(act: Action, indent: str = "") -> typing.Tuple[str, bool]:
         assert not act.is_inconsistent()
-        if isinstance(act, Replay):
-            for s in act.replay_steps:
-                out.write("{}parser.replay_action({})\n".format(indent, s))
-            return indent, True
-        if isinstance(act, (Unwind, Reduce)):
-            stack_diff = act.update_stack_with()
-            replay = stack_diff.replay
-            out.write("{}replay = []\n".format(indent))
-            while replay > 0:
-                replay -= 1
-                out.write("{}replay.append(parser.stack.pop())\n".format(indent))
-            out.write("{}replay.append(StateTermValue(0, {}, value, False))\n"
-                      .format(indent, repr(stack_diff.nt)))
-            if stack_diff.pop > 0:
-                out.write("{}del parser.stack[-{}:]\n".format(indent, stack_diff.pop))
-            out.write("{}parser.replay.extend(replay)\n".format(indent))
-            return indent, act.follow_edge()
+        if isinstance(act, Reduce):
+            out.write("{}replay = [StateTermValue(0, {}, value, False)]\n".format(indent, repr(act.nt)))
+            if act.replay > 0:
+                out.write("{}replay = replay + parser.stack[-{}:]\n".format(indent, act.replay))
+            if act.replay + act.pop > 0:
+                out.write("{}del parser.stack[-{}:]\n".format(indent, act.replay + act.pop))
+            out.write("{}parser.shift_list(replay, lexer)\n".format(indent))
+            return indent, False
         if isinstance(act, Accept):
             out.write("{}raise ShiftAccept()\n".format(indent))
             return indent, False
@@ -77,9 +53,6 @@ def write_python_parse_table(out: io.TextIOBase, parse_table: ParseTable) -> Non
             out.write("{}if not parser.check_not_on_new_line(lexer, {}):\n".format(indent, -act.offset))
             out.write("{}    return\n".format(indent))
             return indent, True
-        if isinstance(act, FilterStates):
-            out.write("{}if parser.top_state() in [{}]:\n".format(indent, ", ".join(map(str, act.states))))
-            return indent + "    ", True
         if isinstance(act, FilterFlag):
             out.write("{}if parser.flags[{}][-1] == {}:\n".format(indent, act.flag, act.value))
             return indent + "    ", True
@@ -91,13 +64,6 @@ def write_python_parse_table(out: io.TextIOBase, parse_table: ParseTable) -> Non
             return indent, True
         if isinstance(act, FunCall):
             enclosing_call_offset = act.offset
-            if enclosing_call_offset < 0:
-                # When replayed terms are given as function arguments, they are
-                # not part of the stack. However, we cheat the system by
-                # replaying all terms necessary to pop them uniformly. Thus, the
-                # naming of variable for negative offsets will always match the
-                # naming of when the offset is 0.
-                enclosing_call_offset = 0
 
             def map_with_offset(args: typing.Iterable[OutputExpr]) -> typing.Iterator[str]:
                 get_value = "parser.stack[{}].value"
@@ -118,7 +84,7 @@ def write_python_parse_table(out: io.TextIOBase, parse_table: ParseTable) -> Non
                 assert len(act.args) == 1
                 out.write("{}{} = {}\n".format(indent, act.set_to, next(map_with_offset(act.args))))
             else:
-                methods.add((act.method, len(act.args)))
+                methods.add(act)
                 out.write("{}{} = parser.methods.{}({})\n".format(
                     indent, act.set_to, method_name_to_python(act.method),
                     ", ".join(map_with_offset(act.args))
@@ -135,23 +101,7 @@ def write_python_parse_table(out: io.TextIOBase, parse_table: ParseTable) -> Non
         assert i == state.index
         if state.epsilon == []:
             continue
-        args = []
-        for j in range(state.arguments):
-            args.append("a{}".format(j))
-        out.write("def state_{}_actions(parser, lexer{}):\n".format(
-            i, "".join(map(lambda s: ", " + s, args))))
-        if state.arguments > 0:
-            out.write("    parser.replay.extend([{}])\n".format(", ".join(reversed(args))))
-        term, dest = next(iter(state.epsilon))
-        if term.update_stack():
-            # If we Unwind, make sure all elements are replayed on the stack before starting.
-            out.write("    # {}\n".format(term))
-            stack_diff = term.update_stack_with()
-            replay = stack_diff.replay
-            if stack_diff.pop + replay >= 0:
-                while replay < 0:
-                    replay += 1
-                    out.write("    parser.stack.append(parser.replay.pop())\n")
+        out.write("def state_{}_actions(parser, lexer):\n".format(i))
         out.write("{}\n".format(parse_table.debug_context(i, "\n", "    # ")))
         out.write("    value = None\n")
         for action, dest in state.edges():
@@ -164,7 +114,16 @@ def write_python_parse_table(out: io.TextIOBase, parse_table: ParseTable) -> Non
                 print(parse_table.debug_context(state.index, "\n", "# "))
                 raise
             if fallthrough:
-                write_epsilon_transition(indent, dest)
+                if dest >= shift_count:
+                    assert dest < shift_count + action_count
+                    # This is a transition to an action.
+                    out.write("{}state_{}_actions(parser, lexer)\n".format(indent, dest))
+                else:
+                    # This is a transition to a shift.
+                    out.write("{}top = parser.stack.pop()\n".format(indent))
+                    out.write("{}top = StateTermValue({}, top.term, top.value, top.new_line)\n"
+                              .format(indent, dest))
+                    out.write("{}parser.stack.append(top)\n".format(indent))
             out.write("{}return\n".format(indent))
         out.write("\n")
 
@@ -211,11 +170,12 @@ def write_python_parse_table(out: io.TextIOBase, parse_table: ParseTable) -> Non
 
     # Class used to provide default methods when not defined by the caller.
     out.write("class DefaultMethods:\n")
-    for method, arglen in methods:
-        act_args = ", ".join("x{}".format(i) for i in range(arglen))
-        name = method_name_to_python(method)
-        out.write("    def {}(self, {}):\n".format(name, act_args))
-        out.write("        return ({}, {})\n".format(repr(name), act_args))
+    for act in methods:
+        assert isinstance(act, FunCall)
+        args = ", ".join("x{}".format(i) for i in range(len(act.args)))
+        name = method_name_to_python(act.method)
+        out.write("    def {}(self, {}):\n".format(name, args))
+        out.write("        return ({}, {})\n".format(repr(name), args))
     if not methods:
         out.write("    pass\n")
     out.write("\n")

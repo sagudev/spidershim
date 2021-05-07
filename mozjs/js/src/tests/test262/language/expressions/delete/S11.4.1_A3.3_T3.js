@@ -3,20 +3,17 @@
 
 /*---
 info: If the property doesn't have the DontDelete attribute, remove the property
-esid: sec-delete-operator-runtime-semantics-evaluation
+es5id: 11.4.1_A3.3_T3
 description: Checking declared variable
 ---*/
 
 //CHECK#1
-function MyFunction() {}
+function MyFunction(){};
 var MyObjectVar = new MyFunction();
 MyObjectVar.prop = 1;
 delete MyObjectVar.prop;
 if (MyObjectVar.prop !== undefined) {
-  $ERROR(
-    '#1: function MyFunction(){}; var MyObjectVar = new MyFunction(); MyFunction.prop = 1; delete MyObjectVar.prop; MyObjectVar.prop === undefined. Actual: ' +
-    MyObjectVar.prop
-  );
+  $ERROR('#1: function MyFunction(){}; var MyObjectVar = new MyFunction(); MyFunction.prop = 1; delete MyObjectVar.prop; MyObjectVar.prop === undefined. Actual: ' + (MyObjectVar.prop));
 }
 
 reportCompare(0, 0);

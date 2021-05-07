@@ -11,7 +11,6 @@
 #include "NamespaceImports.h"
 
 #include "gc/GCInternals.h"
-#include "gc/Marking.h"
 #include "gc/PublicIterators.h"
 #include "gc/Zone.h"
 #include "util/Memory.h"
@@ -24,38 +23,89 @@
 
 #include "gc/GC-inl.h"
 #include "gc/Marking-inl.h"
+#include "vm/ObjectGroup-inl.h"
 #include "vm/Realm-inl.h"
+#include "vm/TypeInference-inl.h"
 
 using namespace js;
 using namespace js::gc;
 using mozilla::DebugOnly;
 
-void JS::TracingContext::getEdgeName(char* buffer, size_t bufferSize) {
+namespace js {
+template <typename T>
+void CheckTracedThing(JSTracer* trc, T thing);
+}  // namespace js
+
+/*** Callback Tracer Dispatch ***********************************************/
+template <typename T>
+bool DoCallback(JS::CallbackTracer* trc, T** thingp, const char* name) {
+  CheckTracedThing(trc, *thingp);
+  JS::AutoTracingName ctx(trc, name);
+
+  return trc->dispatchToOnEdge(thingp);
+}
+#define INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS(name, type, _, _1) \
+  template bool DoCallback<type>(JS::CallbackTracer*, type**, const char*);
+JS_FOR_EACH_TRACEKIND(INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS);
+#undef INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS
+
+template <typename T>
+bool DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name) {
+  // Return true by default. For some types the lambda below won't be called.
+  bool ret = true;
+  auto thing = MapGCThingTyped(*thingp, [trc, name, &ret](auto t) {
+    if (!DoCallback(trc, &t, name)) {
+      ret = false;
+      return TaggedPtr<T>::empty();
+    }
+    return TaggedPtr<T>::wrap(t);
+  });
+  // Only update *thingp if the value changed, to avoid TSan false positives for
+  // template objects when using DumpHeapTracer or UbiNode tracers while Ion
+  // compiling off-thread.
+  if (thing.isSome() && thing.value() != *thingp) {
+    *thingp = thing.value();
+  }
+  return ret;
+}
+template bool DoCallback<JS::Value>(JS::CallbackTracer*, JS::Value*,
+                                    const char*);
+template bool DoCallback<JS::PropertyKey>(JS::CallbackTracer*, JS::PropertyKey*,
+                                          const char*);
+template bool DoCallback<TaggedProto>(JS::CallbackTracer*, TaggedProto*,
+                                      const char*);
+
+void JS::CallbackTracer::getTracingEdgeName(char* buffer, size_t bufferSize) {
   MOZ_ASSERT(bufferSize > 0);
-  if (functor_) {
-    (*functor_)(this, buffer, bufferSize);
+  if (contextFunctor_) {
+    (*contextFunctor_)(this, buffer, bufferSize);
     return;
   }
-  if (index_ != InvalidIndex) {
-    snprintf(buffer, bufferSize, "%s[%zu]", name_, index_);
+  if (contextIndex_ != InvalidIndex) {
+    snprintf(buffer, bufferSize, "%s[%zu]", contextName_, contextIndex_);
     return;
   }
-  snprintf(buffer, bufferSize, "%s", name_);
+  snprintf(buffer, bufferSize, "%s", contextName_);
 }
 
 /*** Public Tracing API *****************************************************/
 
 JS_PUBLIC_API void JS::TraceChildren(JSTracer* trc, GCCellPtr thing) {
-  ApplyGCThingTyped(thing.asCell(), thing.kind(), [trc](auto t) {
+  js::TraceChildren(trc, thing.asCell(), thing.kind());
+}
+
+void js::TraceChildren(JSTracer* trc, void* thing, JS::TraceKind kind) {
+  MOZ_ASSERT(thing);
+  ApplyGCThingTyped(thing, kind, [trc](auto t) {
     MOZ_ASSERT_IF(t->runtimeFromAnyThread() != trc->runtime(),
-                  t->isPermanentAndMayBeShared() ||
+                  ThingIsPermanentAtomOrWellKnownSymbol(t) ||
                       t->zoneFromAnyThread()->isSelfHostingZone());
     t->traceChildren(trc);
   });
 }
 
-void js::gc::TraceIncomingCCWs(JSTracer* trc,
-                               const JS::CompartmentSet& compartments) {
+JS_PUBLIC_API void JS::TraceIncomingCCWs(
+    JSTracer* trc, const JS::CompartmentSet& compartments) {
   for (CompartmentsIter source(trc->runtime()); !source.done(); source.next()) {
     if (compartments.has(source)) {
       continue;
@@ -96,24 +146,32 @@ void js::gc::TraceIncomingCCWs(JSTracer* trc,
 // simplicity and performance of FireFox's embedding of this engine.
 void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc, Shape* shape) {
   do {
-    shape->base()->traceChildren(trc);
+    MOZ_ASSERT(shape->base());
+    shape->base()->assertConsistency();
 
     // Don't trace the propid because the CC doesn't care about jsid.
 
     if (shape->hasGetterObject()) {
       JSObject* tmp = shape->getterObject();
-      TraceEdgeInternal(trc, &tmp, "getter");
+      DoCallback(trc, &tmp, "getter");
       MOZ_ASSERT(tmp == shape->getterObject());
     }
 
     if (shape->hasSetterObject()) {
       JSObject* tmp = shape->setterObject();
-      TraceEdgeInternal(trc, &tmp, "setter");
+      DoCallback(trc, &tmp, "setter");
       MOZ_ASSERT(tmp == shape->setterObject());
     }
 
     shape = shape->previous();
   } while (shape);
+}
+
+void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc,
+                                     ObjectGroup* group) {
+  MOZ_ASSERT(trc->isCallbackTracer());
+
+  group->traceChildren(trc);
 }
 
 /*** Traced Edge Printer ****************************************************/
@@ -160,8 +218,9 @@ static const char* StringKindHeader(JSString* str) {
   return "linear: ";
 }
 
-void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
-                               JS::TraceKind kind, bool details) {
+JS_PUBLIC_API void JS_GetTraceThingInfo(char* buf, size_t bufsize,
+                                        JSTracer* trc, void* thing,
+                                        JS::TraceKind kind, bool details) {
   const char* name = nullptr; /* silence uninitialized warning */
   size_t n;
 
@@ -186,6 +245,10 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
       name = static_cast<JSObject*>(thing)->getClass()->name;
       break;
     }
+
+    case JS::TraceKind::ObjectGroup:
+      name = "object_group";
+      break;
 
     case JS::TraceKind::RegExpShared:
       name = "reg_exp_shared";
@@ -249,7 +312,7 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
       }
 
       case JS::TraceKind::Script: {
-        auto* script = static_cast<js::BaseScript*>(thing);
+        js::BaseScript* script = static_cast<js::BaseScript*>(thing);
         snprintf(buf, bufsize, " %s:%u", script->filename(), script->lineno());
         break;
       }
@@ -278,7 +341,7 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
       }
 
       case JS::TraceKind::Symbol: {
-        auto* sym = static_cast<JS::Symbol*>(thing);
+        JS::Symbol* sym = static_cast<JS::Symbol*>(thing);
         if (JSAtom* desc = sym->description()) {
           *buf++ = ' ';
           bufsize--;
@@ -290,7 +353,7 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
       }
 
       case JS::TraceKind::Scope: {
-        auto* scope = static_cast<js::Scope*>(thing);
+        js::Scope* scope = static_cast<js::Scope*>(thing);
         snprintf(buf, bufsize, " %s", js::ScopeKindString(scope->kind()));
         break;
       }
@@ -302,9 +365,9 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
   buf[bufsize - 1] = '\0';
 }
 
-JS::CallbackTracer::CallbackTracer(JSContext* cx, JS::TracerKind kind,
-                                   JS::TraceOptions options)
-    : CallbackTracer(cx->runtime(), kind, options) {}
+JS::CallbackTracer::CallbackTracer(JSContext* cx,
+                                   WeakMapTraceKind weakTraceKind)
+    : CallbackTracer(cx->runtime(), weakTraceKind) {}
 
 uint32_t JSTracer::gcNumberForMarking() const {
   MOZ_ASSERT(isMarkingTracer());

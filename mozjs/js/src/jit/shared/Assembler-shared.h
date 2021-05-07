@@ -11,17 +11,12 @@
 
 #include <limits.h>
 
-#include "gc/Barrier.h"
 #include "jit/AtomicOp.h"
 #include "jit/JitAllocPolicy.h"
-#include "jit/JitCode.h"
-#include "jit/JitContext.h"
 #include "jit/Label.h"
 #include "jit/Registers.h"
 #include "jit/RegisterSets.h"
-#include "js/ScalarType.h"  // js::Scalar::Type
 #include "vm/HelperThreads.h"
-#include "vm/NativeObject.h"
 #include "wasm/WasmTypes.h"
 
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
@@ -37,10 +32,10 @@
 #  define JS_CODELABEL_LINKMODE
 #endif
 
+using mozilla::CheckedInt;
+
 namespace js {
 namespace jit {
-
-enum class FrameType;
 
 namespace Disassembler {
 class HeapAccess;
@@ -85,10 +80,6 @@ static inline Scale ScaleFromElemWidth(int shift) {
   }
 
   MOZ_CRASH("Invalid scale");
-}
-
-static inline Scale ScaleFromScalarType(Scalar::Type type) {
-  return ScaleFromElemWidth(Scalar::byteSize(type));
 }
 
 // Used for 32-bit immediates which do not require relocation.
@@ -209,7 +200,8 @@ class ImmGCPtr {
   explicit ImmGCPtr(const gc::Cell* ptr) : value(ptr) {
     // Nursery pointers can't be used if the main thread might be currently
     // performing a minor GC.
-    MOZ_ASSERT_IF(ptr && !ptr->isTenured(), !CurrentThreadIsIonCompiling());
+    MOZ_ASSERT_IF(ptr && !ptr->isTenured(),
+                  !CurrentThreadIsIonCompilingSafeForMinorGC());
 
     // wasm shouldn't be creating GC things
     MOZ_ASSERT(!IsCompilingWasm());
@@ -274,8 +266,6 @@ struct Address {
 #if JS_BITS_PER_WORD == 32
 
 static inline Address LowWord(const Address& address) {
-  using mozilla::CheckedInt;
-
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64LOW_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -283,8 +273,6 @@ static inline Address LowWord(const Address& address) {
 }
 
 static inline Address HighWord(const Address& address) {
-  using mozilla::CheckedInt;
-
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64HIGH_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -315,8 +303,6 @@ struct BaseIndex {
 #if JS_BITS_PER_WORD == 32
 
 static inline BaseIndex LowWord(const BaseIndex& address) {
-  using mozilla::CheckedInt;
-
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64LOW_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -324,8 +310,6 @@ static inline BaseIndex LowWord(const BaseIndex& address) {
 }
 
 static inline BaseIndex HighWord(const BaseIndex& address) {
-  using mozilla::CheckedInt;
-
   CheckedInt<int32_t> offset =
       CheckedInt<int32_t>(address.offset) + INT64HIGH_OFFSET;
   MOZ_ALWAYS_TRUE(offset.isValid());
@@ -507,8 +491,6 @@ class MemoryAccessDesc {
   Scalar::Type type_;
   jit::Synchronization sync_;
   wasm::BytecodeOffset trapOffset_;
-  wasm::SimdOp widenOp_;
-  enum { Plain, ZeroExtend, Splat, Widen } loadOp_;
 
  public:
   explicit MemoryAccessDesc(
@@ -519,9 +501,7 @@ class MemoryAccessDesc {
         align_(align),
         type_(type),
         sync_(sync),
-        trapOffset_(trapOffset),
-        widenOp_(wasm::SimdOp::Limit),
-        loadOp_(Plain) {
+        trapOffset_(trapOffset) {
     MOZ_ASSERT(mozilla::IsPowerOfTwo(align));
   }
 
@@ -531,40 +511,24 @@ class MemoryAccessDesc {
   unsigned byteSize() const { return Scalar::byteSize(type()); }
   const jit::Synchronization& sync() const { return sync_; }
   BytecodeOffset trapOffset() const { return trapOffset_; }
-  wasm::SimdOp widenSimdOp() const {
-    MOZ_ASSERT(isWidenSimd128Load());
-    return widenOp_;
-  }
   bool isAtomic() const { return !sync_.isNone(); }
-  bool isZeroExtendSimd128Load() const { return loadOp_ == ZeroExtend; }
-  bool isSplatSimd128Load() const { return loadOp_ == Splat; }
-  bool isWidenSimd128Load() const { return loadOp_ == Widen; }
-
-  void setZeroExtendSimd128Load() {
-    MOZ_ASSERT(type() == Scalar::Float32 || type() == Scalar::Float64);
-    MOZ_ASSERT(!isAtomic());
-    MOZ_ASSERT(loadOp_ == Plain);
-    loadOp_ = ZeroExtend;
-  }
-
-  void setSplatSimd128Load() {
-    MOZ_ASSERT(type() == Scalar::Float64);
-    MOZ_ASSERT(!isAtomic());
-    MOZ_ASSERT(loadOp_ == Plain);
-    loadOp_ = Splat;
-  }
-
-  void setWidenSimd128Load(wasm::SimdOp op) {
-    MOZ_ASSERT(type() == Scalar::Float64);
-    MOZ_ASSERT(!isAtomic());
-    MOZ_ASSERT(loadOp_ == Plain);
-    widenOp_ = op;
-    loadOp_ = Widen;
-  }
 
   void clearOffset() { offset_ = 0; }
   void setOffset(uint32_t offset) { offset_ = offset; }
 };
+
+// Summarizes a global access for a mutable (in asm.js) or immutable value (in
+// asm.js or the wasm MVP) that needs to get patched later.
+
+struct GlobalAccess {
+  GlobalAccess(jit::CodeOffset patchAt, unsigned globalDataOffset)
+      : patchAt(patchAt), globalDataOffset(globalDataOffset) {}
+
+  jit::CodeOffset patchAt;
+  unsigned globalDataOffset;
+};
+
+typedef Vector<GlobalAccess, 0, SystemAllocPolicy> GlobalAccessVector;
 
 }  // namespace wasm
 
@@ -576,9 +540,6 @@ class AssemblerShared {
   wasm::CallSiteTargetVector callSiteTargets_;
   wasm::TrapSiteVectorArray trapSites_;
   wasm::SymbolicAccessVector symbolicAccesses_;
-#ifdef ENABLE_WASM_EXCEPTIONS
-  wasm::WasmTryNoteVector tryNotes_;
-#endif
 
  protected:
   CodeLabelVector codeLabels_;
@@ -626,22 +587,11 @@ class AssemblerShared {
   void append(wasm::SymbolicAccess access) {
     enoughMemory_ &= symbolicAccesses_.append(access);
   }
-  // This one returns an index as the try note so that it can be looked up
-  // later to add the end point and stack position of the try block.
-#ifdef ENABLE_WASM_EXCEPTIONS
-  size_t append(wasm::WasmTryNote tryNote) {
-    enoughMemory_ &= tryNotes_.append(tryNote);
-    return tryNotes_.length() - 1;
-  }
-#endif
 
   wasm::CallSiteVector& callSites() { return callSites_; }
   wasm::CallSiteTargetVector& callSiteTargets() { return callSiteTargets_; }
   wasm::TrapSiteVectorArray& trapSites() { return trapSites_; }
   wasm::SymbolicAccessVector& symbolicAccesses() { return symbolicAccesses_; }
-#ifdef ENABLE_WASM_EXCEPTIONS
-  wasm::WasmTryNoteVector& tryNotes() { return tryNotes_; }
-#endif
 };
 
 }  // namespace jit

@@ -27,7 +27,7 @@ impl<I, F> Update<I, F>
 where
     I: ParallelIterator,
 {
-    /// Creates a new `Update` iterator.
+    /// Create a new `Update` iterator.
     pub(super) fn new(base: I, update_op: F) -> Self {
         Update { base, update_op }
     }
@@ -107,7 +107,7 @@ where
 
 /// ////////////////////////////////////////////////////////////////////////
 
-struct UpdateProducer<'f, P, F> {
+struct UpdateProducer<'f, P, F: 'f> {
     base: P,
     update_op: &'f F,
 }
@@ -163,7 +163,7 @@ where
 /// ////////////////////////////////////////////////////////////////////////
 /// Consumer implementation
 
-struct UpdateConsumer<'f, C, F> {
+struct UpdateConsumer<'f, C, F: 'f> {
     base: C,
     update_op: &'f F,
 }
@@ -218,7 +218,7 @@ where
     }
 }
 
-struct UpdateFolder<'f, C, F> {
+struct UpdateFolder<'f, C, F: 'f> {
     base: C,
     update_op: &'f F,
 }

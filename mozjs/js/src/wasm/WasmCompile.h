@@ -19,7 +19,6 @@
 #ifndef wasm_compile_h
 #define wasm_compile_h
 
-#include "vm/Runtime.h"
 #include "wasm/WasmModule.h"
 
 namespace js {
@@ -55,9 +54,13 @@ struct CompileArgs : ShareableBase<CompileArgs> {
   bool ionEnabled;
   bool craneliftEnabled;
   bool debugEnabled;
+  bool sharedMemoryEnabled;
   bool forceTiering;
-
-  FeatureArgs features;
+  bool reftypesEnabled;
+  bool gcEnabled;
+  bool hugeMemory;
+  bool multiValuesEnabled;
+  bool v128Enabled;
 
   // CompileArgs has two constructors:
   //
@@ -68,8 +71,8 @@ struct CompileArgs : ShareableBase<CompileArgs> {
   // You should use the first one in general, unless you have a very good
   // reason (i.e. no JSContext around and you know which flags have been used).
 
-  static SharedCompileArgs build(JSContext* cx, ScriptedCaller&& scriptedCaller,
-                                 const FeatureOptions& options);
+  static SharedCompileArgs build(JSContext* cx,
+                                 ScriptedCaller&& scriptedCaller);
 
   explicit CompileArgs(ScriptedCaller&& scriptedCaller)
       : scriptedCaller(std::move(scriptedCaller)),
@@ -77,7 +80,13 @@ struct CompileArgs : ShareableBase<CompileArgs> {
         ionEnabled(false),
         craneliftEnabled(false),
         debugEnabled(false),
-        forceTiering(false) {}
+        sharedMemoryEnabled(false),
+        forceTiering(false),
+        reftypesEnabled(false),
+        gcEnabled(false),
+        hugeMemory(false),
+        multiValuesEnabled(false),
+        v128Enabled(false) {}
 };
 
 // Return the estimated compiled (machine) code size for the given bytecode size

@@ -7,6 +7,7 @@
 #ifndef util_CheckedArithmetic_h
 #define util_CheckedArithmetic_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/Compiler.h"
 #include "mozilla/MathAlgorithms.h"
 
@@ -29,7 +30,7 @@
 
 namespace js {
 
-[[nodiscard]] inline bool SafeAdd(int32_t one, int32_t two, int32_t* res) {
+MOZ_MUST_USE inline bool SafeAdd(int32_t one, int32_t two, int32_t* res) {
 #if BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(__builtin_sadd_overflow)
   // Using compiler's builtin function.
   return !__builtin_sadd_overflow(one, two, res);
@@ -42,7 +43,7 @@ namespace js {
 #endif
 }
 
-[[nodiscard]] inline bool SafeSub(int32_t one, int32_t two, int32_t* res) {
+MOZ_MUST_USE inline bool SafeSub(int32_t one, int32_t two, int32_t* res) {
 #if BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(__builtin_ssub_overflow)
   return !__builtin_ssub_overflow(one, two, res);
 #else
@@ -52,7 +53,7 @@ namespace js {
 #endif
 }
 
-[[nodiscard]] inline bool SafeMul(int32_t one, int32_t two, int32_t* res) {
+MOZ_MUST_USE inline bool SafeMul(int32_t one, int32_t two, int32_t* res) {
 #if BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(__builtin_smul_overflow)
   return !__builtin_smul_overflow(one, two, res);
 #else
@@ -62,7 +63,7 @@ namespace js {
 #endif
 }
 
-[[nodiscard]] inline bool SafeMul(uint64_t one, uint64_t two, uint64_t* res) {
+MOZ_MUST_USE inline bool SafeMul(uint64_t one, uint64_t two, uint64_t* res) {
 #if BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(__builtin_mul_overflow)
   return !__builtin_mul_overflow(one, two, res);
 #else

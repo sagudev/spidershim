@@ -27,7 +27,6 @@ Important Concepts
    defining-xpcom-components
    toolchains
    locales
-   unified-builds
    rust
    sparse
    Support for projects building with GN <gn>
@@ -40,7 +39,6 @@ integrated development environment (IDE)
 .. toctree::
    :maxdepth: 1
 
-   ../../contributing/vscode
    androideclipse
    cppeclipse
    visualstudio
@@ -55,3 +53,4 @@ Mozilla build system.
    :maxdepth: 1
 
    mozbuild/index
+   mozbuild/dumbmake

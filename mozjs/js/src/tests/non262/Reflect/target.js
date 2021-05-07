@@ -22,14 +22,14 @@ var methodInfo = {
 };
 
 // Check that all Reflect properties are listed above.
-for (const name of Reflect.ownKeys(Reflect)) {
+for (var name of Reflect.ownKeys(Reflect)) {
     // If this assertion fails, congratulations on implementing a new Reflect feature!
     // Add it to methodInfo above.
-    if (typeof name !== "symbol" && name !== "parse")
+    if (name !== "parse")
       assertEq(name in methodInfo, true);
 }
 
-for (const name of Object.keys(methodInfo)) {
+for (var name of Object.keys(methodInfo)) {
     var args = methodInfo[name];
 
     // The target argument is required.

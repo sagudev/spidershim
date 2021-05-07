@@ -45,11 +45,11 @@ struct ExprLoc {
       : lineno(lineno_), column(column_), offset(offset_) {}
 };
 
-using StepperCounters =
-    HashMap<uint32_t, uint32_t, DefaultHasher<uint32_t>, SystemAllocPolicy>;
-using WasmBreakpointSiteMap =
-    HashMap<uint32_t, WasmBreakpointSite*, DefaultHasher<uint32_t>,
-            SystemAllocPolicy>;
+typedef HashMap<uint32_t, uint32_t, DefaultHasher<uint32_t>, SystemAllocPolicy>
+    StepperCounters;
+typedef HashMap<uint32_t, WasmBreakpointSite*, DefaultHasher<uint32_t>,
+                SystemAllocPolicy>
+    WasmBreakpointSiteMap;
 
 class DebugState {
   const SharedCode code_;
@@ -74,10 +74,10 @@ class DebugState {
 
   const Bytes& bytecode() const { return module_->debugBytecode(); }
 
-  [[nodiscard]] bool getLineOffsets(size_t lineno, Vector<uint32_t>* offsets);
-  [[nodiscard]] bool getAllColumnOffsets(Vector<ExprLoc>* offsets);
-  [[nodiscard]] bool getOffsetLocation(uint32_t offset, size_t* lineno,
-                                       size_t* column);
+  MOZ_MUST_USE bool getLineOffsets(size_t lineno, Vector<uint32_t>* offsets);
+  MOZ_MUST_USE bool getAllColumnOffsets(Vector<ExprLoc>* offsets);
+  MOZ_MUST_USE bool getOffsetLocation(uint32_t offset, size_t* lineno,
+                                      size_t* column);
 
   // The Code can track enter/leave frame events. Any such event triggers
   // debug trap. The enter/leave frame events enabled or disabled across
@@ -99,35 +99,36 @@ class DebugState {
   bool hasBreakpointSite(uint32_t offset);
   void destroyBreakpointSite(JSFreeOp* fop, Instance* instance,
                              uint32_t offset);
-  void clearBreakpointsIn(JSFreeOp* fop, WasmInstanceObject* instance,
+  void clearBreakpointsIn(JSFreeOp* fp, WasmInstanceObject* instance,
                           js::Debugger* dbg, JSObject* handler);
+  void clearAllBreakpoints(JSFreeOp* fp, WasmInstanceObject* instance);
 
   // When the Code is debug-enabled, single-stepping mode can be toggled on
   // the granularity of individual functions.
 
   bool stepModeEnabled(uint32_t funcIndex) const;
-  [[nodiscard]] bool incrementStepperCount(JSContext* cx, uint32_t funcIndex);
+  MOZ_MUST_USE bool incrementStepperCount(JSContext* cx, uint32_t funcIndex);
   void decrementStepperCount(JSFreeOp* fop, uint32_t funcIndex);
 
   // Stack inspection helpers.
 
-  [[nodiscard]] bool debugGetLocalTypes(uint32_t funcIndex,
-                                        ValTypeVector* locals,
-                                        size_t* argsLength,
-                                        StackResults* stackResults);
+  MOZ_MUST_USE bool debugGetLocalTypes(uint32_t funcIndex,
+                                       ValTypeVector* locals,
+                                       size_t* argsLength,
+                                       StackResults* stackResults);
   // Invariant: the result of getDebugResultType can only be used as long as
   // code_->metadata() is live.  See MetaData::getFuncResultType for more
   // information.
   ResultType debugGetResultType(uint32_t funcIndex) const {
     return metadata().getFuncResultType(funcIndex);
   }
-  [[nodiscard]] bool getGlobal(Instance& instance, uint32_t globalIndex,
-                               MutableHandleValue vp);
+  MOZ_MUST_USE bool getGlobal(Instance& instance, uint32_t globalIndex,
+                              MutableHandleValue vp);
 
   // Debug URL helpers.
 
-  [[nodiscard]] bool getSourceMappingURL(JSContext* cx,
-                                         MutableHandleString result) const;
+  MOZ_MUST_USE bool getSourceMappingURL(JSContext* cx,
+                                        MutableHandleString result) const;
 
   // Accessors for commonly used elements of linked structures.
 

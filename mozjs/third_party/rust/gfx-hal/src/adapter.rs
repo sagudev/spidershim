@@ -1,22 +1,26 @@
-//! Physical graphics devices.
+//! Physical devices and adapters.
 //!
-//! The [`PhysicalDevice`][PhysicalDevice] trait specifies the API a backend
-//! must provide for dealing with and querying a physical device, such as
-//! a particular GPU.
-//!
-//! An [adapter][Adapter] is a struct containing a physical device and metadata
-//! for a particular GPU, generally created from an [instance][crate::Instance]
-//! of that [backend][crate::Backend].
-
-use crate::{
-    device, format, image, memory,
-    queue::{QueueGroup, QueuePriority},
-    Backend, Features, PhysicalDeviceProperties,
-};
+//! The `PhysicalDevice` trait specifies the API a backend must provide for dealing with
+//! and querying a physical device, such as a particular GPU.  An `Adapter` is a struct
+//! containing a `PhysicalDevice` and metadata for a particular GPU, generally created
+//! from an `Instance` of that backend.  `adapter.open_with(...)` will return a `Device`
+//! that has the properties specified.
 
 use std::{any::Any, fmt};
 
-/// A description for a single type of memory in a heap.
+use crate::{
+    device,
+    format,
+    image,
+    memory,
+    queue::{QueueGroup, QueuePriority},
+    Backend,
+    Features,
+    Hints,
+    Limits,
+};
+
+/// A description for a single chunk of memory in a heap.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct MemoryType {
@@ -27,16 +31,6 @@ pub struct MemoryType {
     pub heap_index: usize,
 }
 
-/// A description for a memory heap.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct MemoryHeap {
-    /// Total size of the heap.
-    pub size: u64,
-    /// Heap flags.
-    pub flags: memory::HeapFlags,
-}
-
 /// Types of memory supported by this adapter and available memory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -45,34 +39,25 @@ pub struct MemoryProperties {
     /// Multiple types can point to the same heap.
     pub memory_types: Vec<MemoryType>,
     /// Memory heaps with their size in bytes.
-    pub memory_heaps: Vec<MemoryHeap>,
+    pub memory_heaps: Vec<u64>,
 }
 
-/// Represents a combination of a [logical device][crate::device::Device] and the
-/// [hardware queues][QueueGroup] it provides.
+/// Represents a combination of a logical device and the
+/// hardware queues it provides.
 ///
-/// This structure is typically created from an [adapter][crate::adapter::Adapter].
+/// This structure is typically created using an `Adapter`.
 #[derive(Debug)]
 pub struct Gpu<B: Backend> {
-    /// [Logical device][crate::device::Device] for a given backend.
+    /// Logical device for a given backend.
     pub device: B::Device,
-    /// The [command queues][crate::queue::Queue] that the device provides.
+    /// The command queues that the device provides.
     pub queue_groups: Vec<QueueGroup<B>>,
 }
 
 /// Represents a physical device (such as a GPU) capable of supporting the given backend.
 pub trait PhysicalDevice<B: Backend>: fmt::Debug + Any + Send + Sync {
-    /// Create a new [logical device][crate::device::Device] with the requested features.
-    /// If `requested_features` is [empty][crate::Features::empty], then only
-    /// the core features are supported.
-    ///
-    /// # Arguments
-    ///
-    /// * `families` - which [queue families][crate::queue::family::QueueFamily]
-    ///   to create queues from. The implementation may allocate more processing time to
-    ///   the queues with higher [priority][QueuePriority].
-    /// * `requested_features` - device features to enable. Must be a subset of
-    ///   the [features][PhysicalDevice::features] supported by this device.
+    /// Create a new logical device with the requested features. If `requested_features` is
+    /// empty (e.g. through `Features::empty()`) then only the core features are supported.
     ///
     /// # Errors
     ///
@@ -116,12 +101,14 @@ pub trait PhysicalDevice<B: Backend>: fmt::Debug + Any + Send + Sync {
     fn memory_properties(&self) -> MemoryProperties;
 
     /// Returns the features of this `PhysicalDevice`. This usually depends on the graphics API being
-    /// used, as well as the actual platform underneath.
+    /// used.
     fn features(&self) -> Features;
 
-    /// Returns the properties of this `PhysicalDevice`. Similarly to `Features`, they
-    // depend on the platform, but unlike features, these are immutable and can't be switched on.
-    fn properties(&self) -> PhysicalDeviceProperties;
+    /// Returns the performance hints of this `PhysicalDevice`.
+    fn hints(&self) -> Hints;
+
+    /// Returns the resource limits of this `PhysicalDevice`.
+    fn limits(&self) -> Limits;
 
     /// Check cache compatibility with the `PhysicalDevice`.
     fn is_valid_cache(&self, _cache: &[u8]) -> bool {
@@ -129,7 +116,7 @@ pub trait PhysicalDevice<B: Backend>: fmt::Debug + Any + Send + Sync {
     }
 }
 
-/// The type of a physical graphics device
+/// Supported physical device types
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum DeviceType {
@@ -141,37 +128,36 @@ pub enum DeviceType {
     DiscreteGpu = 2,
     /// Virtual / Hosted
     VirtualGpu = 3,
-    /// CPU / Software Rendering
+    /// Cpu / Software Rendering
     Cpu = 4,
 }
 
-/// Metadata about a backend [adapter][Adapter].
+/// Metadata about a backend adapter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AdapterInfo {
     /// Adapter name
     pub name: String,
-    /// PCI ID of the device vendor
+    /// Vendor PCI id of the adapter
     pub vendor: usize,
-    /// PCI ID of the device
+    /// PCI id of the adapter
     pub device: usize,
     /// Type of device
     pub device_type: DeviceType,
 }
 
-/// Information about a graphics device, supported by the backend.
+/// The list of `Adapter` instances is obtained by calling `Instance::enumerate_adapters()`.
 ///
-/// The list of available adapters is obtained by calling
-/// [`Instance::enumerate_adapters`][crate::Instance::enumerate_adapters].
-///
-/// To create a [`Gpu`][Gpu] from this type you can use the [`open`](PhysicalDevice::open)
-/// method on its [`physical_device`][Adapter::physical_device] field.
+/// Given an `Adapter` a `Gpu` can be constructed by calling `PhysicalDevice::open()` on its
+/// `physical_device` field. However, if only a single queue family is needed or if no
+/// additional device features are required, then the `Adapter::open_with` convenience method
+/// can be used instead.
 #[derive(Debug)]
 pub struct Adapter<B: Backend> {
     /// General information about this adapter.
     pub info: AdapterInfo,
-    /// Actual [physical device][PhysicalDevice].
+    /// Actual physical device.
     pub physical_device: B::PhysicalDevice,
-    /// [Queue families][crate::queue::family::QueueFamily] supported by this adapter.
+    /// Queue families supported by this adapter.
     pub queue_families: Vec<B::QueueFamily>,
 }

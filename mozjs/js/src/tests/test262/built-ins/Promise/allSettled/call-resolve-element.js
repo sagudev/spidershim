@@ -29,7 +29,7 @@ function Constructor(executor) {
       }
     ], 'values');
   }
-  executor(resolve, Test262Error.thrower);
+  executor(resolve, $ERROR);
 }
 Constructor.resolve = function(v) {
   return v;

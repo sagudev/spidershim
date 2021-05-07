@@ -12,35 +12,29 @@ import posixpath
 def push_libs(options, device, dest_dir):
     # This saves considerable time in pushing unnecessary libraries
     # to the device but needs to be updated if the dependencies change.
-    required_libs = [
-        "libnss3.so",
-        "libmozglue.so",
-        "libnspr4.so",
-        "libplc4.so",
-        "libplds4.so",
-    ]
+    required_libs = ['libnss3.so', 'libmozglue.so', 'libnspr4.so',
+                     'libplc4.so', 'libplds4.so']
 
     for file in os.listdir(options.local_lib):
         if file in required_libs:
-            local_file = os.path.join(options.local_lib, file)
             remote_file = posixpath.join(dest_dir, file)
-            assert os.path.isfile(local_file)
-            device.push(local_file, remote_file)
-            device.chmod(remote_file)
+            device.push(os.path.join(options.local_lib, file), remote_file)
+            device.chmod(remote_file, root=True)
 
 
 def push_progs(options, device, progs, dest_dir):
     assert isinstance(progs, list)
     for local_file in progs:
-        remote_file = posixpath.join(dest_dir, os.path.basename(local_file))
-        assert os.path.isfile(local_file)
+        remote_file = posixpath.join(dest_dir,
+                                     os.path.basename(local_file))
         device.push(local_file, remote_file)
-        device.chmod(remote_file)
+        device.chmod(remote_file, root=True)
 
 
-def init_remote_dir(device, path):
-    device.rm(path, recursive=True, force=True)
-    device.mkdir(path, parents=True)
+def init_remote_dir(device, path, root=True):
+    device.rm(path, recursive=True, force=True, root=root)
+    device.mkdir(path, parents=True, root=root)
+    device.chmod(path, recursive=True, root=root)
 
 
 # We only have one device per test run.
@@ -56,31 +50,27 @@ def init_device(options):
     if DEVICE is not None:
         return DEVICE
 
-    from mozdevice import ADBDeviceFactory, ADBError, ADBTimeoutError
-
+    from mozdevice import ADBDevice, ADBError, ADBTimeoutError
     try:
         if not options.local_lib:
             # if not specified, use the local directory containing
             # the js binary to find the necessary libraries.
             options.local_lib = posixpath.dirname(options.js_shell)
 
-        DEVICE = ADBDeviceFactory(
-            device=options.device_serial, test_root=options.remote_test_root
-        )
+        DEVICE = ADBDevice(device=options.device_serial,
+                           test_root=options.remote_test_root)
 
         init_remote_dir(DEVICE, options.remote_test_root)
 
-        bin_dir = posixpath.join(options.remote_test_root, "bin")
-        tests_dir = posixpath.join(options.remote_test_root, "tests")
-        temp_dir = posixpath.join(options.remote_test_root, "tmp")
+        bin_dir = posixpath.join(options.remote_test_root, 'bin')
+        tests_dir = posixpath.join(options.remote_test_root, 'tests')
         # Push js shell and libraries.
         init_remote_dir(DEVICE, tests_dir)
         init_remote_dir(DEVICE, bin_dir)
-        init_remote_dir(DEVICE, temp_dir)
         push_libs(options, DEVICE, bin_dir)
         push_progs(options, DEVICE, [options.js_shell], bin_dir)
         # update options.js_shell to point to the js binary on the device
-        options.js_shell = os.path.join(bin_dir, "js")
+        options.js_shell = os.path.join(bin_dir, 'js')
 
         return DEVICE
 

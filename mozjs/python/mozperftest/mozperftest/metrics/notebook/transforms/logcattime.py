@@ -102,11 +102,10 @@ class LogCatTimeTransformer:
             second_ts=kwargs.get("second-timestamp"),
             processor=kwargs.get("processor"),
         )
-        subtest = kwargs.get("transform-subtest-name")
         return [
             {
                 "data": [{"value": val, "xaxis": c} for c, val in enumerate(alltimes)],
-                "subtest": subtest if subtest else "logcat-metric",
+                "subtest": kwargs.get("transform-subtest-name", "logcat-metric"),
             }
         ]
 

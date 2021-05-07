@@ -3,7 +3,7 @@
 /*---
 esid: sec-integer-indexed-exotic-objects-defineownproperty-p-desc
 description: >
-  Returns false if this has valid numeric index and a detached buffer
+  Throws a TypeError if object has valid numeric index and a detached buffer
 info: |
   9.4.5.3 [[DefineOwnProperty]] ( P, Desc)
   ...
@@ -16,24 +16,16 @@ info: |
         2. Return ? IntegerIndexedElementSet(O, intIndex, value).
   ...
 
-  IntegerIndexedElementSet ( O, index, value )
+  9.4.5.9 IntegerIndexedElementSet ( O, index, value )
 
-  Assert: O is an Integer-Indexed exotic object.
-  If O.[[ContentType]] is BigInt, let numValue be ? ToBigInt(value).
-  Otherwise, let numValue be ? ToNumber(value).
-  Let buffer be O.[[ViewedArrayBuffer]].
-  If IsDetachedBuffer(buffer) is false and ! IsValidIntegerIndex(O, index) is true, then
-    Let offset be O.[[ByteOffset]].
-    Let arrayTypeName be the String value of O.[[TypedArrayName]].
-    Let elementSize be the Element Size value specified in Table 62 for arrayTypeName.
-    Let indexedPosition be (ℝ(index) × elementSize) + offset.
-    Let elementType be the Element Type value in Table 62 for arrayTypeName.
-    Perform SetValueInBuffer(buffer, indexedPosition, elementType, numValue, true, Unordered).
-  Return NormalCompletion(undefined).
-
+  ...
+  4. Let buffer be the value of O's [[ViewedArrayBuffer]] internal slot.
+  5. If IsDetachedBuffer(buffer) is true, throw a TypeError exception.
+  ...
 includes: [testBigIntTypedArray.js, detachArrayBuffer.js]
-features: [align-detached-buffer-semantics-with-web-reality, BigInt, Reflect, TypedArray]
+features: [BigInt, Reflect, TypedArray]
 ---*/
+
 var desc = {
   value: 0n,
   configurable: false,
@@ -51,72 +43,94 @@ testWithBigIntTypedArrayConstructors(function(TA) {
   var sample = new TA(42);
   $DETACHBUFFER(sample.buffer);
 
+  assert.throws(TypeError, function() {
+    Reflect.defineProperty(sample, "0", desc);
+  }, "Throws TypeError on valid numeric index if instance has a detached buffer");
+
   assert.sameValue(
-    Reflect.defineProperty(sample, '0', desc),
+    Reflect.defineProperty(sample, "-1", desc),
     false,
-    'Reflect.defineProperty(sample, "0", {value: 0n, configurable: false, enumerable: true, writable: true}) must return false'
+    "Return false before Detached Buffer check when value is a negative number"
   );
 
   assert.sameValue(
-    Reflect.defineProperty(sample, '-1', desc),
+    Reflect.defineProperty(sample, "1.1", desc),
     false,
-    'Reflect.defineProperty(sample, "-1", {value: 0n, configurable: false, enumerable: true, writable: true}) must return false'
+    "Return false before Detached Buffer check when value is not an integer"
   );
 
   assert.sameValue(
-    Reflect.defineProperty(sample, '1.1', desc),
+    Reflect.defineProperty(sample, "-0", desc),
     false,
-    'Reflect.defineProperty(sample, "1.1", {value: 0n, configurable: false, enumerable: true, writable: true}) must return false'
+    "Return false before Detached Buffer check when value is -0"
   );
 
   assert.sameValue(
-    Reflect.defineProperty(sample, '-0', desc),
+    Reflect.defineProperty(sample, "2", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: obj
+    }),
     false,
-    'Reflect.defineProperty(sample, "-0", {value: 0n, configurable: false, enumerable: true, writable: true}) must return false'
-  );
-
-  assert.sameValue(Reflect.defineProperty(sample, '2', {
-    configurable: true,
-    enumerable: true,
-    writable: true,
-    value: obj
-  }), false, 'Reflect.defineProperty(sample, "2", {configurable: true, enumerable: true, writable: true, value: obj}) must return false');
-
-  assert.sameValue(Reflect.defineProperty(sample, '3', {
-    configurable: false,
-    enumerable: false,
-    writable: true,
-    value: obj
-  }), false, 'Reflect.defineProperty(sample, "3", {configurable: false, enumerable: false, writable: true, value: obj}) must return false');
-
-  assert.sameValue(Reflect.defineProperty(sample, '4', {
-    writable: false,
-    configurable: false,
-    enumerable: true,
-    value: obj
-  }), false, 'Reflect.defineProperty(sample, "4", {writable: false, configurable: false, enumerable: true, value: obj}) must return false');
-
-  assert.sameValue(
-    Reflect.defineProperty(sample, '42', desc),
-    false,
-    'Reflect.defineProperty(sample, "42", {value: 0n, configurable: false, enumerable: true, writable: true}) must return false'
+    "Return false before Detached Buffer check when desc configurable is true"
   );
 
   assert.sameValue(
-    Reflect.defineProperty(sample, '43', desc),
+    Reflect.defineProperty(sample, "3", {
+      configurable: false,
+      enumerable: false,
+      writable: true,
+      value: obj
+    }),
     false,
-    'Reflect.defineProperty(sample, "43", {value: 0n, configurable: false, enumerable: true, writable: true}) must return false'
+    "Return false before Detached Buffer check when desc enumerable is false"
   );
 
-  assert.sameValue(Reflect.defineProperty(sample, '5', {
-    get: function() {}
-  }), false, 'Reflect.defineProperty(sample, "5", {get: function() {}}) must return false');
+  assert.sameValue(
+    Reflect.defineProperty(sample, "4", {
+      writable: false,
+      configurable: false,
+      enumerable: true,
+      value: obj
+    }),
+    false,
+    "Return false before Detached Buffer check when desc writable is false"
+  );
 
-  assert.sameValue(Reflect.defineProperty(sample, '6', {
-    configurable: false,
-    enumerable: true,
-    writable: true
-  }), false, 'Reflect.defineProperty(sample, "6", {configurable: false, enumerable: true, writable: true}) must return false');
+  assert.sameValue(
+    Reflect.defineProperty(sample, "42", desc),
+    false,
+    "Return false before Detached Buffer check when key == [[ArrayLength]]"
+  );
+
+  assert.sameValue(
+    Reflect.defineProperty(sample, "43", desc),
+    false,
+    "Return false before Detached Buffer check when key > [[ArrayLength]]"
+  );
+
+  assert.sameValue(
+    Reflect.defineProperty(sample, "5", {
+      get: function() {}
+    }),
+    false,
+    "Return false before Detached Buffer check with accessor descriptor"
+  );
+
+  assert.sameValue(
+    Reflect.defineProperty(sample, "6", {
+      configurable: false,
+      enumerable: true,
+      writable: true
+    }),
+    true,
+    "Return true before Detached Buffer check when desc value is not present"
+  );
+
+  assert.throws(Test262Error, function() {
+    Reflect.defineProperty(sample, "7", {value: obj});
+  }, "Return Abrupt before Detached Buffer check from ToNumber(desc.value)");
 });
 
 reportCompare(0, 0);

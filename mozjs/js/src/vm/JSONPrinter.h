@@ -14,6 +14,8 @@
 #include "js/TypeDecls.h"
 #include "vm/Printer.h"
 
+struct DtoaState;
+
 namespace js {
 
 class JSONPrinter {
@@ -22,14 +24,19 @@ class JSONPrinter {
   bool indent_;
   bool first_;
   GenericPrinter& out_;
+  DtoaState* dtoaState_;
 
   void indent();
 
  public:
   explicit JSONPrinter(GenericPrinter& out, bool indent = true)
-      : indentLevel_(0), indent_(indent), first_(true), out_(out) {}
+      : indentLevel_(0),
+        indent_(indent),
+        first_(true),
+        out_(out),
+        dtoaState_(nullptr) {}
 
-  void setIndentLevel(int indentLevel) { indentLevel_ = indentLevel; }
+  ~JSONPrinter();
 
   void beginObject();
   void beginList();
@@ -38,8 +45,6 @@ class JSONPrinter {
 
   void value(const char* format, ...) MOZ_FORMAT_PRINTF(2, 3);
   void value(int value);
-
-  void boolProperty(const char* name, bool value);
 
   void property(const char* name, const char* value);
   void property(const char* name, int32_t value);
@@ -65,14 +70,8 @@ class JSONPrinter {
 
   void floatProperty(const char* name, double value, size_t precision);
 
-  GenericPrinter& beginStringProperty(const char* name);
+  void beginStringProperty(const char* name);
   void endStringProperty();
-
-  GenericPrinter& beginString();
-  void endString();
-
-  void nullProperty(const char* name);
-  void nullValue();
 
   void endObject();
   void endList();

@@ -119,18 +119,7 @@ function InitializeDisplayNames(displayNames, locales, options, mozExtensions) {
     //     opt: // opt object computed in InitializeDisplayNames
     //       {
     //         localeMatcher: "lookup" / "best fit",
-    //
-    //         ca: string matching a Unicode extension type, // optional
     //       }
-    //
-    //     localeMatcher: "lookup" / "best fit",
-    //
-    //     style: "narrow" / "short" / "long",
-    //
-    //     type: "language" / "region" / "script" / "currency" / "weekday" /
-    //           "month" / "quarter" / "dayPeriod" / "dateTimeField"
-    //
-    //     fallback: "code" / "none",
     //
     //     mozExtensions: true / false,
     //   }
@@ -144,16 +133,18 @@ function InitializeDisplayNames(displayNames, locales, options, mozExtensions) {
     var requestedLocales = CanonicalizeLocaleList(locales);
     lazyDisplayNamesData.requestedLocales = requestedLocales;
 
-    // Step 4.
-    if (!IsObject(options))
-        ThrowTypeError(JSMSG_OBJECT_REQUIRED, options === null ? "null" : typeof options);
+    // Steps 4-5.
+    if (options === undefined)
+        options = std_Object_create(null);
+    else
+        options = ToObject(options);
 
-    // Step 5.
+    // Step 6.
     var opt = new Record();
     lazyDisplayNamesData.opt = opt;
     lazyDisplayNamesData.mozExtensions = mozExtensions;
 
-    // Steps 7-8.
+    // Steps 8-9.
     var matcher = GetOption(options, "localeMatcher", "string", ["lookup", "best fit"], "best fit");
     opt.localeMatcher = matcher;
 
@@ -167,26 +158,21 @@ function InitializeDisplayNames(displayNames, locales, options, mozExtensions) {
         opt.ca = calendar;
     }
 
-    // Step 10.
+    // Step 11.
     var style = GetOption(options, "style", "string", ["narrow", "short", "long"], "long");
 
-    // Step 11.
+    // Step 12.
     lazyDisplayNamesData.style = style;
 
-    // Step 12.
+    // Step 13.
     var type;
     if (mozExtensions) {
         type = GetOption(options, "type", "string",
                          ["language", "region", "script", "currency", "weekday", "month",
-                          "quarter", "dayPeriod", "dateTimeField"], undefined);
+                          "quarter", "dayPeriod", "dateTimeField"], "language");
     } else {
         type = GetOption(options, "type", "string",
-                         ["language", "region", "script", "currency"], undefined);
-    }
-
-    // Step 13.
-    if (type === undefined) {
-        ThrowTypeError(JSMSG_UNDEFINED_TYPE);
+                         ["language", "region", "script", "currency"], "language");
     }
 
     // Step 14.
@@ -233,16 +219,33 @@ function Intl_DisplayNames_of(code) {
       return callFunction(CallDisplayNamesMethodIfWrapped, this, "Intl_DisplayNames_of");
   }
 
-  code = ToString(code);
-
   var internals = getDisplayNamesInternals(displayNames);
 
   // Unpack the internals object to avoid a slow runtime to selfhosted JS call
   // in |intl_ComputeDisplayName()|.
-  var {locale, calendar = "", style, type, fallback} = internals;
+  var {locale, calendar = "", style, type} = internals;
 
-  // Steps 5-10.
-  return intl_ComputeDisplayName(displayNames, locale, calendar, style, fallback, type, code);
+  code = ToString(code);
+
+  // Steps 5-7.
+  var name = intl_ComputeDisplayName(displayNames, locale, calendar, style, type, code);
+
+  // Step 8.
+  // This implementation returns the empty string instead of undefined if no
+  // result was found.
+  if (name !== "") {
+      return name;
+  }
+
+  // Step 9.
+  if (internals.fallback === "code") {
+      // TODO: spec should require case normalisation:
+      // https://github.com/tc39/proposal-intl-displaynames/issues/72
+      return code;
+  }
+
+  // Step 10.
+  return undefined;
 }
 
 /**

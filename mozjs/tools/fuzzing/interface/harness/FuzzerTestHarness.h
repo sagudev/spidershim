@@ -128,7 +128,7 @@ class ScopedXPCOM final : public nsIDirectoryServiceProvider2 {
                                          getter_AddRefs(profD));
     NS_ENSURE_SUCCESS(rv, nullptr);
 
-    rv = profD->Append(u"cpp-unit-profd"_ns);
+    rv = profD->Append(NS_LITERAL_STRING("cpp-unit-profd"));
     NS_ENSURE_SUCCESS(rv, nullptr);
 
     rv = profD->CreateUnique(nsIFile::DIRECTORY_TYPE, 0755);
@@ -170,7 +170,7 @@ class ScopedXPCOM final : public nsIDirectoryServiceProvider2 {
     nsAutoCString leafName;
     mGREBinD->GetNativeLeafName(leafName);
     if (leafName.EqualsLiteral("Resources")) {
-      mGREBinD->SetNativeLeafName("MacOS"_ns);
+      mGREBinD->SetNativeLeafName(NS_LITERAL_CSTRING("MacOS"));
     }
 #endif
 

@@ -2,7 +2,7 @@ use std::cmp::min;
 
 use super::plumbing::*;
 use super::*;
-use crate::math::div_round_up;
+use math::div_round_up;
 
 /// `Chunks` is an iterator that groups elements of an underlying iterator.
 ///
@@ -24,7 +24,7 @@ impl<I> Chunks<I>
 where
     I: IndexedParallelIterator,
 {
-    /// Creates a new `Chunks` iterator
+    /// Create a new `Chunks` iterator
     pub(super) fn new(i: I, size: usize) -> Self {
         Chunks { i, size }
     }

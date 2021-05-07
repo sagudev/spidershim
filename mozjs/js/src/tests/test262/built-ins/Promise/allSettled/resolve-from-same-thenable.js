@@ -47,7 +47,7 @@ function Constructor(executor) {
       }
     ], 'values');
   }
-  executor(resolve, Test262Error.thrower);
+  executor(resolve, $ERROR);
 }
 Constructor.resolve = function(v) {
   return v;
@@ -71,11 +71,11 @@ var p3 = {
   }
 };
 
-assert.sameValue(callCount, 0, 'callCount before call to allSettled()');
+assert.sameValue(callCount, 0, 'callCount before call to all()');
 
 Promise.allSettled.call(Constructor, [p1, p2, p3]);
 
-assert.sameValue(callCount, 0, 'callCount after call to allSettled()');
+assert.sameValue(callCount, 0, 'callCount after call to all()');
 
 p1OnFulfilled('p1-fulfill');
 p1OnFulfilled('p1-fulfill-unexpected-1');

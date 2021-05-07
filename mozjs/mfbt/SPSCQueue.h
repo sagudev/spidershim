@@ -14,15 +14,13 @@
 #include "mozilla/PodOperations.h"
 #include <algorithm>
 #include <atomic>
-#include <cstddef>
-#include <limits>
+#include <cstdint>
 #include <memory>
 #include <thread>
-#include <type_traits>
 
 namespace mozilla {
 
-namespace detail {
+namespace details {
 template <typename T, bool IsPod = std::is_trivial<T>::value>
 struct MemoryOperations {
   /**
@@ -60,7 +58,7 @@ struct MemoryOperations<T, false> {
     std::move(aSource, aSource + aCount, aDestination);
   }
 };
-}  // namespace detail
+}  // namespace details
 
 /**
  * This data structure allows producing data from one thread, and consuming it
@@ -123,9 +121,8 @@ class SPSCRingBufferBase {
    * @param count The number of elements to enqueue.
    * @return The number of element enqueued.
    */
-  [[nodiscard]] int EnqueueDefault(int aCount) {
-    return Enqueue(nullptr, aCount);
-  }
+  MOZ_MUST_USE
+  int EnqueueDefault(int aCount) { return Enqueue(nullptr, aCount); }
   /**
    * @brief Put an element in the queue.
    *
@@ -135,7 +132,8 @@ class SPSCRingBufferBase {
    *
    * @return 1 if the element was inserted, 0 otherwise.
    */
-  [[nodiscard]] int Enqueue(T& aElement) { return Enqueue(&aElement, 1); }
+  MOZ_MUST_USE
+  int Enqueue(T& aElement) { return Enqueue(&aElement, 1); }
   /**
    * Push `aCount` elements in the ring buffer.
    *
@@ -147,7 +145,8 @@ class SPSCRingBufferBase {
    * @return The number of elements successfully coped from `elements` and
    * inserted into the ring buffer.
    */
-  [[nodiscard]] int Enqueue(T* aElements, int aCount) {
+  MOZ_MUST_USE
+  int Enqueue(T* aElements, int aCount) {
 #ifdef DEBUG
     AssertCorrectThread(mProducerId);
 #endif
@@ -167,14 +166,14 @@ class SPSCRingBufferBase {
     int secondPart = toWrite - firstPart;
 
     if (aElements) {
-      detail::MemoryOperations<T>::MoveOrCopy(mData.get() + wrIdx, aElements,
-                                              firstPart);
-      detail::MemoryOperations<T>::MoveOrCopy(
+      details::MemoryOperations<T>::MoveOrCopy(mData.get() + wrIdx, aElements,
+                                               firstPart);
+      details::MemoryOperations<T>::MoveOrCopy(
           mData.get(), aElements + firstPart, secondPart);
     } else {
-      detail::MemoryOperations<T>::ConstructDefault(mData.get() + wrIdx,
-                                                    firstPart);
-      detail::MemoryOperations<T>::ConstructDefault(mData.get(), secondPart);
+      details::MemoryOperations<T>::ConstructDefault(mData.get() + wrIdx,
+                                                     firstPart);
+      details::MemoryOperations<T>::ConstructDefault(mData.get(), secondPart);
     }
 
     mWriteIndex.store(IncrementIndex(wrIdx, toWrite),
@@ -193,7 +192,8 @@ class SPSCRingBufferBase {
    * @param count The maximum number of elements to Dequeue.
    * @return The number of elements written to `elements`.
    */
-  [[nodiscard]] int Dequeue(T* elements, int count) {
+  MOZ_MUST_USE
+  int Dequeue(T* elements, int count) {
 #ifdef DEBUG
     AssertCorrectThread(mConsumerId);
 #endif
@@ -211,10 +211,10 @@ class SPSCRingBufferBase {
     int secondPart = toRead - firstPart;
 
     if (elements) {
-      detail::MemoryOperations<T>::MoveOrCopy(elements, mData.get() + rdIdx,
-                                              firstPart);
-      detail::MemoryOperations<T>::MoveOrCopy(elements + firstPart, mData.get(),
-                                              secondPart);
+      details::MemoryOperations<T>::MoveOrCopy(elements, mData.get() + rdIdx,
+                                               firstPart);
+      details::MemoryOperations<T>::MoveOrCopy(elements + firstPart,
+                                               mData.get(), secondPart);
     }
 
     mReadIndex.store(IncrementIndex(rdIdx, toRead),

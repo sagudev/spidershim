@@ -9,7 +9,6 @@ from pip._internal.utils.compat import stdlib_pkgs
 
 from . import click
 from .exceptions import IncompatibleRequirements
-from .logging import log
 from .utils import (
     flat_map,
     format_requirement,
@@ -148,18 +147,26 @@ def diff(compiled_requirements, installed_dists):
     return (to_install, to_uninstall)
 
 
-def sync(to_install, to_uninstall, dry_run=False, install_flags=None, ask=False):
+def sync(
+    to_install,
+    to_uninstall,
+    verbose=False,
+    dry_run=False,
+    install_flags=None,
+    ask=False,
+):
     """
     Install and uninstalls the given sets of modules.
     """
     exit_code = 0
 
     if not to_uninstall and not to_install:
-        log.info("Everything up-to-date", err=False)
+        if verbose:
+            click.echo("Everything up-to-date")
         return exit_code
 
     pip_flags = []
-    if log.verbosity < 0:
+    if not verbose:
         pip_flags += ["-q"]
 
     if ask:

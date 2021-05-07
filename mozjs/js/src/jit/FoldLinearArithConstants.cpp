@@ -70,7 +70,6 @@ static void AnalyzeAdd(TempAllocator& alloc, MAdd* add) {
   add->block()->insertBefore(add, rhs);
 
   MAdd* addNew = MAdd::New(alloc, sum.term, rhs, add->truncateKind());
-  addNew->setBailoutKind(add->bailoutKind());
 
   add->replaceAllLiveUsesWith(addNew);
   add->block()->insertBefore(add, addNew);
@@ -84,7 +83,6 @@ static void AnalyzeAdd(TempAllocator& alloc, MAdd* add) {
 }
 
 bool FoldLinearArithConstants(MIRGenerator* mir, MIRGraph& graph) {
-  JitSpew(JitSpew_FLAC, "Begin");
   for (PostorderIterator block(graph.poBegin()); block != graph.poEnd();
        block++) {
     if (mir->shouldCancel("Fold Linear Arithmetic Constants (main loop)")) {

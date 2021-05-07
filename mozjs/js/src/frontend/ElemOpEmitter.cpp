@@ -14,13 +14,8 @@
 using namespace js;
 using namespace js::frontend;
 
-ElemOpEmitter::ElemOpEmitter(BytecodeEmitter* bce, Kind kind, ObjKind objKind,
-                             NameVisibility visibility)
-    : bce_(bce), kind_(kind), objKind_(objKind), visibility_(visibility) {
-  // Can't access private names of super!
-  MOZ_ASSERT_IF(visibility == NameVisibility::Private,
-                objKind != ObjKind::Super);
-}
+ElemOpEmitter::ElemOpEmitter(BytecodeEmitter* bce, Kind kind, ObjKind objKind)
+    : bce_(bce), kind_(kind), objKind_(objKind) {}
 
 bool ElemOpEmitter::prepareForObj() {
   MOZ_ASSERT(state_ == State::Start);
@@ -56,67 +51,11 @@ bool ElemOpEmitter::prepareForKey() {
   return true;
 }
 
-bool ElemOpEmitter::emitPrivateGuard() {
-  MOZ_ASSERT(state_ == State::Key || state_ == State::Rhs);
-
-  if (!isPrivate()) {
-    return true;
-  }
-
-  if (isPropInit()) {
-    //              [stack] OBJ KEY
-    if (!bce_->emitCheckPrivateField(ThrowCondition::ThrowHas,
-                                     ThrowMsgKind::PrivateDoubleInit)) {
-      //            [stack] OBJ KEY BOOL
-      return false;
-    }
-  } else {
-    if (!bce_->emitCheckPrivateField(ThrowCondition::ThrowHasNot,
-                                     isPrivateGet()
-                                         ? ThrowMsgKind::MissingPrivateOnGet
-                                         : ThrowMsgKind::MissingPrivateOnSet)) {
-      //            [stack] OBJ KEY BOOL
-      return false;
-    }
-  }
-
-  // CheckPrivate leaves the result of the HasOwnCheck on the stack. Pop it off.
-  return bce_->emit1(JSOp::Pop);
-  //                [stack] OBJ KEY
-}
-
-bool ElemOpEmitter::emitPrivateGuardForAssignment() {
-  if (!isPrivate()) {
-    return true;
-  }
-
-  //                [stack] OBJ KEY RHS
-  if (!bce_->emitUnpickN(2)) {
-    //              [stack] RHS OBJ KEY
-    return false;
-  }
-
-  if (!emitPrivateGuard()) {
-    //              [stack] RHS OBJ KEY
-    return false;
-  }
-
-  if (!bce_->emitPickN(2)) {
-    //              [stack] OBJ KEY RHS
-    return false;
-  }
-
-  return true;
-}
-
 bool ElemOpEmitter::emitGet() {
   MOZ_ASSERT(state_ == State::Key);
 
-  // Inc/dec and compound assignment use the KEY twice, but if it's an object,
-  // it must be converted ToPropertyKey only once, per spec. But for a private
-  // field, KEY is always a symbol and ToPropertyKey would be a no-op.
-  if ((isIncDec() || isCompoundAssignment()) && !isPrivate()) {
-    if (!bce_->emit1(JSOp::ToPropertyKey)) {
+  if (isIncDec() || isCompoundAssignment()) {
+    if (!bce_->emit1(JSOp::ToId)) {
       //            [stack] # if Super
       //            [stack] THIS KEY
       //            [stack] # otherwise
@@ -124,11 +63,6 @@ bool ElemOpEmitter::emitGet() {
       return false;
     }
   }
-
-  if (!emitPrivateGuard()) {
-    return false;
-  }
-
   if (isSuper()) {
     if (!bce_->emitSuperBase()) {
       //            [stack] THIS? THIS KEY SUPERBASE
@@ -152,6 +86,8 @@ bool ElemOpEmitter::emitGet() {
   JSOp op;
   if (isSuper()) {
     op = JSOp::GetElemSuper;
+  } else if (isCall()) {
+    op = JSOp::CallElem;
   } else {
     op = JSOp::GetElem;
   }
@@ -213,10 +149,9 @@ bool ElemOpEmitter::skipObjAndKeyAndRhs() {
 bool ElemOpEmitter::emitDelete() {
   MOZ_ASSERT(state_ == State::Key);
   MOZ_ASSERT(isDelete());
-  MOZ_ASSERT(!isPrivate());
 
   if (isSuper()) {
-    if (!bce_->emit1(JSOp::ToPropertyKey)) {
+    if (!bce_->emit1(JSOp::ToId)) {
       //            [stack] THIS KEY
       return false;
     }
@@ -238,7 +173,6 @@ bool ElemOpEmitter::emitDelete() {
       return false;
     }
   } else {
-    MOZ_ASSERT(!isPrivate());
     JSOp op = bce_->sc->strict() ? JSOp::StrictDelElem : JSOp::DelElem;
     if (!bce_->emitElemOpBase(op)) {
       // SUCCEEDED
@@ -258,21 +192,12 @@ bool ElemOpEmitter::emitAssignment() {
 
   MOZ_ASSERT_IF(isPropInit(), !isSuper());
 
-  if (!isCompoundAssignment()) {
-    // For compound assignment, we call emitGet(), then emitAssignment().  So
-    // we already went through emitGet() and emitted a guard for this object
-    // and key. There's no point checking again--a private field can't be
-    // removed from an object.
-    if (!emitPrivateGuardForAssignment()) {
-      return false;
-    }
-  }
-
-  JSOp setOp = isPropInit() ? JSOp::InitElem
-               : isSuper()  ? bce_->sc->strict() ? JSOp::StrictSetElemSuper
-                                                 : JSOp::SetElemSuper
-               : bce_->sc->strict() ? JSOp::StrictSetElem
-                                    : JSOp::SetElem;
+  JSOp setOp = isPropInit()
+                   ? JSOp::InitElem
+                   : isSuper() ? bce_->sc->strict() ? JSOp::StrictSetElemSuper
+                                                    : JSOp::SetElemSuper
+                               : bce_->sc->strict() ? JSOp::StrictSetElem
+                                                    : JSOp::SetElem;
   if (!bce_->emitElemOpBase(setOp, ShouldInstrument::Yes)) {
     //              [stack] ELEM
     return false;

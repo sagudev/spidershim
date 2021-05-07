@@ -3,7 +3,7 @@
 
 /*---
 info: If Type(x) is not Reference, return true
-esid: sec-delete-operator-runtime-semantics-evaluation
+es5id: 11.4.1_A2.1
 description: Checking primitive value and Object value cases
 ---*/
 

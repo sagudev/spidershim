@@ -4,8 +4,7 @@ use std::borrow::Borrow;
 
 use fluent_syntax::ast;
 
-use crate::args::FluentArgs;
-use crate::bundle::FluentBundleBase;
+use crate::bundle::{FluentArgs, FluentBundleBase};
 use crate::resource::FluentResource;
 use crate::types::FluentValue;
 
@@ -19,17 +18,19 @@ pub enum Entry {
 }
 
 pub trait GetEntry {
-    fn get_entry_message(&self, id: &str) -> Option<&ast::Message<&str>>;
-    fn get_entry_term(&self, id: &str) -> Option<&ast::Term<&str>>;
+    fn get_entry_message(&self, id: &str) -> Option<&ast::Message>;
+    fn get_entry_term(&self, id: &str) -> Option<&ast::Term>;
     fn get_entry_function(&self, id: &str) -> Option<&FluentFunction>;
 }
 
 impl<'bundle, R: Borrow<FluentResource>, M> GetEntry for FluentBundleBase<R, M> {
-    fn get_entry_message(&self, id: &str) -> Option<&ast::Message<&str>> {
+    fn get_entry_message(&self, id: &str) -> Option<&ast::Message> {
         self.entries.get(id).and_then(|entry| match *entry {
             Entry::Message(pos) => {
                 let res = self.resources.get(pos[0])?.borrow();
-                if let Some(ast::Entry::Message(ref msg)) = res.ast().body.get(pos[1]) {
+                if let Some(ast::ResourceEntry::Entry(ast::Entry::Message(ref msg))) =
+                    res.ast().body.get(pos[1])
+                {
                     Some(msg)
                 } else {
                     None
@@ -39,11 +40,13 @@ impl<'bundle, R: Borrow<FluentResource>, M> GetEntry for FluentBundleBase<R, M> 
         })
     }
 
-    fn get_entry_term(&self, id: &str) -> Option<&ast::Term<&str>> {
+    fn get_entry_term(&self, id: &str) -> Option<&ast::Term> {
         self.entries.get(id).and_then(|entry| match *entry {
             Entry::Term(pos) => {
                 let res = self.resources.get(pos[0])?.borrow();
-                if let Some(ast::Entry::Term(ref msg)) = res.ast().body.get(pos[1]) {
+                if let Some(ast::ResourceEntry::Entry(ast::Entry::Term(ref msg))) =
+                    res.ast().body.get(pos[1])
+                {
                     Some(msg)
                 } else {
                     None

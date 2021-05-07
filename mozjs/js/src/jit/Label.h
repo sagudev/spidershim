@@ -7,9 +7,7 @@
 #ifndef jit_Label_h
 #define jit_Label_h
 
-#include "mozilla/Assertions.h"
-
-#include <stdint.h>
+#include "jit/JitContext.h"
 
 namespace js {
 namespace jit {
@@ -77,9 +75,17 @@ struct LabelBase {
 // of binding a label automatically corrects all incoming jumps.
 class Label : public LabelBase {
  public:
+  ~Label() {
 #ifdef DEBUG
-  ~Label();
+    // The assertion below doesn't hold if an error occurred.
+    JitContext* context = MaybeGetJitContext();
+    bool hadError =
+        js::oom::HadSimulatedOOM() ||
+        (context && context->runtime && context->runtime->hadOutOfMemory()) ||
+        (context && !context->runtime && context->hasOOM());
+    MOZ_ASSERT_IF(!hadError, !used());
 #endif
+  }
 };
 
 static_assert(sizeof(Label) == sizeof(uint32_t),
@@ -90,13 +96,13 @@ static_assert(sizeof(Label) == sizeof(uint32_t),
 // trigger this failure innocuously. This Label silences the assertion.
 class NonAssertingLabel : public Label {
  public:
-#ifdef DEBUG
   ~NonAssertingLabel() {
+#ifdef DEBUG
     if (used()) {
       bind(0);
     }
-  }
 #endif
+  }
 };
 
 }  // namespace jit

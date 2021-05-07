@@ -27,7 +27,7 @@ impl<I, F> Map<I, F>
 where
     I: ParallelIterator,
 {
-    /// Creates a new `Map` iterator.
+    /// Create a new `Map` iterator.
     pub(super) fn new(base: I, map_op: F) -> Self {
         Map { base, map_op }
     }
@@ -110,7 +110,7 @@ where
 
 /// ////////////////////////////////////////////////////////////////////////
 
-struct MapProducer<'f, P, F> {
+struct MapProducer<'f, P, F: 'f> {
     base: P,
     map_op: &'f F,
 }
@@ -164,7 +164,7 @@ where
 /// ////////////////////////////////////////////////////////////////////////
 /// Consumer implementation
 
-struct MapConsumer<'f, C, F> {
+struct MapConsumer<'f, C, F: 'f> {
     base: C,
     map_op: &'f F,
 }
@@ -221,7 +221,7 @@ where
     }
 }
 
-struct MapFolder<'f, C, F> {
+struct MapFolder<'f, C, F: 'f> {
     base: C,
     map_op: &'f F,
 }

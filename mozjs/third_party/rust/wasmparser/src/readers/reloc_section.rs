@@ -14,7 +14,7 @@
  */
 
 use super::{
-    BinaryReader, Range, RelocType, Result, SectionCode, SectionIteratorLimited, SectionReader,
+    BinaryReader, RelocType, Result, SectionCode, SectionIteratorLimited, SectionReader,
     SectionWithLimitedItems,
 };
 
@@ -96,9 +96,6 @@ impl<'a> SectionReader for RelocSectionReader<'a> {
     }
     fn original_position(&self) -> usize {
         RelocSectionReader::original_position(self)
-    }
-    fn range(&self) -> Range {
-        self.reader.range()
     }
 }
 

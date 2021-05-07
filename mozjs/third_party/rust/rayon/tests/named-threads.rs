@@ -1,3 +1,5 @@
+extern crate rayon;
+
 use std::collections::HashSet;
 
 use rayon::prelude::*;

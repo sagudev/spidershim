@@ -12,23 +12,29 @@
 namespace js {
 namespace gc {
 
-struct ClearEdgesTracer final : public GenericTracer {
+struct ClearEdgesTracer final : public JS::CallbackTracer {
   explicit ClearEdgesTracer(JSRuntime* rt);
   ClearEdgesTracer();
 
-  template <typename T>
-  inline T* onEdge(T* thing);
+#ifdef DEBUG
+  TracerKind getTracerKind() const override { return TracerKind::ClearEdges; }
+#endif
 
-  JSObject* onObjectEdge(JSObject* obj) override;
-  JSString* onStringEdge(JSString* str) override;
-  JS::Symbol* onSymbolEdge(JS::Symbol* sym) override;
-  JS::BigInt* onBigIntEdge(JS::BigInt* bi) override;
-  js::BaseScript* onScriptEdge(js::BaseScript* script) override;
-  js::Shape* onShapeEdge(js::Shape* shape) override;
-  js::BaseShape* onBaseShapeEdge(js::BaseShape* base) override;
-  js::jit::JitCode* onJitCodeEdge(js::jit::JitCode* code) override;
-  js::Scope* onScopeEdge(js::Scope* scope) override;
-  js::RegExpShared* onRegExpSharedEdge(js::RegExpShared* shared) override;
+  template <typename T>
+  inline bool clearEdge(T** thingp);
+
+  bool onObjectEdge(JSObject** objp) override;
+  bool onStringEdge(JSString** strp) override;
+  bool onSymbolEdge(JS::Symbol** symp) override;
+  bool onBigIntEdge(JS::BigInt** bip) override;
+  bool onScriptEdge(js::BaseScript** scriptp) override;
+  bool onShapeEdge(js::Shape** shapep) override;
+  bool onObjectGroupEdge(js::ObjectGroup** groupp) override;
+  bool onBaseShapeEdge(js::BaseShape** basep) override;
+  bool onJitCodeEdge(js::jit::JitCode** codep) override;
+  bool onScopeEdge(js::Scope** scopep) override;
+  bool onRegExpSharedEdge(js::RegExpShared** sharedp) override;
+  bool onChild(const JS::GCCellPtr& thing) override;
 };
 
 }  // namespace gc

@@ -1,34 +1,31 @@
-use crate::{is_zero, Intersection, Plane, Polygon, Splitter};
+use {Intersection, Plane, Polygon, Splitter};
+use is_zero;
 
 use binary_space_partition::{BspNode, Plane as BspPlane, PlaneCut};
-use euclid::{approxeq::ApproxEq, Point3D, Vector3D};
+use euclid::{Point3D, Vector3D};
+use euclid::approxeq::ApproxEq;
 use num_traits::{Float, One, Zero};
 
 use std::{fmt, iter, ops};
 
-impl<T, U, A> BspPlane for Polygon<T, U, A>
-where
-    T: Copy
-        + fmt::Debug
-        + ApproxEq<T>
-        + ops::Sub<T, Output = T>
-        + ops::Add<T, Output = T>
-        + ops::Mul<T, Output = T>
-        + ops::Div<T, Output = T>
-        + Zero
-        + Float,
+
+impl<T, U, A> BspPlane for Polygon<T, U, A> where
+    T: Copy + fmt::Debug + ApproxEq<T> +
+        ops::Sub<T, Output=T> + ops::Add<T, Output=T> +
+        ops::Mul<T, Output=T> + ops::Div<T, Output=T> +
+        Zero + Float,
     U: fmt::Debug,
     A: Copy + fmt::Debug,
 {
     fn cut(&self, mut poly: Self) -> PlaneCut<Self> {
-        log::debug!("\tCutting anchor {:?} by {:?}", poly.anchor, self.anchor);
-        log::trace!("\t\tbase {:?}", self.plane);
+        debug!("\tCutting anchor {:?} by {:?}", poly.anchor, self.anchor);
+        trace!("\t\tbase {:?}", self.plane);
 
         //Note: we treat `self` as a plane, and `poly` as a concrete polygon here
         let (intersection, dist) = match self.plane.intersect(&poly.plane) {
             None => {
                 let ndot = self.plane.normal.dot(poly.plane.normal);
-                log::debug!("\t\tNormals are aligned with {:?}", ndot);
+                debug!("\t\tNormals are aligned with {:?}", ndot);
                 let dist = self.plane.offset - ndot * poly.plane.offset;
                 (Intersection::Coplanar, dist)
             }
@@ -48,11 +45,11 @@ where
             // This is done to avoid mistakenly ordering items that should be on the same
             // plane but end up slightly different due to the floating point precision.
             Intersection::Coplanar if is_zero(dist) => {
-                log::debug!("\t\tCoplanar at {:?}", dist);
+                debug!("\t\tCoplanar at {:?}", dist);
                 PlaneCut::Sibling(poly)
             }
             Intersection::Coplanar | Intersection::Outside => {
-                log::debug!("\t\tOutside at {:?}", dist);
+                debug!("\t\tOutside at {:?}", dist);
                 if dist > T::zero() {
                     PlaneCut::Cut {
                         front: vec![poly],
@@ -66,7 +63,7 @@ where
                 }
             }
             Intersection::Inside(line) => {
-                log::debug!("\t\tCut across {:?}", line);
+                debug!("\t\tCut across {:?}", line);
                 let (res_add1, res_add2) = poly.split_with_normal(&line, &self.plane.normal);
                 let mut front = Vec::new();
                 let mut back = Vec::new();
@@ -78,16 +75,19 @@ where
                 {
                     let dist = self.plane.signed_distance_sum_to(&sub);
                     if dist > T::zero() {
-                        log::trace!("\t\t\tdist {:?} -> front: {:?}", dist, sub);
+                        trace!("\t\t\tdist {:?} -> front: {:?}", dist, sub);
                         front.push(sub)
                     } else {
-                        log::trace!("\t\t\tdist {:?} -> back: {:?}", dist, sub);
+                        trace!("\t\t\tdist {:?} -> back: {:?}", dist, sub);
                         back.push(sub)
                     }
                 }
 
-                PlaneCut::Cut { front, back }
-            }
+                PlaneCut::Cut {
+                    front,
+                    back,
+                }
+            },
         }
     }
 
@@ -95,6 +95,7 @@ where
         self.plane.normal.dot(other.plane.normal) > T::zero()
     }
 }
+
 
 /// Binary Space Partitioning splitter, uses a BSP tree.
 pub struct BspSplitter<T, U, A> {
@@ -112,18 +113,11 @@ impl<T, U, A> BspSplitter<T, U, A> {
     }
 }
 
-impl<T, U, A> Splitter<T, U, A> for BspSplitter<T, U, A>
-where
-    T: Copy
-        + fmt::Debug
-        + ApproxEq<T>
-        + ops::Sub<T, Output = T>
-        + ops::Add<T, Output = T>
-        + ops::Mul<T, Output = T>
-        + ops::Div<T, Output = T>
-        + Zero
-        + One
-        + Float,
+impl<T, U, A> Splitter<T, U, A> for BspSplitter<T, U, A> where
+    T: Copy + fmt::Debug + ApproxEq<T> +
+        ops::Sub<T, Output=T> + ops::Add<T, Output=T> +
+        ops::Mul<T, Output=T> + ops::Div<T, Output=T> +
+        Zero + One + Float,
     U: fmt::Debug,
     A: Copy + fmt::Debug + Default,
 {

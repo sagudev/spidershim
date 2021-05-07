@@ -7,7 +7,6 @@
 #include "jit/BaselineJIT.h"
 
 #include "mozilla/BinarySearch.h"
-#include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
 
@@ -16,14 +15,11 @@
 #include "debugger/DebugAPI.h"
 #include "gc/FreeOp.h"
 #include "gc/PublicIterators.h"
-#include "jit/AutoWritableJitCode.h"
 #include "jit/BaselineCodeGen.h"
 #include "jit/BaselineIC.h"
-#include "jit/CalleeToken.h"
+#include "jit/CompileInfo.h"
 #include "jit/JitCommon.h"
-#include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimitWithStackPointer
 #include "util/Memory.h"
 #include "util/StructuredSpewer.h"
 #include "vm/Interpreter.h"
@@ -31,7 +27,7 @@
 
 #include "debugger/DebugAPI-inl.h"
 #include "gc/GC-inl.h"
-#include "jit/JitScript-inl.h"
+#include "jit/JitFrames-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "vm/BytecodeUtil-inl.h"
 #include "vm/GeckoProfiler-inl.h"
@@ -40,7 +36,6 @@
 #include "vm/Stack-inl.h"
 
 using mozilla::BinarySearchIf;
-using mozilla::CheckedInt;
 using mozilla::DebugOnly;
 
 using namespace js;
@@ -72,35 +67,6 @@ static bool CheckFrame(InterpreterFrame* fp) {
 
   return true;
 }
-
-struct EnterJitData {
-  explicit EnterJitData(JSContext* cx)
-      : jitcode(nullptr),
-        osrFrame(nullptr),
-        calleeToken(nullptr),
-        maxArgv(nullptr),
-        maxArgc(0),
-        numActualArgs(0),
-        osrNumStackValues(0),
-        envChain(cx),
-        result(cx),
-        constructing(false) {}
-
-  uint8_t* jitcode;
-  InterpreterFrame* osrFrame;
-
-  void* calleeToken;
-
-  Value* maxArgv;
-  unsigned maxArgc;
-  unsigned numActualArgs;
-  unsigned osrNumStackValues;
-
-  RootedObject envChain;
-  RootedValue result;
-
-  bool constructing;
-};
 
 static JitExecStatus EnterBaseline(JSContext* cx, EnterJitData& data) {
   MOZ_ASSERT(data.osrFrame);
@@ -152,6 +118,8 @@ static JitExecStatus EnterBaseline(JSContext* cx, EnterJitData& data) {
     data.osrFrame->clearRunningInJit();
   }
 
+  MOZ_ASSERT(!cx->hasIonReturnOverride());
+
   // Jit callers wrap primitive constructor return, except for derived
   // class constructors, which are forced to do it themselves.
   if (!data.result.isMagic() && data.constructing &&
@@ -179,6 +147,8 @@ JitExecStatus jit::EnterBaselineInterpreterAtBranch(JSContext* cx,
   const BaselineInterpreter& interp =
       cx->runtime()->jitRuntime()->baselineInterpreter();
   data.jitcode = interp.interpretOpNoDebugTrapAddr().value;
+
+  // Note: keep this in sync with SetEnterJitData.
 
   data.osrFrame = fp;
   data.osrNumStackValues =
@@ -533,8 +503,10 @@ void BaselineScript::trace(JSTracer* trc) {
 }
 
 /* static */
-void BaselineScript::preWriteBarrier(Zone* zone, BaselineScript* script) {
-  PreWriteBarrier(zone, script);
+void BaselineScript::writeBarrierPre(Zone* zone, BaselineScript* script) {
+  if (zone->needsIncrementalBarrier()) {
+    script->trace(zone->barrierTracer());
+  }
 }
 
 void BaselineScript::Destroy(JSFreeOp* fop, BaselineScript* script) {
@@ -645,7 +617,8 @@ const RetAddrEntry& BaselineScript::retAddrEntryFromPCOffset(
 
 const RetAddrEntry& BaselineScript::prologueRetAddrEntry(
     RetAddrEntry::Kind kind) {
-  MOZ_ASSERT(kind == RetAddrEntry::Kind::StackCheck);
+  MOZ_ASSERT(kind == RetAddrEntry::Kind::StackCheck ||
+             kind == RetAddrEntry::Kind::WarmupCounter);
 
   // The prologue entries will always be at a very low offset, so just do a
   // linear search from the beginning.
@@ -685,7 +658,7 @@ void BaselineScript::computeResumeNativeOffsets(
   // nullptr if compiler decided code was unreachable.
   auto computeNative = [this, &entries](uint32_t pcOffset) -> uint8_t* {
     mozilla::Span<const ResumeOffsetEntry> entriesSpan =
-        mozilla::Span(entries.begin(), entries.length());
+        mozilla::MakeSpan(entries.begin(), entries.length());
     size_t mid;
     if (!ComputeBinarySearchMid(entriesSpan, pcOffset, &mid)) {
       return nullptr;

@@ -11,7 +11,7 @@ use libc::c_void;
 ///     ..IOSHandle::empty()
 /// };
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IOSHandle {
     pub ui_window: *mut c_void,
     pub ui_view: *mut c_void,

@@ -12,7 +12,7 @@
 namespace js {
 namespace jit {
 
-[[nodiscard]] bool ReorderInstructions(MIRGraph& graph);
+MOZ_MUST_USE bool ReorderInstructions(MIRGraph& graph);
 
 }  // namespace jit
 }  // namespace js

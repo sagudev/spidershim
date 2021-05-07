@@ -16,11 +16,11 @@ pub type Alert = u8;
 pub type Epoch = u16;
 // TLS doesn't really have an "initial" concept that maps to QUIC so directly,
 // but this should be clear enough.
-pub const TLS_EPOCH_INITIAL: Epoch = 0_u16;
-pub const TLS_EPOCH_ZERO_RTT: Epoch = 1_u16;
-pub const TLS_EPOCH_HANDSHAKE: Epoch = 2_u16;
+pub const TLS_EPOCH_INITIAL: Epoch = 0 as Epoch;
+pub const TLS_EPOCH_ZERO_RTT: Epoch = 1 as Epoch;
+pub const TLS_EPOCH_HANDSHAKE: Epoch = 2 as Epoch;
 // Also, we don't use TLS epochs > 3.
-pub const TLS_EPOCH_APPLICATION_DATA: Epoch = 3_u16;
+pub const TLS_EPOCH_APPLICATION_DATA: Epoch = 3 as Epoch;
 
 /// Rather than defining a type alias and a bunch of constants, which leads to a ton of repetition,
 /// use this macro.
@@ -84,16 +84,6 @@ remap_enum! {
         TLS_HS_FINISHED = ssl_hs_finished,
         TLS_HS_CERT_STATUS = ssl_hs_certificate_status,
         TLS_HS_KEY_UDPATE = ssl_hs_key_update,
-    }
-}
-
-remap_enum! {
-    ContentType: u8 => ssl::SSLContentType {
-        TLS_CT_CHANGE_CIPHER_SPEC = ssl_ct_change_cipher_spec,
-        TLS_CT_ALERT = ssl_ct_alert,
-        TLS_CT_HANDSHAKE = ssl_ct_handshake,
-        TLS_CT_APPLICATION_DATA = ssl_ct_application_data,
-        TLS_CT_ACK = ssl_ct_ack,
     }
 }
 

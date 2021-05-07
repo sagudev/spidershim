@@ -10,10 +10,10 @@
 #include "mozilla/DebugOnly.h"
 
 #include "jit/arm/Assembler-arm.h"
+#include "jit/JitFrames.h"
 #include "jit/MoveResolver.h"
 #include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"
-#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
@@ -102,10 +102,6 @@ class MacroAssemblerARM : public Assembler {
                               Condition c = Always);
   void convertDoubleToInt32(FloatRegister src, Register dest, Label* fail,
                             bool negativeZeroCheck = true);
-  void convertDoubleToPtr(FloatRegister src, Register dest, Label* fail,
-                          bool negativeZeroCheck = true) {
-    convertDoubleToInt32(src, dest, fail, negativeZeroCheck);
-  }
   void convertFloat32ToInt32(FloatRegister src, Register dest, Label* fail,
                              bool negativeZeroCheck = true);
 
@@ -907,30 +903,29 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
   // Extended unboxing API. If the payload is already in a register, returns
   // that register. Otherwise, provides a move to the given scratch register,
   // and returns that.
-  [[nodiscard]] Register extractObject(const Address& address,
-                                       Register scratch);
-  [[nodiscard]] Register extractObject(const ValueOperand& value,
-                                       Register scratch) {
+  MOZ_MUST_USE Register extractObject(const Address& address, Register scratch);
+  MOZ_MUST_USE Register extractObject(const ValueOperand& value,
+                                      Register scratch) {
     unboxNonDouble(value, value.payloadReg(), JSVAL_TYPE_OBJECT);
     return value.payloadReg();
   }
-  [[nodiscard]] Register extractSymbol(const ValueOperand& value,
-                                       Register scratch) {
+  MOZ_MUST_USE Register extractSymbol(const ValueOperand& value,
+                                      Register scratch) {
     unboxNonDouble(value, value.payloadReg(), JSVAL_TYPE_SYMBOL);
     return value.payloadReg();
   }
-  [[nodiscard]] Register extractInt32(const ValueOperand& value,
-                                      Register scratch) {
+  MOZ_MUST_USE Register extractInt32(const ValueOperand& value,
+                                     Register scratch) {
     return value.payloadReg();
   }
-  [[nodiscard]] Register extractBoolean(const ValueOperand& value,
-                                        Register scratch) {
+  MOZ_MUST_USE Register extractBoolean(const ValueOperand& value,
+                                       Register scratch) {
     return value.payloadReg();
   }
-  [[nodiscard]] Register extractTag(const Address& address, Register scratch);
-  [[nodiscard]] Register extractTag(const BaseIndex& address, Register scratch);
-  [[nodiscard]] Register extractTag(const ValueOperand& value,
-                                    Register scratch) {
+  MOZ_MUST_USE Register extractTag(const Address& address, Register scratch);
+  MOZ_MUST_USE Register extractTag(const BaseIndex& address, Register scratch);
+  MOZ_MUST_USE Register extractTag(const ValueOperand& value,
+                                   Register scratch) {
     return value.typeReg();
   }
 
@@ -1119,7 +1114,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
   void storeTypeTag(ImmTag tag, const Address& dest);
   void storeTypeTag(ImmTag tag, const BaseIndex& dest);
 
-  void handleFailureWithHandlerTail(Label* profilerExitTail);
+  void handleFailureWithHandlerTail(void* handler, Label* profilerExitTail);
 
   /////////////////////////////////////////////////////////////////
   // Common interface.

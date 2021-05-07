@@ -6,7 +6,7 @@
 description: Rest element (nested array pattern) does not support initializer (class expression async generator method (default parameters))
 esid: sec-class-definitions-runtime-semantics-evaluation
 features: [async-iteration]
-flags: [generated]
+flags: [generated, async]
 negative:
   phase: parse
   type: SyntaxError

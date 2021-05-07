@@ -6,36 +6,18 @@
 
 #include "jit/arm64/MacroAssembler-arm64.h"
 
-#include "jsmath.h"
-
 #include "jit/arm64/MoveEmitter-arm64.h"
 #include "jit/arm64/SharedICRegisters-arm64.h"
 #include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
-#include "jit/JitRuntime.h"
 #include "jit/MacroAssembler.h"
 #include "util/Memory.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
-#include "vm/JSContext.h"
 
 #include "jit/MacroAssembler-inl.h"
 
 namespace js {
 namespace jit {
-
-enum class Width { _32 = 32, _64 = 64 };
-
-static inline ARMRegister X(Register r) { return ARMRegister(r, 64); }
-
-static inline ARMRegister X(MacroAssembler& masm, RegisterOrSP r) {
-  return masm.toARMRegister(r, 64);
-}
-
-static inline ARMRegister W(Register r) { return ARMRegister(r, 32); }
-
-static inline ARMRegister R(Register r, Width w) {
-  return ARMRegister(r, unsigned(w));
-}
 
 void MacroAssemblerCompat::boxValue(JSValueType type, Register src,
                                     Register dest) {
@@ -51,20 +33,6 @@ void MacroAssemblerCompat::boxValue(JSValueType type, Register src,
   Orr(ARMRegister(dest, 64), ARMRegister(src, 64),
       Operand(ImmShiftedTag(type).value));
 }
-
-#ifdef ENABLE_WASM_SIMD
-bool MacroAssembler::MustScalarizeShiftSimd128(wasm::SimdOp op) {
-  MOZ_CRASH("NYI - ion porting interface not in use");
-}
-
-bool MacroAssembler::MustMaskShiftCountSimd128(wasm::SimdOp op, int32_t* mask) {
-  MOZ_CRASH("NYI - ion porting interface not in use");
-}
-
-bool MacroAssembler::MustScalarizeShiftSimd128(wasm::SimdOp op, Imm32 imm) {
-  MOZ_CRASH("NYI - ion porting interface not in use");
-}
-#endif
 
 void MacroAssembler::clampDoubleToUint8(FloatRegister input, Register output) {
   ARMRegister dest(output, 32);
@@ -100,7 +68,7 @@ const vixl::MacroAssembler& MacroAssemblerCompat::asVIXL() const {
 }
 
 void MacroAssemblerCompat::mov(CodeLabel* label, Register dest) {
-  BufferOffset bo = movePatchablePtr(ImmWord(/* placeholder */ 0), dest);
+  BufferOffset bo = movePatchablePtr(ImmPtr(/* placeholder */ nullptr), dest);
   label->patchAt()->bind(bo.getOffset());
   label->setLinkMode(CodeLabel::MoveImmediate);
 }
@@ -161,24 +129,21 @@ void MacroAssemblerCompat::loadPrivate(const Address& src, Register dest) {
 }
 
 void MacroAssemblerCompat::handleFailureWithHandlerTail(
-    Label* profilerExitTail) {
-  // Fail rather than silently create wrong code.
-  MOZ_RELEASE_ASSERT(GetStackPointer64().Is(PseudoStackPointer64));
-
+    void* handler, Label* profilerExitTail) {
   // Reserve space for exception information.
   int64_t size = (sizeof(ResumeFromException) + 7) & ~7;
-  Sub(PseudoStackPointer64, PseudoStackPointer64, Operand(size));
-  syncStackPtr();
+  Sub(GetStackPointer64(), GetStackPointer64(), Operand(size));
+  if (!GetStackPointer64().Is(sp)) {
+    Mov(sp, GetStackPointer64());
+  }
 
-  MOZ_ASSERT(!x0.Is(PseudoStackPointer64));
-  Mov(x0, PseudoStackPointer64);
+  Mov(x0, GetStackPointer64());
 
   // Call the handler.
-  using Fn = void (*)(ResumeFromException * rfe);
   asMasm().setupUnalignedABICall(r1);
   asMasm().passABIArg(r0);
-  asMasm().callWithABI<Fn, HandleException>(
-      MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+  asMasm().callWithABI(handler, MoveOp::GENERAL,
+                       CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
   Label entryFrame;
   Label catch_;
@@ -186,12 +151,11 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
   Label return_;
   Label bailout;
   Label wasm;
-  Label wasmCatch;
 
-  // Check the `asMasm` calls above didn't mess with the StackPointer identity.
-  MOZ_ASSERT(GetStackPointer64().Is(PseudoStackPointer64));
+  MOZ_ASSERT(
+      GetStackPointer64().Is(x28));  // Lets the code below be a little cleaner.
 
-  loadPtr(Address(PseudoStackPointer, offsetof(ResumeFromException, kind)), r0);
+  loadPtr(Address(r28, offsetof(ResumeFromException, kind)), r0);
   asMasm().branch32(Assembler::Equal, r0,
                     Imm32(ResumeFromException::RESUME_ENTRY_FRAME),
                     &entryFrame);
@@ -205,8 +169,6 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
                     Imm32(ResumeFromException::RESUME_BAILOUT), &bailout);
   asMasm().branch32(Assembler::Equal, r0,
                     Imm32(ResumeFromException::RESUME_WASM), &wasm);
-  asMasm().branch32(Assembler::Equal, r0,
-                    Imm32(ResumeFromException::RESUME_WASM_CATCH), &wasmCatch);
 
   breakpoint();  // Invalid kind.
 
@@ -214,34 +176,16 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
   // and return from the entry frame.
   bind(&entryFrame);
   moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
-  loadPtr(
-      Address(PseudoStackPointer, offsetof(ResumeFromException, stackPointer)),
-      PseudoStackPointer);
-
-  // `retn` does indeed sync the stack pointer, but before doing that it reads
-  // from the stack.  Consequently, if we remove this call to syncStackPointer
-  // then we take on the requirement to prove that the immediately preceding
-  // loadPtr produces a value for PSP which maintains the SP <= PSP invariant.
-  // That's a proof burden we don't want to take on.  In general it would be
-  // good to move (at some time in the future, not now) to a world where
-  // *every* assignment to PSP or SP is followed immediately by a copy into
-  // the other register.  That would make all required correctness proofs
-  // trivial in the sense that it requires only local inspection of code
-  // immediately following (dominated by) any such assignment.
-  syncStackPtr();
+  loadPtr(Address(r28, offsetof(ResumeFromException, stackPointer)), r28);
   retn(Imm32(1 * sizeof(void*)));  // Pop from stack and return.
 
   // If we found a catch handler, this must be a baseline frame. Restore state
   // and jump to the catch block.
   bind(&catch_);
-  loadPtr(Address(PseudoStackPointer, offsetof(ResumeFromException, target)),
-          r0);
-  loadPtr(
-      Address(PseudoStackPointer, offsetof(ResumeFromException, framePointer)),
-      BaselineFrameReg);
-  loadPtr(
-      Address(PseudoStackPointer, offsetof(ResumeFromException, stackPointer)),
-      PseudoStackPointer);
+  loadPtr(Address(r28, offsetof(ResumeFromException, target)), r0);
+  loadPtr(Address(r28, offsetof(ResumeFromException, framePointer)),
+          BaselineFrameReg);
+  loadPtr(Address(r28, offsetof(ResumeFromException, stackPointer)), r28);
   syncStackPtr();
   Br(x0);
 
@@ -250,15 +194,15 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
   // and the exception.
   bind(&finally);
   ARMRegister exception = x1;
-  Ldr(exception, MemOperand(PseudoStackPointer64,
+  Ldr(exception, MemOperand(GetStackPointer64(),
                             offsetof(ResumeFromException, exception)));
   Ldr(x0,
-      MemOperand(PseudoStackPointer64, offsetof(ResumeFromException, target)));
+      MemOperand(GetStackPointer64(), offsetof(ResumeFromException, target)));
   Ldr(ARMRegister(BaselineFrameReg, 64),
-      MemOperand(PseudoStackPointer64,
+      MemOperand(GetStackPointer64(),
                  offsetof(ResumeFromException, framePointer)));
-  Ldr(PseudoStackPointer64,
-      MemOperand(PseudoStackPointer64,
+  Ldr(GetStackPointer64(),
+      MemOperand(GetStackPointer64(),
                  offsetof(ResumeFromException, stackPointer)));
   syncStackPtr();
   pushValue(BooleanValue(true));
@@ -267,20 +211,13 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
 
   // Only used in debug mode. Return BaselineFrame->returnValue() to the caller.
   bind(&return_);
-  loadPtr(
-      Address(PseudoStackPointer, offsetof(ResumeFromException, framePointer)),
-      BaselineFrameReg);
-  loadPtr(
-      Address(PseudoStackPointer, offsetof(ResumeFromException, stackPointer)),
-      PseudoStackPointer);
-  // See comment further up beginning "`retn` does indeed sync the stack
-  // pointer".  That comment applies here too.
-  syncStackPtr();
+  loadPtr(Address(r28, offsetof(ResumeFromException, framePointer)),
+          BaselineFrameReg);
+  loadPtr(Address(r28, offsetof(ResumeFromException, stackPointer)), r28);
   loadValue(
       Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfReturnValue()),
       JSReturnOperand);
-  movePtr(BaselineFrameReg, PseudoStackPointer);
-  syncStackPtr();
+  movePtr(BaselineFrameReg, r28);
   vixl::MacroAssembler::Pop(ARMRegister(BaselineFrameReg, 64));
 
   // If profiling is enabled, then update the lastProfilingFrame to refer to
@@ -302,10 +239,10 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
   // If we are bailing out to baseline to handle an exception, jump to the
   // bailout tail stub. Load 1 (true) in x0 (ReturnReg) to indicate success.
   bind(&bailout);
-  Ldr(x2, MemOperand(PseudoStackPointer64,
+  Ldr(x2, MemOperand(GetStackPointer64(),
                      offsetof(ResumeFromException, bailoutInfo)));
   Ldr(x1,
-      MemOperand(PseudoStackPointer64, offsetof(ResumeFromException, target)));
+      MemOperand(GetStackPointer64(), offsetof(ResumeFromException, target)));
   Mov(x0, 1);
   Br(x1);
 
@@ -313,28 +250,12 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
   // FP; SP is pointing to the unwound return address to the wasm entry, so
   // we can just ret().
   bind(&wasm);
-  Ldr(x29, MemOperand(PseudoStackPointer64,
+  Ldr(x29, MemOperand(GetStackPointer64(),
                       offsetof(ResumeFromException, framePointer)));
-  Ldr(PseudoStackPointer64,
-      MemOperand(PseudoStackPointer64,
-                 offsetof(ResumeFromException, stackPointer)));
+  Ldr(x28, MemOperand(GetStackPointer64(),
+                      offsetof(ResumeFromException, stackPointer)));
   syncStackPtr();
   ret();
-
-  // Found a wasm catch handler, restore state and jump to it.
-  bind(&wasmCatch);
-  loadPtr(Address(PseudoStackPointer, offsetof(ResumeFromException, target)),
-          r0);
-  loadPtr(
-      Address(PseudoStackPointer, offsetof(ResumeFromException, framePointer)),
-      r29);
-  loadPtr(
-      Address(PseudoStackPointer, offsetof(ResumeFromException, stackPointer)),
-      PseudoStackPointer);
-  syncStackPtr();
-  Br(x0);
-
-  MOZ_ASSERT(GetStackPointer64().Is(PseudoStackPointer64));
 }
 
 void MacroAssemblerCompat::profilerEnterFrame(Register framePtr,
@@ -355,10 +276,6 @@ void MacroAssemblerCompat::profilerEnterFrame(RegisterOrSP framePtr,
   }
   storePtr(ImmPtr(nullptr),
            Address(scratch, JitActivation::offsetOfLastProfilingCallSite()));
-}
-
-void MacroAssemblerCompat::profilerExitFrame() {
-  jump(GetJitContext()->runtime->jitRuntime()->getProfilerExitFrameTail());
 }
 
 void MacroAssemblerCompat::breakpoint() {
@@ -392,42 +309,29 @@ static inline ARMFPRegister SelectFPReg(AnyRegister any, Register64 sixtyfour,
 
 void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
                                         Register memoryBase_, Register ptr_,
+                                        Register ptrScratch_,
                                         AnyRegister outany, Register64 out64) {
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < asMasm().wasmMaxOffsetGuardLimit());
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
+
+  MOZ_ASSERT(ptr_ == ptrScratch_);
 
   ARMRegister memoryBase(memoryBase_, 64);
   ARMRegister ptr(ptr_, 64);
   if (offset) {
-    vixl::UseScratchRegisterScope temps(this);
-    ARMRegister scratch = temps.AcquireX();
-    Add(scratch, ptr, Operand(offset));
-    MemOperand srcAddr(memoryBase, scratch);
-    wasmLoadImpl(access, srcAddr, outany, out64);
-  } else {
-    MemOperand srcAddr(memoryBase, ptr);
-    wasmLoadImpl(access, srcAddr, outany, out64);
+    Add(ptr, ptr, Operand(offset));
   }
-}
-
-void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
-                                        MemOperand srcAddr, AnyRegister outany,
-                                        Register64 out64) {
-  // Not yet supported: not used by baseline compiler
-  MOZ_ASSERT(!access.isSplatSimd128Load());
-  MOZ_ASSERT(!access.isWidenSimd128Load());
 
   asMasm().memoryBarrierBefore(access.sync());
 
-  {
-    // Reg+Reg addressing is directly encodable in one Load instruction, hence
-    // the AutoForbidPoolsAndNops will ensure that the access metadata is
-    // emitted at the address of the Load.  The AutoForbidPoolsAndNops will
-    // assert if we emit more than one instruction.
+  // Reg+Reg addressing is directly encodable in one Load instruction, hence
+  // the AutoForbidPoolsAndNops will ensure that the access metadata is emitted
+  // at the address of the Load.
+  MemOperand srcAddr(memoryBase, ptr);
 
+  {
     AutoForbidPoolsAndNops afp(this,
                                /* max number of instructions in scope = */ 1);
-
     append(access, asMasm().currentOffset());
     switch (access.type()) {
       case Scalar::Int8:
@@ -456,19 +360,15 @@ void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
         Ldr(SelectGPReg(outany, out64), srcAddr);
         break;
       case Scalar::Float32:
-        // LDR does the right thing also for access.isZeroExtendSimd128Load()
         Ldr(SelectFPReg(outany, out64, 32), srcAddr);
         break;
       case Scalar::Float64:
-        // LDR does the right thing also for access.isZeroExtendSimd128Load()
         Ldr(SelectFPReg(outany, out64, 64), srcAddr);
-        break;
-      case Scalar::Simd128:
-        Ldr(SelectFPReg(outany, out64, 128), srcAddr);
         break;
       case Scalar::Uint8Clamped:
       case Scalar::BigInt64:
       case Scalar::BigUint64:
+      case Scalar::Simd128:
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
@@ -479,38 +379,29 @@ void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
 
 void MacroAssemblerCompat::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
                                          AnyRegister valany, Register64 val64,
-                                         Register memoryBase_, Register ptr_) {
+                                         Register memoryBase_, Register ptr_,
+                                         Register ptrScratch_) {
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < asMasm().wasmMaxOffsetGuardLimit());
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
+
+  MOZ_ASSERT(ptr_ == ptrScratch_);
 
   ARMRegister memoryBase(memoryBase_, 64);
   ARMRegister ptr(ptr_, 64);
   if (offset) {
-    vixl::UseScratchRegisterScope temps(this);
-    ARMRegister scratch = temps.AcquireX();
-    Add(scratch, ptr, Operand(offset));
-    MemOperand destAddr(memoryBase, scratch);
-    wasmStoreImpl(access, destAddr, valany, val64);
-  } else {
-    MemOperand destAddr(memoryBase, ptr);
-    wasmStoreImpl(access, destAddr, valany, val64);
+    Add(ptr, ptr, Operand(offset));
   }
-}
 
-void MacroAssemblerCompat::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
-                                         MemOperand dstAddr, AnyRegister valany,
-                                         Register64 val64) {
   asMasm().memoryBarrierBefore(access.sync());
 
-  {
-    // Reg+Reg addressing is directly encodable in one Store instruction, hence
-    // the AutoForbidPoolsAndNops will ensure that the access metadata is
-    // emitted at the address of the Store.  The AutoForbidPoolsAndNops will
-    // assert if we emit more than one instruction.
+  // Reg+Reg addressing is directly encodable in one Store instruction, hence
+  // the AutoForbidPoolsAndNops will ensure that the access metadata is emitted
+  // at the address of the Store.
+  MemOperand dstAddr(memoryBase, ptr);
 
+  {
     AutoForbidPoolsAndNops afp(this,
                                /* max number of instructions in scope = */ 1);
-
     append(access, asMasm().currentOffset());
     switch (access.type()) {
       case Scalar::Int8:
@@ -534,205 +425,16 @@ void MacroAssemblerCompat::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
       case Scalar::Float64:
         Str(SelectFPReg(valany, val64, 64), dstAddr);
         break;
-      case Scalar::Simd128:
-        Str(SelectFPReg(valany, val64, 128), dstAddr);
-        break;
       case Scalar::Uint8Clamped:
       case Scalar::BigInt64:
       case Scalar::BigUint64:
+      case Scalar::Simd128:
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
   }
 
   asMasm().memoryBarrierAfter(access.sync());
-}
-
-void MacroAssemblerCompat::compareSimd128Int(Assembler::Condition cond,
-                                             ARMFPRegister dest,
-                                             ARMFPRegister lhs,
-                                             ARMFPRegister rhs) {
-  switch (cond) {
-    case Assembler::Equal:
-      Cmeq(dest, lhs, rhs);
-      break;
-    case Assembler::NotEqual:
-      Cmeq(dest, lhs, rhs);
-      Mvn(lhs, lhs);
-      break;
-    case Assembler::GreaterThan:
-      Cmgt(dest, lhs, rhs);
-      break;
-    case Assembler::GreaterThanOrEqual:
-      Cmge(dest, lhs, rhs);
-      break;
-    case Assembler::LessThan:
-      Cmgt(dest, rhs, lhs);
-      break;
-    case Assembler::LessThanOrEqual:
-      Cmge(dest, rhs, lhs);
-      break;
-    case Assembler::Above:
-      Cmhi(dest, lhs, rhs);
-      break;
-    case Assembler::AboveOrEqual:
-      Cmhs(dest, lhs, rhs);
-      break;
-    case Assembler::Below:
-      Cmhi(dest, rhs, lhs);
-      break;
-    case Assembler::BelowOrEqual:
-      Cmhs(dest, rhs, lhs);
-      break;
-    default:
-      MOZ_CRASH("Unexpected SIMD integer condition");
-  }
-}
-
-void MacroAssemblerCompat::compareSimd128Float(Assembler::Condition cond,
-                                               ARMFPRegister dest,
-                                               ARMFPRegister lhs,
-                                               ARMFPRegister rhs) {
-  switch (cond) {
-    case Assembler::Equal:
-      Fcmeq(dest, lhs, rhs);
-      break;
-    case Assembler::NotEqual:
-      Fcmeq(dest, lhs, rhs);
-      Mvn(lhs, lhs);
-      break;
-    case Assembler::GreaterThan:
-      Fcmgt(dest, lhs, rhs);
-      break;
-    case Assembler::GreaterThanOrEqual:
-      Fcmge(dest, lhs, rhs);
-      break;
-    case Assembler::LessThan:
-      Fcmgt(dest, rhs, lhs);
-      break;
-    case Assembler::LessThanOrEqual:
-      Fcmge(dest, rhs, lhs);
-      break;
-    default:
-      MOZ_CRASH("Unexpected SIMD integer condition");
-  }
-}
-
-void MacroAssemblerCompat::rightShiftInt8x16(Register rhs,
-                                             FloatRegister lhsDest,
-                                             FloatRegister temp,
-                                             bool isUnsigned) {
-  ScratchSimd128Scope scratch_(asMasm());
-  ARMFPRegister shift = Simd8H(scratch_);
-
-  // Compute 8 - (shift & 7) in all 16-bit lanes
-  {
-    vixl::UseScratchRegisterScope temps(this);
-    ARMRegister scratch = temps.AcquireW();
-    And(scratch, ARMRegister(rhs, 32), 7);
-    Neg(scratch, scratch);
-    Add(scratch, scratch, 8);
-    Dup(shift, scratch);
-  }
-
-  // Widen high bytes, shift left variable, then recover top bytes.
-  if (isUnsigned) {
-    Ushll2(Simd8H(temp), Simd16B(lhsDest), 0);
-  } else {
-    Sshll2(Simd8H(temp), Simd16B(lhsDest), 0);
-  }
-  Ushl(Simd8H(temp), Simd8H(temp), shift);
-  Shrn(Simd8B(temp), Simd8H(temp), 8);
-
-  // Ditto low bytes, leaving them in the correct place for the output.
-  if (isUnsigned) {
-    Ushll(Simd8H(lhsDest), Simd8B(lhsDest), 0);
-  } else {
-    Sshll(Simd8H(lhsDest), Simd8B(lhsDest), 0);
-  }
-  Ushl(Simd8H(lhsDest), Simd8H(lhsDest), shift);
-  Shrn(Simd8B(lhsDest), Simd8H(lhsDest), 8);
-
-  // Reassemble: insert the high bytes.
-  Ins(Simd2D(lhsDest), 1, Simd2D(temp), 0);
-}
-
-void MacroAssemblerCompat::rightShiftInt16x8(Register rhs,
-                                             FloatRegister lhsDest,
-                                             FloatRegister temp,
-                                             bool isUnsigned) {
-  ScratchSimd128Scope scratch_(asMasm());
-  ARMFPRegister shift = Simd4S(scratch_);
-
-  // Compute 16 - (shift & 15) in all 32-bit lanes
-  {
-    vixl::UseScratchRegisterScope temps(this);
-    ARMRegister scratch = temps.AcquireW();
-    And(scratch, ARMRegister(rhs, 32), 15);
-    Neg(scratch, scratch);
-    Add(scratch, scratch, 16);
-    Dup(shift, scratch);
-  }
-
-  // Widen high halfwords, shift left variable, then recover top halfwords
-  if (isUnsigned) {
-    Ushll2(Simd4S(temp), Simd8H(lhsDest), 0);
-  } else {
-    Sshll2(Simd4S(temp), Simd8H(lhsDest), 0);
-  }
-  Ushl(Simd4S(temp), Simd4S(temp), shift);
-  Shrn(Simd4H(temp), Simd4S(temp), 16);
-
-  // Ditto low halfwords
-  if (isUnsigned) {
-    Ushll(Simd4S(lhsDest), Simd4H(lhsDest), 0);
-  } else {
-    Sshll(Simd4S(lhsDest), Simd4H(lhsDest), 0);
-  }
-  Ushl(Simd4S(lhsDest), Simd4S(lhsDest), shift);
-  Shrn(Simd4H(lhsDest), Simd4S(lhsDest), 16);
-
-  // Reassemble: insert the high halfwords.
-  Ins(Simd2D(lhsDest), 1, Simd2D(temp), 0);
-}
-
-void MacroAssemblerCompat::rightShiftInt32x4(Register rhs,
-                                             FloatRegister lhsDest,
-                                             FloatRegister temp,
-                                             bool isUnsigned) {
-  ScratchSimd128Scope scratch_(asMasm());
-  ARMFPRegister shift = Simd2D(scratch_);
-
-  // Compute 32 - (shift & 31) in all 64-bit lanes
-  {
-    vixl::UseScratchRegisterScope temps(this);
-    ARMRegister scratch = temps.AcquireX();
-    And(scratch, ARMRegister(rhs, 64), 31);
-    Neg(scratch, scratch);
-    Add(scratch, scratch, 32);
-    Dup(shift, scratch);
-  }
-
-  // Widen high words, shift left variable, then recover top words
-  if (isUnsigned) {
-    Ushll2(Simd2D(temp), Simd4S(lhsDest), 0);
-  } else {
-    Sshll2(Simd2D(temp), Simd4S(lhsDest), 0);
-  }
-  Ushl(Simd2D(temp), Simd2D(temp), shift);
-  Shrn(Simd2S(temp), Simd2D(temp), 32);
-
-  // Ditto high words
-  if (isUnsigned) {
-    Ushll(Simd2D(lhsDest), Simd2S(lhsDest), 0);
-  } else {
-    Sshll(Simd2D(lhsDest), Simd2S(lhsDest), 0);
-  }
-  Ushl(Simd2D(lhsDest), Simd2D(lhsDest), shift);
-  Shrn(Simd2S(lhsDest), Simd2D(lhsDest), 32);
-
-  // Reassemble: insert the high words.
-  Ins(Simd2D(lhsDest), 1, Simd2D(temp), 0);
 }
 
 void MacroAssembler::reserveStack(uint32_t amount) {
@@ -759,12 +461,12 @@ void MacroAssembler::flush() { Assembler::flush(); }
 
 // ===============================================================
 // Stack manipulation functions.
-//
-// These all assume no SIMD registers, because SIMD registers are handled with
-// other routines when that is necessary.  See lengthy comment in
-// Architecture-arm64.h.
 
 void MacroAssembler::PushRegsInMask(LiveRegisterSet set) {
+#ifdef ENABLE_WASM_SIMD
+#  error "Needs more careful logic if SIMD is enabled"
+#endif
+
   for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more();) {
     vixl::CPURegister src[4] = {vixl::NoCPUReg, vixl::NoCPUReg, vixl::NoCPUReg,
                                 vixl::NoCPUReg};
@@ -793,6 +495,10 @@ void MacroAssembler::PushRegsInMask(LiveRegisterSet set) {
 
 void MacroAssembler::storeRegsInMask(LiveRegisterSet set, Address dest,
                                      Register scratch) {
+#ifdef ENABLE_WASM_SIMD
+#  error "Needs more careful logic if SIMD is enabled"
+#endif
+
   FloatRegisterSet fpuSet(set.fpus().reduceSetForPush());
   unsigned numFpu = fpuSet.size();
   int32_t diffF = fpuSet.getPushSizeInBytes();
@@ -829,6 +535,10 @@ void MacroAssembler::storeRegsInMask(LiveRegisterSet set, Address dest,
 
 void MacroAssembler::PopRegsInMaskIgnore(LiveRegisterSet set,
                                          LiveRegisterSet ignore) {
+#ifdef ENABLE_WASM_SIMD
+#  error "Needs more careful logic if SIMD is enabled"
+#endif
+
   // The offset of the data from the stack pointer.
   uint32_t offset = 0;
 
@@ -887,100 +597,6 @@ void MacroAssembler::PopRegsInMaskIgnore(LiveRegisterSet set,
   freeStack(bytesPushed);
 }
 
-#ifdef ENABLE_WASM_SIMD
-void MacroAssemblerCompat::PushRegsInMaskForWasmStubs(LiveRegisterSet set) {
-  for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more();) {
-    vixl::CPURegister src[4] = {vixl::NoCPUReg, vixl::NoCPUReg, vixl::NoCPUReg,
-                                vixl::NoCPUReg};
-
-    for (size_t i = 0; i < 4 && iter.more(); i++) {
-      src[i] = ARMRegister(*iter, 64);
-      ++iter;
-      asMasm().adjustFrame(8);
-    }
-    vixl::MacroAssembler::Push(src[0], src[1], src[2], src[3]);
-  }
-
-  // reduceSetForPush returns a set with the unique encodings and kind==0.  For
-  // each encoding in the set, just push the SIMD register.
-  for (FloatRegisterBackwardIterator iter(set.fpus().reduceSetForPush());
-       iter.more();) {
-    vixl::CPURegister src[4] = {vixl::NoCPUReg, vixl::NoCPUReg, vixl::NoCPUReg,
-                                vixl::NoCPUReg};
-
-    for (size_t i = 0; i < 4 && iter.more(); i++) {
-      src[i] = ARMFPRegister(*iter, 128);
-      ++iter;
-      asMasm().adjustFrame(FloatRegister::SizeOfSimd128);
-    }
-    vixl::MacroAssembler::Push(src[0], src[1], src[2], src[3]);
-  }
-}
-
-void MacroAssemblerCompat::PopRegsInMaskForWasmStubs(LiveRegisterSet set,
-                                                     LiveRegisterSet ignore) {
-  // The offset of the data from the stack pointer.
-  uint32_t offset = 0;
-
-  // See comments above
-  for (FloatRegisterIterator iter(set.fpus().reduceSetForPush());
-       iter.more();) {
-    vixl::CPURegister dest[2] = {vixl::NoCPUReg, vixl::NoCPUReg};
-    uint32_t nextOffset = offset;
-
-    for (size_t i = 0; i < 2 && iter.more(); i++) {
-      if (!ignore.has(*iter)) {
-        dest[i] = ARMFPRegister(*iter, 128);
-      }
-      ++iter;
-      nextOffset += FloatRegister::SizeOfSimd128;
-    }
-
-    if (!dest[0].IsNone() && !dest[1].IsNone()) {
-      Ldp(dest[0], dest[1], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[0].IsNone()) {
-      Ldr(dest[0], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[1].IsNone()) {
-      Ldr(dest[1], MemOperand(GetStackPointer64(), offset + 16));
-    }
-
-    offset = nextOffset;
-  }
-
-  MOZ_ASSERT(offset ==
-             FloatRegister::GetPushSizeInBytesForWasmStubs(set.fpus()));
-
-  for (GeneralRegisterIterator iter(set.gprs()); iter.more();) {
-    vixl::CPURegister dest[2] = {vixl::NoCPUReg, vixl::NoCPUReg};
-    uint32_t nextOffset = offset;
-
-    for (size_t i = 0; i < 2 && iter.more(); i++) {
-      if (!ignore.has(*iter)) {
-        dest[i] = ARMRegister(*iter, 64);
-      }
-      ++iter;
-      nextOffset += sizeof(uint64_t);
-    }
-
-    if (!dest[0].IsNone() && !dest[1].IsNone()) {
-      Ldp(dest[0], dest[1], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[0].IsNone()) {
-      Ldr(dest[0], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[1].IsNone()) {
-      Ldr(dest[1], MemOperand(GetStackPointer64(), offset + sizeof(uint64_t)));
-    }
-
-    offset = nextOffset;
-  }
-
-  size_t bytesPushed =
-      set.gprs().size() * sizeof(uint64_t) +
-      FloatRegister::GetPushSizeInBytesForWasmStubs(set.fpus());
-  MOZ_ASSERT(offset == bytesPushed);
-  asMasm().freeStack(bytesPushed);
-}
-#endif
-
 void MacroAssembler::Push(Register reg) {
   push(reg);
   adjustFrame(sizeof(intptr_t));
@@ -1029,8 +645,7 @@ void MacroAssembler::Pop(Register reg) {
 }
 
 void MacroAssembler::Pop(FloatRegister f) {
-  loadDouble(Address(getStackPointer(), 0), f);
-  freeStack(sizeof(double));
+  MOZ_CRASH("NYI: Pop(FloatRegister)");
 }
 
 void MacroAssembler::Pop(const ValueOperand& val) {
@@ -1042,60 +657,44 @@ void MacroAssembler::Pop(const ValueOperand& val) {
 // Simple call functions.
 
 CodeOffset MacroAssembler::call(Register reg) {
-  // This sync has been observed (and is expected) to be necessary.
-  // eg testcase: tests/debug/bug1107525.js
   syncStackPtr();
   Blr(ARMRegister(reg, 64));
   return CodeOffset(currentOffset());
 }
 
 CodeOffset MacroAssembler::call(Label* label) {
-  // This sync has been observed (and is expected) to be necessary.
-  // eg testcase: tests/basic/testBug504520Harder.js
   syncStackPtr();
   Bl(label);
   return CodeOffset(currentOffset());
 }
 
-void MacroAssembler::call(ImmPtr imm) {
-  // This sync has been observed (and is expected) to be necessary.
-  // eg testcase: asm.js/testTimeout5.js
-  syncStackPtr();
-  vixl::UseScratchRegisterScope temps(this);
-  MOZ_ASSERT(temps.IsAvailable(ScratchReg64));  // ip0
-  temps.Exclude(ScratchReg64);
-  movePtr(imm, ScratchReg64.asUnsized());
-  Blr(ScratchReg64);
-}
-
 void MacroAssembler::call(ImmWord imm) { call(ImmPtr((void*)imm.value)); }
+
+void MacroAssembler::call(ImmPtr imm) {
+  syncStackPtr();
+  movePtr(imm, ip0);
+  Blr(vixl::ip0);
+}
 
 CodeOffset MacroAssembler::call(wasm::SymbolicAddress imm) {
   vixl::UseScratchRegisterScope temps(this);
   const Register scratch = temps.AcquireX().asUnsized();
-  // This sync is believed to be necessary, although no case in jit-test/tests
-  // has been observed to cause SP != PSP here.
   syncStackPtr();
   movePtr(imm, scratch);
-  Blr(ARMRegister(scratch, 64));
-  return CodeOffset(currentOffset());
+  return call(scratch);
 }
 
 void MacroAssembler::call(const Address& addr) {
   vixl::UseScratchRegisterScope temps(this);
   const Register scratch = temps.AcquireX().asUnsized();
-  // This sync has been observed (and is expected) to be necessary.
-  // eg testcase: tests/backup-point-bug1315634.js
   syncStackPtr();
   loadPtr(addr, scratch);
-  Blr(ARMRegister(scratch, 64));
+  call(scratch);
 }
 
 void MacroAssembler::call(JitCode* c) {
   vixl::UseScratchRegisterScope temps(this);
   const ARMRegister scratch64 = temps.AcquireX();
-  // This sync has been observed (and is expected) to be necessary.
-  // eg testcase: arrays/new-array-undefined-undefined-more-args-2.js
   syncStackPtr();
   BufferOffset off = immPool64(scratch64, uint64_t(c->raw()));
   addPendingJump(off, ImmPtr(c->raw()), RelocationKind::JITCODE);
@@ -1103,15 +702,6 @@ void MacroAssembler::call(JitCode* c) {
 }
 
 CodeOffset MacroAssembler::callWithPatch() {
-  // This needs to sync.  Wasm goes through this one for intramodule calls.
-  //
-  // In other cases, wasm goes through masm.wasmCallImport(),
-  // masm.wasmCallBuiltinInstanceMethod, masm.wasmCallIndirect, all of which
-  // sync.
-  //
-  // This sync is believed to be necessary, although no case in jit-test/tests
-  // has been observed to cause SP != PSP here.
-  syncStackPtr();
   bl(0, LabelDoc());
   return CodeOffset(currentOffset());
 }
@@ -1202,56 +792,41 @@ void MacroAssembler::popReturnAddress() {
 // ABI function calls.
 
 void MacroAssembler::setupUnalignedABICall(Register scratch) {
-  // Because wasm operates without the need for dynamic alignment of SP, it is
-  // implied that this routine should never be called when generating wasm.
-  MOZ_ASSERT(!IsCompilingWasm());
-
-  // The following won't work for SP -- needs slightly different logic.
-  MOZ_RELEASE_ASSERT(GetStackPointer64().Is(PseudoStackPointer64));
-
-  setupNativeABICall();
+  setupABICall();
   dynamicAlignment_ = true;
 
   int64_t alignment = ~(int64_t(ABIStackAlignment) - 1);
   ARMRegister scratch64(scratch, 64);
-  MOZ_ASSERT(!scratch64.Is(PseudoStackPointer64));
 
   // Always save LR -- Baseline ICs assume that LR isn't modified.
   push(lr);
 
-  // Remember the stack address on entry.  This is reloaded in callWithABIPost
-  // below.
-  Mov(scratch64, PseudoStackPointer64);
+  // Unhandled for sp -- needs slightly different logic.
+  MOZ_ASSERT(!GetStackPointer64().Is(sp));
+
+  // Remember the stack address on entry.
+  Mov(scratch64, GetStackPointer64());
 
   // Make alignment, including the effective push of the previous sp.
-  Sub(PseudoStackPointer64, PseudoStackPointer64, Operand(8));
-  And(PseudoStackPointer64, PseudoStackPointer64, Operand(alignment));
+  Sub(GetStackPointer64(), GetStackPointer64(), Operand(8));
+  And(GetStackPointer64(), GetStackPointer64(), Operand(alignment));
+
+  // If the PseudoStackPointer is used, sp must be <= psp before a write is
+  // valid.
   syncStackPtr();
 
-  // Store previous sp to the top of the stack, aligned.  This is also
-  // reloaded in callWithABIPost.
-  Str(scratch64, MemOperand(PseudoStackPointer64, 0));
+  // Store previous sp to the top of the stack, aligned.
+  Str(scratch64, MemOperand(GetStackPointer64(), 0));
 }
 
 void MacroAssembler::callWithABIPre(uint32_t* stackAdjust, bool callFromWasm) {
-  // wasm operates without the need for dynamic alignment of SP.
-  MOZ_ASSERT(!(dynamicAlignment_ && callFromWasm));
-
   MOZ_ASSERT(inCall_);
   uint32_t stackForCall = abiArgs_.stackBytesConsumedSoFar();
 
-  // ARM64 *really* wants SP to always be 16-aligned, so ensure this now.
-  if (dynamicAlignment_) {
-    stackForCall += ComputeByteAlignment(stackForCall, StackAlignment);
-  } else {
-    // This can happen when we attach out-of-line stubs for rare cases.  For
-    // example CodeGenerator::visitWasmTruncateToInt32 adds an out-of-line
-    // chunk.
-    uint32_t alignmentAtPrologue = callFromWasm ? sizeof(wasm::Frame) : 0;
-    stackForCall += ComputeByteAlignment(
-        stackForCall + framePushed() + alignmentAtPrologue, ABIStackAlignment);
-  }
-
+  // ARM64 /really/ wants the stack to always be aligned.  Since we're already
+  // tracking it getting it aligned for an abi call is pretty easy.
+  MOZ_ASSERT(dynamicAlignment_);
+  stackForCall += ComputeByteAlignment(stackForCall, StackAlignment);
   *stackAdjust = stackForCall;
   reserveStack(*stackAdjust);
   {
@@ -1264,49 +839,30 @@ void MacroAssembler::callWithABIPre(uint32_t* stackAdjust, bool callFromWasm) {
     emitter.finish();
   }
 
-  // Call boundaries communicate stack via SP.
-  // (jseward, 2021Mar03) This sync may well be redundant, given that all of
-  // the MacroAssembler::call methods generate a sync before the call.
-  // Removing it does not cause any failures for all of jit-tests.
+  // Call boundaries communicate stack via sp.
   syncStackPtr();
 }
 
 void MacroAssembler::callWithABIPost(uint32_t stackAdjust, MoveOp::Type result,
                                      bool callFromWasm) {
-  // wasm operates without the need for dynamic alignment of SP.
-  MOZ_ASSERT(!(dynamicAlignment_ && callFromWasm));
-
-  // Call boundaries communicate stack via SP, so we must resync PSP now.
-  initPseudoStackPtr();
+  // Call boundaries communicate stack via sp.
+  if (!GetStackPointer64().Is(sp)) {
+    Mov(GetStackPointer64(), sp);
+  }
 
   freeStack(stackAdjust);
 
+  // Restore the stack pointer from entry.
   if (dynamicAlignment_) {
-    // This then-clause makes more sense if you first read
-    // setupUnalignedABICall above.
-    //
-    // Restore the stack pointer from entry.  The stack pointer will have been
-    // saved by setupUnalignedABICall.  This is fragile in that it assumes
-    // that uses of this routine (callWithABIPost) with `dynamicAlignment_ ==
-    // true` are preceded by matching calls to setupUnalignedABICall.  But
-    // there's nothing that enforce that mechanically.  If we really want to
-    // enforce this, we could add a debug-only CallWithABIState enum to the
-    // MacroAssembler and assert that setupUnalignedABICall updates it before
-    // we get here, then reset it to its initial state.
     Ldr(GetStackPointer64(), MemOperand(GetStackPointer64(), 0));
-    syncStackPtr();
-
-    // Restore LR.  This restores LR to the value stored by
-    // setupUnalignedABICall, which should have been called just before
-    // callWithABIPre.  This is, per the above comment, also fragile.
-    pop(lr);
-
-    // SP may be < PSP now.  That is expected from the behaviour of `pop`.  It
-    // is not clear why the following `syncStackPtr` is necessary, but it is:
-    // without it, the following test segfaults:
-    // tests/backup-point-bug1315634.js
-    syncStackPtr();
   }
+
+  // Restore LR.
+  pop(lr);
+
+  // TODO: This one shouldn't be necessary -- check that callers
+  // aren't enforcing the ABI themselves!
+  syncStackPtr();
 
   // If the ABI's return regs are where ION is expecting them, then
   // no other work needs to be done.
@@ -1431,9 +987,8 @@ void MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr,
 
   movePtr(ptr, temp);
   orPtr(Imm32(gc::ChunkMask), temp);
-  branchPtr(InvertCondition(cond),
-            Address(temp, gc::ChunkStoreBufferOffsetFromLastByte), ImmWord(0),
-            label);
+  branch32(cond, Address(temp, gc::ChunkLocationOffsetFromLastByte),
+           Imm32(int32_t(gc::ChunkLocation::Nursery)), label);
 }
 
 void MacroAssembler::branchValueIsNurseryCell(Condition cond,
@@ -1462,9 +1017,8 @@ void MacroAssembler::branchValueIsNurseryCellImpl(Condition cond,
 
   unboxGCThingForGCBarrier(value, temp);
   orPtr(Imm32(gc::ChunkMask), temp);
-  branchPtr(InvertCondition(cond),
-            Address(temp, gc::ChunkStoreBufferOffsetFromLastByte), ImmWord(0),
-            label);
+  branch32(cond, Address(temp, gc::ChunkLocationOffsetFromLastByte),
+           Imm32(int32_t(gc::ChunkLocation::Nursery)), label);
 
   bind(&done);
 }
@@ -1537,19 +1091,18 @@ CodeOffset MacroAssembler::wasmTrapInstruction() {
   return offs;
 }
 
-void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
-                                       Register boundsCheckLimit,
-                                       Label* label) {
+void MacroAssembler::wasmBoundsCheck(Condition cond, Register index,
+                                     Register boundsCheckLimit, Label* label) {
   branch32(cond, index, boundsCheckLimit, label);
   if (JitOptions.spectreIndexMasking) {
     csel(ARMRegister(index, 32), vixl::wzr, ARMRegister(index, 32), cond);
   }
 }
 
-void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
-                                       Address boundsCheckLimit, Label* label) {
+void MacroAssembler::wasmBoundsCheck(Condition cond, Register index,
+                                     Address boundsCheckLimit, Label* label) {
   MOZ_ASSERT(boundsCheckLimit.offset ==
-             offsetof(wasm::TlsData, boundsCheckLimit32));
+             offsetof(wasm::TlsData, boundsCheckLimit));
 
   branch32(cond, index, boundsCheckLimit, label);
   if (JitOptions.spectreIndexMasking) {
@@ -1813,26 +1366,28 @@ void MacroAssembler::oolWasmTruncateCheckF64ToI64(FloatRegister input,
 
 void MacroAssembler::wasmLoad(const wasm::MemoryAccessDesc& access,
                               Register memoryBase, Register ptr,
-                              AnyRegister output) {
-  wasmLoadImpl(access, memoryBase, ptr, output, Register64::Invalid());
+                              Register ptrScratch, AnyRegister output) {
+  wasmLoadImpl(access, memoryBase, ptr, ptrScratch, output,
+               Register64::Invalid());
 }
 
 void MacroAssembler::wasmLoadI64(const wasm::MemoryAccessDesc& access,
                                  Register memoryBase, Register ptr,
-                                 Register64 output) {
-  wasmLoadImpl(access, memoryBase, ptr, AnyRegister(), output);
+                                 Register ptrScratch, Register64 output) {
+  wasmLoadImpl(access, memoryBase, ptr, ptrScratch, AnyRegister(), output);
 }
 
 void MacroAssembler::wasmStore(const wasm::MemoryAccessDesc& access,
                                AnyRegister value, Register memoryBase,
-                               Register ptr) {
-  wasmStoreImpl(access, value, Register64::Invalid(), memoryBase, ptr);
+                               Register ptr, Register ptrScratch) {
+  wasmStoreImpl(access, value, Register64::Invalid(), memoryBase, ptr,
+                ptrScratch);
 }
 
 void MacroAssembler::wasmStoreI64(const wasm::MemoryAccessDesc& access,
                                   Register64 value, Register memoryBase,
-                                  Register ptr) {
-  wasmStoreImpl(access, AnyRegister(), value, memoryBase, ptr);
+                                  Register ptr, Register ptrScratch) {
+  wasmStoreImpl(access, AnyRegister(), value, memoryBase, ptr, ptrScratch);
 }
 
 void MacroAssembler::enterFakeExitFrameForWasm(Register cxreg, Register scratch,
@@ -1843,7 +1398,7 @@ void MacroAssembler::enterFakeExitFrameForWasm(Register cxreg, Register scratch,
 
   linkExitFrame(cxreg, scratch);
 
-  MOZ_RELEASE_ASSERT(sp.Is(GetStackPointer64()));
+  MOZ_ASSERT(sp.Is(GetStackPointer64()));
 
   const ARMRegister tmp(scratch, 64);
 
@@ -1851,16 +1406,6 @@ void MacroAssembler::enterFakeExitFrameForWasm(Register cxreg, Register scratch,
   const ARMRegister tmp2 = temps.AcquireX();
 
   Sub(sp, sp, 8);
-
-  // Despite the above assertion, it is possible for control to flow from here
-  // to the code generated by
-  // MacroAssemblerCompat::handleFailureWithHandlerTail without any
-  // intervening assignment to PSP.  But handleFailureWithHandlerTail assumes
-  // that PSP is the active stack pointer.  Hence the following is necessary
-  // for safety.  Note we can't use initPseudoStackPtr here as that would
-  // generate no instructions.
-  Mov(PseudoStackPointer64, sp);
-
   Mov(tmp, sp);  // SP may be unaligned, can't use it for memory op
   Mov(tmp2, int32_t(type));
   Str(tmp2, vixl::MemOperand(tmp, 0));
@@ -1891,15 +1436,25 @@ void MacroAssembler::convertInt64ToFloat32(Register64 src, FloatRegister dest) {
   Scvtf(ARMFPRegister(dest, 32), ARMRegister(src.reg, 64));
 }
 
-void MacroAssembler::convertIntPtrToDouble(Register src, FloatRegister dest) {
-  convertInt64ToDouble(Register64(src), dest);
-}
-
 // ========================================================================
 // Primitive atomic operations.
 
 // The computed MemOperand must be Reg+0 because the load/store exclusive
 // instructions only take a single pointer register.
+
+enum class Width { _32 = 32, _64 = 64 };
+
+static inline ARMRegister X(Register r) { return ARMRegister(r, 64); }
+
+static inline ARMRegister X(MacroAssembler& masm, RegisterOrSP r) {
+  return masm.toARMRegister(r, 64);
+}
+
+static inline ARMRegister W(Register r) { return ARMRegister(r, 32); }
+
+static inline ARMRegister R(Register r, Width w) {
+  return ARMRegister(r, unsigned(w));
+}
 
 static MemOperand ComputePointerForAtomic(MacroAssembler& masm,
                                           const Address& address,
@@ -2069,8 +1624,6 @@ static void CompareExchange(MacroAssembler& masm,
                             Scalar::Type type, Width targetWidth,
                             const Synchronization& sync, const T& mem,
                             Register oldval, Register newval, Register output) {
-  MOZ_ASSERT(oldval != output && newval != output);
-
   Label again;
   Label done;
 
@@ -2103,8 +1656,6 @@ static void AtomicExchange(MacroAssembler& masm,
                            Scalar::Type type, Width targetWidth,
                            const Synchronization& sync, const T& mem,
                            Register value, Register output) {
-  MOZ_ASSERT(value != output);
-
   Label again;
 
   vixl::UseScratchRegisterScope temps(&masm);
@@ -2131,10 +1682,6 @@ static void AtomicFetchOp(MacroAssembler& masm,
                           const Synchronization& sync, AtomicOp op,
                           const T& mem, Register value, Register temp,
                           Register output) {
-  MOZ_ASSERT(value != output);
-  MOZ_ASSERT(value != temp);
-  MOZ_ASSERT_IF(wantResult, output != temp);
-
   Label again;
 
   vixl::UseScratchRegisterScope temps(&masm);
@@ -2197,22 +1744,8 @@ void MacroAssembler::compareExchange64(const Synchronization& sync,
                   expect.reg, replace.reg, output.reg);
 }
 
-void MacroAssembler::compareExchange64(const Synchronization& sync,
-                                       const BaseIndex& mem, Register64 expect,
-                                       Register64 replace, Register64 output) {
-  CompareExchange(*this, nullptr, Scalar::Int64, Width::_64, sync, mem,
-                  expect.reg, replace.reg, output.reg);
-}
-
 void MacroAssembler::atomicExchange64(const Synchronization& sync,
                                       const Address& mem, Register64 value,
-                                      Register64 output) {
-  AtomicExchange(*this, nullptr, Scalar::Int64, Width::_64, sync, mem,
-                 value.reg, output.reg);
-}
-
-void MacroAssembler::atomicExchange64(const Synchronization& sync,
-                                      const BaseIndex& mem, Register64 value,
                                       Register64 output) {
   AtomicExchange(*this, nullptr, Scalar::Int64, Width::_64, sync, mem,
                  value.reg, output.reg);
@@ -2223,27 +1756,6 @@ void MacroAssembler::atomicFetchOp64(const Synchronization& sync, AtomicOp op,
                                      Register64 temp, Register64 output) {
   AtomicFetchOp<true>(*this, nullptr, Scalar::Int64, Width::_64, sync, op, mem,
                       value.reg, temp.reg, output.reg);
-}
-
-void MacroAssembler::atomicFetchOp64(const Synchronization& sync, AtomicOp op,
-                                     Register64 value, const BaseIndex& mem,
-                                     Register64 temp, Register64 output) {
-  AtomicFetchOp<true>(*this, nullptr, Scalar::Int64, Width::_64, sync, op, mem,
-                      value.reg, temp.reg, output.reg);
-}
-
-void MacroAssembler::atomicEffectOp64(const Synchronization& sync, AtomicOp op,
-                                      Register64 value, const Address& mem,
-                                      Register64 temp) {
-  AtomicFetchOp<false>(*this, nullptr, Scalar::Int64, Width::_64, sync, op, mem,
-                       value.reg, temp.reg, temp.reg);
-}
-
-void MacroAssembler::atomicEffectOp64(const Synchronization& sync, AtomicOp op,
-                                      Register64 value, const BaseIndex& mem,
-                                      Register64 temp) {
-  AtomicFetchOp<false>(*this, nullptr, Scalar::Int64, Width::_64, sync, op, mem,
-                       value.reg, temp.reg, temp.reg);
 }
 
 void MacroAssembler::wasmCompareExchange(const wasm::MemoryAccessDesc& access,
@@ -2380,14 +1892,6 @@ void MacroAssembler::wasmAtomicFetchOp64(const wasm::MemoryAccessDesc& access,
                                          Register64 output) {
   AtomicFetchOp<true>(*this, &access, Scalar::Int64, Width::_64, access.sync(),
                       op, mem, value.reg, temp.reg, output.reg);
-}
-
-void MacroAssembler::wasmAtomicEffectOp64(const wasm::MemoryAccessDesc& access,
-                                          AtomicOp op, Register64 value,
-                                          const BaseIndex& mem,
-                                          Register64 temp) {
-  AtomicFetchOp<false>(*this, &access, Scalar::Int64, Width::_64, access.sync(),
-                       op, mem, value.reg, temp.reg, temp.reg);
 }
 
 // ========================================================================
@@ -2574,90 +2078,6 @@ void MacroAssembler::ceilDoubleToInt32(FloatRegister src, Register dest,
   ceil(src, dest, fail);
 }
 
-void MacroAssembler::truncFloat32ToInt32(FloatRegister src, Register dest,
-                                         Label* fail) {
-  const ARMFPRegister src32(src, 32);
-
-  Label done, zeroCase;
-
-  // Convert scalar to signed 32-bit fixed-point, rounding toward zero.
-  // In the case of overflow, the output is saturated.
-  // In the case of NaN and -0, the output is zero.
-  Fcvtzs(ARMRegister(dest, 32), src32);
-
-  // If the output was zero, worry about special cases.
-  branch32(Assembler::Equal, dest, Imm32(0), &zeroCase);
-
-  // Fail on overflow cases.
-  branch32(Assembler::Equal, dest, Imm32(INT_MAX), fail);
-  branch32(Assembler::Equal, dest, Imm32(INT_MIN), fail);
-
-  // If the output was non-zero and wasn't saturated, just return it.
-  jump(&done);
-
-  // Handle the case of a zero output:
-  // 1. The input may have been NaN, requiring a failure.
-  // 2. The input may have been in (-1,-0], requiring a failure.
-  {
-    bind(&zeroCase);
-
-    // If input is a negative number that truncated to zero, the real
-    // output should be the non-integer -0.
-    // The use of "lt" instead of "lo" also catches unordered NaN input.
-    Fcmp(src32, 0.0f);
-    B(fail, vixl::lt);
-
-    // Check explicitly for -0, bitwise.
-    Fmov(ARMRegister(dest, 32), src32);
-    branchTest32(Assembler::Signed, dest, dest, fail);
-    move32(Imm32(0), dest);
-  }
-
-  bind(&done);
-}
-
-void MacroAssembler::truncDoubleToInt32(FloatRegister src, Register dest,
-                                        Label* fail) {
-  const ARMFPRegister src64(src, 64);
-
-  Label done, zeroCase;
-
-  // Convert scalar to signed 32-bit fixed-point, rounding toward zero.
-  // In the case of overflow, the output is saturated.
-  // In the case of NaN and -0, the output is zero.
-  Fcvtzs(ARMRegister(dest, 32), src64);
-
-  // If the output was zero, worry about special cases.
-  branch32(Assembler::Equal, dest, Imm32(0), &zeroCase);
-
-  // Fail on overflow cases.
-  branch32(Assembler::Equal, dest, Imm32(INT_MAX), fail);
-  branch32(Assembler::Equal, dest, Imm32(INT_MIN), fail);
-
-  // If the output was non-zero and wasn't saturated, just return it.
-  jump(&done);
-
-  // Handle the case of a zero output:
-  // 1. The input may have been NaN, requiring a failure.
-  // 2. The input may have been in (-1,-0], requiring a failure.
-  {
-    bind(&zeroCase);
-
-    // If input is a negative number that truncated to zero, the real
-    // output should be the non-integer -0.
-    // The use of "lt" instead of "lo" also catches unordered NaN input.
-    Fcmp(src64, 0.0);
-    B(fail, vixl::lt);
-
-    // Check explicitly for -0, bitwise.
-    Fmov(ARMRegister(dest, 64), src64);
-    branchTestPtr(Assembler::Signed, dest, dest, fail);
-    movePtr(ImmPtr(0), dest);
-  }
-
-  bind(&done);
-}
-
 void MacroAssembler::roundFloat32ToInt32(FloatRegister src, Register dest,
                                          FloatRegister temp, Label* fail) {
   const ARMFPRegister src32(src, 32);
@@ -2806,74 +2226,6 @@ void MacroAssembler::roundDoubleToInt32(FloatRegister src, Register dest,
   }
 
   bind(&done);
-}
-
-void MacroAssembler::nearbyIntDouble(RoundingMode mode, FloatRegister src,
-                                     FloatRegister dest) {
-  switch (mode) {
-    case RoundingMode::Up:
-      frintp(ARMFPRegister(dest, 64), ARMFPRegister(src, 64));
-      return;
-    case RoundingMode::Down:
-      frintm(ARMFPRegister(dest, 64), ARMFPRegister(src, 64));
-      return;
-    case RoundingMode::NearestTiesToEven:
-      frintn(ARMFPRegister(dest, 64), ARMFPRegister(src, 64));
-      return;
-    case RoundingMode::TowardsZero:
-      frintz(ARMFPRegister(dest, 64), ARMFPRegister(src, 64));
-      return;
-  }
-  MOZ_CRASH("unexpected mode");
-}
-
-void MacroAssembler::nearbyIntFloat32(RoundingMode mode, FloatRegister src,
-                                      FloatRegister dest) {
-  switch (mode) {
-    case RoundingMode::Up:
-      frintp(ARMFPRegister(dest, 32), ARMFPRegister(src, 32));
-      return;
-    case RoundingMode::Down:
-      frintm(ARMFPRegister(dest, 32), ARMFPRegister(src, 32));
-      return;
-    case RoundingMode::NearestTiesToEven:
-      frintn(ARMFPRegister(dest, 32), ARMFPRegister(src, 32));
-      return;
-    case RoundingMode::TowardsZero:
-      frintz(ARMFPRegister(dest, 32), ARMFPRegister(src, 32));
-      return;
-  }
-  MOZ_CRASH("unexpected mode");
-}
-
-void MacroAssembler::copySignDouble(FloatRegister lhs, FloatRegister rhs,
-                                    FloatRegister output) {
-  ScratchDoubleScope scratch(*this);
-
-  // Double with only the sign bit set (= negative zero).
-  loadConstantDouble(0, scratch);
-  negateDouble(scratch);
-
-  moveDouble(lhs, output);
-
-  bit(ARMFPRegister(output.encoding(), vixl::VectorFormat::kFormat8B),
-      ARMFPRegister(rhs.encoding(), vixl::VectorFormat::kFormat8B),
-      ARMFPRegister(scratch.encoding(), vixl::VectorFormat::kFormat8B));
-}
-
-void MacroAssembler::copySignFloat32(FloatRegister lhs, FloatRegister rhs,
-                                     FloatRegister output) {
-  ScratchFloat32Scope scratch(*this);
-
-  // Float with only the sign bit set (= negative zero).
-  loadConstantFloat32(0, scratch);
-  negateFloat(scratch);
-
-  moveFloat32(lhs, output);
-
-  bit(ARMFPRegister(output.encoding(), vixl::VectorFormat::kFormat8B),
-      ARMFPRegister(rhs.encoding(), vixl::VectorFormat::kFormat8B),
-      ARMFPRegister(scratch.encoding(), vixl::VectorFormat::kFormat8B));
 }
 
 //}}} check_macroassembler_style

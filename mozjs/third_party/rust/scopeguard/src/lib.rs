@@ -44,9 +44,9 @@
 //!     let drop_counter = Cell::new(0);
 //!     {
 //!         // Create a scope guard using `defer!` for the current scope
-//!         defer! {
+//!         defer! {{
 //!             drop_counter.set(1 + drop_counter.get());
-//!         }
+//!         }};
 //!
 //!         // Do regular operations here in the meantime.
 //!
@@ -73,7 +73,7 @@
 //!
 //! ```
 //! extern crate scopeguard;
-//!
+//! 
 //! use std::fs::*;
 //! use std::io::{self, Write};
 //! # // Mock file so that we don't actually write a file
@@ -84,7 +84,7 @@
 //! #     fn sync_all(&self) -> io::Result<()> { Ok(()) }
 //! # }
 //! # use self::MockFile as File;
-//!
+//! 
 //! fn try_main() -> io::Result<()> {
 //!     let f = File::create("newfile.txt")?;
 //!     let mut file = scopeguard::guard(f, |f| {
@@ -114,7 +114,7 @@
 //! //
 //! // For optimization purposes we temporarily violate an invariant of the
 //! // Vec, that it owns all of its elements.
-//! //
+//! // 
 //! // The safe approach is to use swap, which means two writes to memory,
 //! // the optimization is to use a “hole” which uses only one write of memory
 //! // for each position it moves.
@@ -245,41 +245,44 @@ impl Strategy for OnSuccess {
 
 /// Macro to create a `ScopeGuard` (always run).
 ///
-/// The macro takes statements, which are the body of a closure
-/// that will run when the scope is exited.
+/// The macro takes one expression `$e`, which is the body of a closure
+/// that will run when the scope is exited. The expression can
+/// be a whole block.
 #[macro_export]
 macro_rules! defer {
-    ($($t:tt)*) => {
-        let _guard = $crate::guard((), |()| { $($t)* });
-    };
+    ($e:expr) => {
+        let _guard = $crate::guard((), |()| $e);
+    }
 }
 
 /// Macro to create a `ScopeGuard` (run on successful scope exit).
 ///
-/// The macro takes statements, which are the body of a closure
-/// that will run when the scope is exited.
+/// The macro takes one expression `$e`, which is the body of a closure
+/// that will run when the scope is exited. The expression can
+/// be a whole block.
 ///
 /// Requires crate feature `use_std`.
 #[cfg(feature = "use_std")]
 #[macro_export]
 macro_rules! defer_on_success {
-    ($($t:tt)*) => {
-        let _guard = $crate::guard_on_success((), |()| { $($t)* });
-    };
+    ($e:expr) => {
+        let _guard = $crate::guard_on_success((), |()| $e);
+    }
 }
 
 /// Macro to create a `ScopeGuard` (run on unwinding from panic).
 ///
-/// The macro takes statements, which are the body of a closure
-/// that will run when the scope is exited.
+/// The macro takes one expression `$e`, which is the body of a closure
+/// that will run when the scope is exited. The expression can
+/// be a whole block.
 ///
 /// Requires crate feature `use_std`.
 #[cfg(feature = "use_std")]
 #[macro_export]
 macro_rules! defer_on_unwind {
-    ($($t:tt)*) => {
-        let _guard = $crate::guard_on_unwind((), |()| { $($t)* });
-    };
+    ($e:expr) => {
+        let _guard = $crate::guard_on_unwind((), |()| $e);
+    }
 }
 
 /// `ScopeGuard` is a scope guard that may own a protected value.
@@ -289,7 +292,7 @@ macro_rules! defer_on_unwind {
 /// (except if panic or other code aborts; so as long as destructors run).
 /// It is run only once.
 ///
-/// The `S` parameter for [`Strategy`](trait.Strategy.html) determines if
+/// The `S` parameter for [`Strategy`](Strategy.t.html) determines if
 /// the closure actually runs.
 ///
 /// The guard's closure will be called with the held value in the destructor.
@@ -301,7 +304,6 @@ pub struct ScopeGuard<T, F, S = Always>
 {
     value: ManuallyDrop<T>,
     dropfn: ManuallyDrop<F>,
-    // fn(S) -> S is used, so that the S is not taken into account for auto traits.
     strategy: PhantomData<fn(S) -> S>,
 }
 
@@ -326,7 +328,6 @@ impl<T, F, S> ScopeGuard<T, F, S>
     ///
     /// ```
     /// extern crate scopeguard;
-    ///
     /// use scopeguard::{guard, ScopeGuard};
     ///
     /// fn conditional() -> bool { true }
@@ -346,7 +347,7 @@ impl<T, F, S> ScopeGuard<T, F, S>
     /// ```
     #[inline]
     pub fn into_inner(guard: Self) -> T {
-        // Cannot move out of Drop-implementing types, so
+        // Cannot pattern match out of Drop-implementing types, so
         // ptr::read the value and forget the guard.
         unsafe {
             let value = ptr::read(&*guard.value);
@@ -395,14 +396,14 @@ pub fn guard_on_success<T, F>(v: T, dropfn: F) -> ScopeGuard<T, F, OnSuccess>
 ///
 /// ```
 /// extern crate scopeguard;
-///
+/// 
 /// use scopeguard::ScopeGuard;
 /// # fn main() {
 /// {
-///     let guard = scopeguard::guard((), |_| {});
+///     let guard = scopeguard::guard((), |_| { });
 ///
 ///     // rest of the code here
-///
+///     
 ///     // we reached the end of scope without unwinding - defuse it
 ///     ScopeGuard::into_inner(guard);
 /// }
@@ -418,19 +419,18 @@ pub fn guard_on_unwind<T, F>(v: T, dropfn: F) -> ScopeGuard<T, F, OnUnwind>
 
 // ScopeGuard can be Sync even if F isn't because the closure is
 // not accessible from references.
-// The guard does not store any instance of S, so it is also irrelevant.
+// The guard does not store any instance of S, so it is also irellevant.
 unsafe impl<T, F, S> Sync for ScopeGuard<T, F, S>
     where T: Sync,
           F: FnOnce(T),
           S: Strategy
-{}
+{ }
 
 impl<T, F, S> Deref for ScopeGuard<T, F, S>
     where F: FnOnce(T),
           S: Strategy
 {
     type Target = T;
-
     fn deref(&self) -> &T {
         &*self.value
     }
@@ -441,7 +441,7 @@ impl<T, F, S> DerefMut for ScopeGuard<T, F, S>
           S: Strategy
 {
     fn deref_mut(&mut self) -> &mut T {
-        &mut *self.value
+        &mut*self.value
     }
 }
 
