@@ -19,14 +19,15 @@
 // IN THE SOFTWARE.
 
 #include <assert.h>
+
 #include <algorithm>
 #include <vector>
 
-#include "v8.h"
-#include "conversions.h"
-#include "v8local.h"
 #include "autojsapi.h"
+#include "conversions.h"
 #include "jsfriendapi.h"
+#include "v8.h"
+#include "v8local.h"
 
 namespace v8 {
 
@@ -76,8 +77,8 @@ struct StackTrace::Impl {
       if (options_ & StackTrace::kFunctionName) {
         JS::RootedString name(cx);
         if (JS::SavedFrameResult::Ok ==
-            JS::GetSavedFrameFunctionDisplayName(
-                cx, current, &name, JS::SavedFrameSelfHosted::Exclude) &&
+                JS::GetSavedFrameFunctionDisplayName(
+                    cx, current, &name, JS::SavedFrameSelfHosted::Exclude) &&
             name) {
           JS::Value val;
           val.setString(name);
@@ -259,4 +260,4 @@ Local<StackFrame> StackTrace::GetFrame(uint32_t index) const {
   isolate->AddStackFrame(frame);
   return Local<StackFrame>::New(isolate, frame);
 }
-}
+}  // namespace v8

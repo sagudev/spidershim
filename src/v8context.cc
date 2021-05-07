@@ -160,8 +160,7 @@ void Context::Enter() {
   assert(pimpl_);
   assert(pimpl_->global);
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
-  JS_BeginRequest(cx);
-  pimpl_->oldCompartment = JS_EnterCompartment(cx, pimpl_->global);
+  pimpl_->oldCompartment = JS::EnterRealm(cx, pimpl_->global);
   GetIsolate()->PushCurrentContext(this);
 }
 
@@ -169,8 +168,7 @@ void Context::Exit() {
   assert(pimpl_);
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
   // pimpl_->oldCompartment can be nullptr.
-  JS_LeaveCompartment(cx, pimpl_->oldCompartment);
-  JS_EndRequest(cx);
+  JS::LeaveRealm(cx, pimpl_->oldCompartment);
   GetIsolate()->PopCurrentContext();
 }
 

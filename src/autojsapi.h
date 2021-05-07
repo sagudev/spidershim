@@ -26,52 +26,50 @@
 #include "conversions.h"
 #include "util.h"
 
-// All callsittes calling into SpiderMonkey MUST have a AutoJSAPI on the stack.
-class AutoJSAPI : private JSAutoRequest,
-                  private JSAutoCompartment {
+// neddes?
+// All callsittes calling into SpiderMonkey MUST have a AAutoJSAPI on the stack.
+class AAutoJSAPI : private JSAutoRealm {
  public:
-  AutoJSAPI(JSContext* cx, JSObject* obj) :
-    JSAutoRequest(cx),
-    JSAutoCompartment(cx, obj) {
+  AAutoJSAPI(JSContext* cx, JSObject* obj) :
+    JSAutoRealm(cx, obj) {
     init();
   }
-  AutoJSAPI(JSContext* cx, const JSObject* obj) :
-    JSAutoRequest(cx),
-    JSAutoCompartment(cx, const_cast<JSObject*>(obj)) {
+  AAutoJSAPI(JSContext* cx, const JSObject* obj) :
+    JSAutoRealm(cx, const_cast<JSObject*>(obj)) {
     init();
   }
   template <class T>
-  AutoJSAPI(JSContext* cx, T* val) :
-    AutoJSAPI(cx, v8::GetObject(val)) {
+  AAutoJSAPI(JSContext* cx, T* val) :
+    AAutoJSAPI(cx, v8::GetObject(val)) {
   }
   template <class T>
-  AutoJSAPI(JSContext* cx, v8::Local<T> val) :
-    AutoJSAPI(cx, val.IsEmpty() ? v8::GetObject(v8::Isolate::GetCurrent()->GetCurrentContext().IsEmpty() ?
+  AAutoJSAPI(JSContext* cx, v8::Local<T> val) :
+    AAutoJSAPI(cx, val.IsEmpty() ? v8::GetObject(v8::Isolate::GetCurrent()->GetCurrentContext().IsEmpty() ?
                                                 v8::Isolate::GetCurrent()->GetHiddenGlobal() :
                                                 v8::Isolate::GetCurrent()->GetCurrentContext()->Global()) :
                                   v8::GetObject(val)) {
   }
-  AutoJSAPI(JSContext* cx, v8::Isolate* isolate) :
-    AutoJSAPI(cx, v8::GetObject(isolate->GetCurrentContext().IsEmpty() ?
+  AAutoJSAPI(JSContext* cx, v8::Isolate* isolate) :
+    AAutoJSAPI(cx, v8::GetObject(isolate->GetCurrentContext().IsEmpty() ?
                                 isolate->GetHiddenGlobal() :
                                 isolate->GetCurrentContext()->Global())) {
   }
-  AutoJSAPI(JSContext* cx) :
-    AutoJSAPI(cx, v8::Isolate::GetCurrent()) {
+  AAutoJSAPI(JSContext* cx) :
+    AAutoJSAPI(cx, v8::Isolate::GetCurrent()) {
   }
-  AutoJSAPI(JSObject* obj) :
-    AutoJSAPI(JSContextFromIsolate(v8::Isolate::GetCurrent()), obj) {
+  AAutoJSAPI(JSObject* obj) :
+    AAutoJSAPI(JSContextFromIsolate(v8::Isolate::GetCurrent()), obj) {
   }
-  AutoJSAPI(v8::Value* val) :
-    AutoJSAPI(JSContextFromIsolate(v8::Isolate::GetCurrent()), val) {
+  AAutoJSAPI(v8::Value* val) :
+    AAutoJSAPI(JSContextFromIsolate(v8::Isolate::GetCurrent()), val) {
   }
-  AutoJSAPI(const v8::Value* val) :
-    AutoJSAPI(JSContextFromIsolate(v8::Isolate::GetCurrent()), val) {
+  AAutoJSAPI(const v8::Value* val) :
+    AAutoJSAPI(JSContextFromIsolate(v8::Isolate::GetCurrent()), val) {
   }
-  AutoJSAPI() :
-    AutoJSAPI(JSContextFromIsolate(v8::Isolate::GetCurrent())) {
+  AAutoJSAPI() :
+    AAutoJSAPI(JSContextFromIsolate(v8::Isolate::GetCurrent())) {
   }
-  ~AutoJSAPI() {
+  ~AAutoJSAPI() {
     auto isolate = v8::Isolate::GetCurrent();
     isolate->AdjustCallDepth(-1);
     HandleExistingException(JSContextFromIsolate(isolate));

@@ -1045,7 +1045,7 @@ Local<Object> ObjectTemplate::NewInstance(Local<Object> prototype,
   if (objectType == NormalObject) {
     instanceObj = JS_NewObjectWithGivenProto(cx, instanceClass, protoObj);
   } else if (objectType == GlobalObject) {
-    JS::CompartmentOptions options;
+    JS::RealmOptions options;
     options.behaviors().setVersion(JSVERSION_LATEST);
     instanceObj = JS_NewGlobalObject(cx, instanceClass, nullptr,
                                      JS::FireOnNewGlobalHook, options);

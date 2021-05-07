@@ -600,9 +600,8 @@ Local<Object> Isolate::GetHiddenGlobal() {
 
     HandleScope handleScope(this);
     JSContext* cx = pimpl_->cx;
-    JSAutoRequest ar(cx);
     JS::RootedObject newGlobal(cx);
-    JS::CompartmentOptions options;
+    JS::RealmOptions options;
     options.behaviors().setVersion(JSVERSION_LATEST);
     newGlobal = JS_NewGlobalObject(cx, &globalClass, nullptr,
                                    JS::FireOnNewGlobalHook, options);
