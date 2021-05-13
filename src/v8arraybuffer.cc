@@ -25,6 +25,7 @@
 #include "autojsapi.h"
 #include "jsfriendapi.h"
 #include "js/Conversions.h"
+#include "js/ArrayBuffer.h"
 
 namespace {
 using namespace v8;
@@ -69,8 +70,8 @@ ArrayBuffer* ArrayBuffer::Cast(Value* val) {
 
 Local<ArrayBuffer> ArrayBuffer::New(Isolate* isolate, size_t size) {
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx);
-  JS::RootedObject buf(cx, JS_NewArrayBuffer(cx, size));
+  AAutoJSAPI jsAPI(cx);
+  JS::RootedObject buf(cx, JS::NewArrayBuffer(cx, size));
   if (!SetCreationMode(cx, buf, ArrayBufferCreationMode::kInternalized)) {
     return Local<ArrayBuffer>();
   }
@@ -82,12 +83,12 @@ Local<ArrayBuffer> ArrayBuffer::New(Isolate* isolate, size_t size) {
 Local<ArrayBuffer> ArrayBuffer::New(Isolate* isolate, void* data, size_t size,
                                     ArrayBufferCreationMode mode) {
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedObject buf(cx);
   if (mode == ArrayBufferCreationMode::kExternalized) {
-    buf = JS_NewArrayBufferWithExternalContents(cx, size, data);
+    buf = JS::NewArrayBufferWithUserOwnedContents(cx, size, data);
   } else {
-    buf = JS_NewArrayBufferWithContents(cx, size, data);
+    buf = JS::NewArrayBufferWithContents(cx, size, data);
   }
   if (!SetCreationMode(cx, buf, mode)) {
     return Local<ArrayBuffer>();
@@ -100,25 +101,25 @@ Local<ArrayBuffer> ArrayBuffer::New(Isolate* isolate, void* data, size_t size,
 bool ArrayBuffer::IsExternal() const {
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
   JS::RootedObject obj(cx, GetObject(this));
-  AutoJSAPI jsAPI(cx, obj);
+  AAutoJSAPI jsAPI(cx, obj);
   return GetCreationMode(cx, obj) == ArrayBufferCreationMode::kExternalized;
 }
 
 size_t ArrayBuffer::ByteLength() const {
   const JS::Value* val = GetValue(this);
   JSObject& obj = val->toObject();
-  AutoJSAPI jsAPI(&obj);
-  return JS_GetArrayBufferByteLength(&obj);
+  AAutoJSAPI jsAPI(&obj);
+  return JS::GetArrayBufferByteLength(&obj);
 }
 
 ArrayBuffer::Contents ArrayBuffer::GetContents() {
   const JS::Value thisVal = *GetValue(this);
   JSObject* obj = &thisVal.toObject();
-  AutoJSAPI jsAPI(obj);
+  AAutoJSAPI jsAPI(obj);
   uint8_t* data;
   bool shared;
   uint32_t length;
-  js::GetArrayBufferLengthAndData(obj, &length, &shared, &data);
+  JS::GetArrayBufferLengthAndData(obj, &length, &shared, &data);
   Contents contents;
   contents.data_ = static_cast<void*>(data);
   contents.byte_length_ = length;
@@ -128,17 +129,17 @@ ArrayBuffer::Contents ArrayBuffer::GetContents() {
 void ArrayBuffer::Neuter() {
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
   JS::RootedObject obj(cx, GetObject(this));
-  AutoJSAPI jsAPI(cx, obj);
-  JS_DetachArrayBuffer(cx, obj);
+  AAutoJSAPI jsAPI(cx, obj);
+  JS::DetachArrayBuffer(cx, obj);
 }
 
 auto ArrayBuffer::Externalize() -> Contents {
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
   JS::RootedObject obj(cx, GetObject(this));
-  AutoJSAPI jsAPI(cx, obj);
+  AAutoJSAPI jsAPI(cx, obj);
   Contents result;
   result.byte_length_ = ByteLength();
-  result.data_ = JS_ExternalizeArrayBufferContents(cx, obj);
+  result.data_ = JS::StealArrayBufferContents(cx, obj);
   SetCreationMode(cx, obj, ArrayBufferCreationMode::kExternalized);
   return result;
 }

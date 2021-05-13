@@ -25,6 +25,7 @@
 #include "v8local.h"
 #include "autojsapi.h"
 #include "js/Class.h"
+#include "js/Array.h"
 
 namespace v8 {
 
@@ -33,8 +34,8 @@ Local<Array> Array::New(Isolate* isolate, int length) {
     isolate = Isolate::GetCurrent();
   }
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, isolate);
-  JS::RootedObject array(cx, JS_NewArrayObject(cx, length));
+  AAutoJSAPI jsAPI(cx, isolate);
+  JS::RootedObject array(cx, JS::NewArrayObject(cx, length));
   JS::Value retVal;
   retVal.setObject(*array);
   return internal::Local<Array>::New(isolate, retVal);
@@ -43,7 +44,7 @@ Local<Array> Array::New(Isolate* isolate, int length) {
 Array* Array::Cast(Value* obj) {
   bool isArray = false;
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
-  AutoJSAPI jsAPI(cx, obj);
+  AAutoJSAPI jsAPI(cx, obj);
   JS::RootedObject thisObj(cx, GetObject(obj));
   JS::IsArray(cx, thisObj, &isArray);
   assert(isArray);
@@ -53,10 +54,10 @@ Array* Array::Cast(Value* obj) {
 uint32_t Array::Length() const {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   uint32_t length = 0;
-  JS_GetArrayLength(cx, thisObj, &length);
+  JS::GetArrayLength(cx, thisObj, &length);
   return length;
 }
 }

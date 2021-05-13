@@ -54,7 +54,7 @@
 typedef void* JsRef;
 typedef JsRef JsValueRef;
 
-class AutoJSAPI;
+class AAutoJSAPI;
 struct JSRuntime;
 struct JSContext;
 class JSObject;
@@ -3281,7 +3281,7 @@ class V8_EXPORT Isolate {
   void AddStackFrame(StackFrame* frame);
   void AddStackTrace(StackTrace* trace);
   void AddUnboundScript(UnboundScript* script);
-  friend class ::AutoJSAPI;
+  friend class ::AAutoJSAPI;
   friend class Context;
   friend class MicrotasksScope;
   friend class StackFrame;

@@ -23,6 +23,7 @@
 #include "v8.h"
 #include "autojsapi.h"
 #include "jsfriendapi.h"
+#include "js/ArrayBuffer.h"
 #include "js/Proxy.h"
 #include "v8context.h"
 #include "conversions.h"
@@ -70,7 +71,7 @@ JSObject* GetHiddenTable(JSContext* cx, JS::HandleObject self,
   }
   if (create) {
     JSClass* clazz = nullptr;
-    if (JS_IsArrayBufferObject(self)) {
+    if (JS::IsArrayBufferObject(self)) {
       clazz = &ArrayBufferInternalFieldsClass;
     } else if (JS_IsArrayBufferViewObject(self)) {
       clazz = &ArrayBufferViewInternalFieldsClass;
@@ -78,7 +79,7 @@ JSObject* GetHiddenTable(JSContext* cx, JS::HandleObject self,
     JS::RootedObject tableObj(cx, JS_NewObject(cx, clazz));
     if (tableObj) {
       int numInternalFields = 0;
-      if (JS_IsArrayBufferObject(self)) {
+      if (JS::IsArrayBufferObject(self)) {
         numInternalFields = ArrayBuffer::kInternalFieldCount;
       } else if (JS_IsArrayBufferViewObject(self)) {
         numInternalFields = ArrayBufferView::kInternalFieldCount;
@@ -122,11 +123,11 @@ JS::Symbol* GetHiddenInternalFieldsSymbol(JSContext* cx) {
 // Note that the hidden internal fields are lazily created when needed.
 // See the code in GetHiddenTable for the special casing of these types.
 Local<Object> GetHiddenInternalFields(Local<Object> self) {
-  assert(JS_IsArrayBufferObject(GetObject(self)) ||
+  assert(JS::IsArrayBufferObject(GetObject(self)) ||
          JS_IsArrayBufferViewObject(GetObject(self)));
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedObject selfObj(cx, GetObject(self));
   JS::RootedObject obj(cx, GetHiddenTable(cx, selfObj, true, GetHiddenInternalFieldsSymbol(cx)));
   return internal::Local<Object>::New(Isolate::GetCurrent(), JS::ObjectValue(*obj));
@@ -139,7 +140,7 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key,
                         Local<Value> value, PropertyAttribute attributes,
                         bool force) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::Rooted<jsid> id(cx);
   JS::RootedValue keyVal(cx, *GetValue(key));
   if (!JS_WrapValue(cx, &keyVal) ||
@@ -147,7 +148,7 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key,
     return Nothing<bool>();
   }
   JSObject* thisObj = GetObject(this);
-  JSAutoCompartment ac(cx, thisObj);
+  JSAutoRealm ac(cx, thisObj);
   JS::RootedObject thisVal(cx, thisObj);
   JS::RootedValue valueVal(cx, *GetValue(value));
   if (!JS_WrapValue(cx, &valueVal)) {
@@ -173,7 +174,7 @@ bool Object::Set(Handle<Value> key, Handle<Value> value) {
 Maybe<bool> Object::Set(Local<Context> context, uint32_t index,
                         Local<Value> value) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisVal(cx, &GetValue(this)->toObject());
   JS::RootedValue valueVal(cx, *GetValue(value));
   if (!JS_WrapValue(cx, &valueVal)) {
@@ -222,7 +223,7 @@ bool Object::ForceSet(Handle<Value> key, Handle<Value> value,
 
 MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::Rooted<jsid> id(cx);
   JS::RootedValue keyVal(cx, *GetValue(key));
   if (!JS_WrapValue(cx, &keyVal) ||
@@ -230,7 +231,7 @@ MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key) {
     return MaybeLocal<Value>();
   }
   JSObject* thisObj = GetObject(this);
-  JSAutoCompartment ac(cx, thisObj);
+  JSAutoRealm ac(cx, thisObj);
   JS::RootedObject thisVal(cx, thisObj);
   JS::RootedValue valueVal(cx);
   if (!JS_GetPropertyById(cx, thisVal, id, &valueVal)) {
@@ -247,7 +248,7 @@ Local<Value> Object::Get(Handle<Value> key) {
 
 MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisVal(cx, GetObject(this));
   JS::RootedValue valueVal(cx);
   if (!JS_GetElement(cx, thisVal, index, &valueVal)) {
@@ -265,7 +266,7 @@ Local<Value> Object::Get(uint32_t index) {
 Maybe<PropertyAttribute> Object::GetPropertyAttributes(Local<Context> context,
                                                        Local<Value> key) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::Rooted<jsid> id(cx);
   JS::RootedValue keyVal(cx, *GetValue(key));
   if (!JS_WrapValue(cx, &keyVal) ||
@@ -298,11 +299,11 @@ PropertyAttribute Object::GetPropertyAttributes(Local<Value> key) {
 MaybeLocal<Value> Object::GetOwnPropertyDescriptor(Local<Context> context,
                                                    Local<String> key) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
-  auto flatKey = internal::GetFlatString(cx, key);
+  AAutoJSAPI jsAPI(cx, this);
+  auto flatKey = internal::GetFlatString(cx, key).get();
   JS::RootedObject thisVal(cx, GetObject(this));
   JS::Rooted<JS::PropertyDescriptor> desc(cx);
-  if (!JS_GetOwnUCPropertyDescriptor(cx, thisVal, flatKey.get(), &desc)) {
+  if (!JS_GetOwnUCPropertyDescriptor(cx, thisVal, flatKey, std::char_traits<char16_t>::length(flatKey), &desc)) {
     return MaybeLocal<Value>();
   }
   JS::RootedValue result(cx);
@@ -321,7 +322,7 @@ Local<Value> Object::GetOwnPropertyDescriptor(Local<String> key) {
 
 Maybe<bool> Object::Has(Local<Context> context, Local<Value> key) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::Rooted<jsid> id(cx);
   JS::RootedValue keyVal(cx, *GetValue(key));
   if (!JS_WrapValue(cx, &keyVal) ||
@@ -342,7 +343,7 @@ bool Object::Has(Local<Value> key) {
 
 Maybe<bool> Object::Has(Local<Context> context, uint32_t index) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisVal(cx, GetObject(this));
   bool found = false;
   if (!JS_HasElement(cx, thisVal, index, &found)) {
@@ -358,7 +359,7 @@ bool Object::Has(uint32_t index) {
 
 Maybe<bool> Object::Delete(Local<Context> context, Local<Value> key) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::Rooted<jsid> id(cx);
   JS::RootedValue keyVal(cx, *GetValue(key));
   if (!JS_WrapValue(cx, &keyVal) ||
@@ -380,7 +381,7 @@ bool Object::Delete(Local<Value> key) {
 
 Maybe<bool> Object::Delete(Local<Context> context, uint32_t index) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisVal(cx, GetObject(this));
   JS::ObjectOpResult result;
   if (!JS_DeleteElement(cx, thisVal, index, result)) {
@@ -406,7 +407,7 @@ Local<Object> Object::New(Isolate* isolate) {
     isolate = Isolate::GetCurrent();
   }
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JSObject* obj = JS_NewObject(cx, nullptr);
   if (!obj) {
     return Local<Object>();
@@ -424,7 +425,7 @@ Object* Object::Cast(Value* obj) {
 Local<Value> Object::GetPrototype() {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   JS::RootedObject prototype(cx);
   JS::Value retVal;
@@ -446,7 +447,7 @@ Maybe<bool> Object::SetPrototype(Local<Context> context,
                                  Local<Value> prototype) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedValue protoVal(cx, *GetValue(prototype));
   if (!JS_WrapValue(cx, &protoVal)) {
     return Nothing<bool>();
@@ -467,20 +468,20 @@ bool Object::SetPrototype(Handle<Value> prototype) {
 Local<Object> Object::Clone() {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   bool isArray;
-  if (!JS_IsArrayObject(cx, thisObj, &isArray)) {
+  if (!JS::IsArrayObject(cx, thisObj, &isArray)) {
     return Local<Object>();
   }
 
   if (isArray) {
     uint32_t length;
-    if (!JS_GetArrayLength(cx, thisObj, &length)) {
+    if (!JS::GetArrayLength(cx, thisObj, &length)) {
       return Local<Object>();
     }
 
-    JS::RootedObject copy(cx, JS_NewArrayObject(cx, length));
+    JS::RootedObject copy(cx, JS::NewArrayObject(cx, length));
     if (!copy) {
       return Local<Object>();
     }
@@ -518,9 +519,9 @@ Local<Object> Object::Clone() {
 MaybeLocal<Array> Object::GetPropertyNames(Local<Context> context,
                                            unsigned flags) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
-  JS::AutoIdVector idv(cx);
+  JS::RootedIdVector idv(cx);
   if (!js::GetPropertyKeys(cx, thisObj, flags, &idv)) {
     return MaybeLocal<Array>();
   }
@@ -567,7 +568,7 @@ Maybe<bool> Object::HasOwnProperty(Local<Context> context, Local<Name> key) {
     return Nothing<bool>();
   }
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedId id(cx);
   JS::RootedValue keyVal(cx, *GetValue(key));
   if (!JS_WrapValue(cx, &keyVal)) {
@@ -580,7 +581,7 @@ Maybe<bool> Object::HasOwnProperty(Local<Context> context, Local<Name> key) {
     if (!interned) {
       return Nothing<bool>();
     }
-    id = INTERNED_STRING_TO_JSID(cx, interned);
+    id = JS::PropertyKey::fromPinnedString(interned);
   } else if (keyVal.isSymbol()) {
     id = SYMBOL_TO_JSID(keyVal.toSymbol());
   } else {
@@ -601,7 +602,7 @@ bool Object::HasOwnProperty(Handle<String> key) {
 
 Maybe<bool> Object::HasPrivate(Local<Context> context, Local<Private> key) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   JS::RootedObject table(cx, GetHiddenValuesTable(cx, thisObj));
   if (!table) {
@@ -618,7 +619,7 @@ Maybe<bool> Object::HasPrivate(Local<Context> context, Local<Private> key) {
 Maybe<bool> Object::SetPrivate(Local<Context> context, Local<Private> key,
                                Local<Value> value) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   JS::RootedObject table(cx, GetHiddenValuesTable(cx, thisObj, true));
   if (!table) {
@@ -635,7 +636,7 @@ Maybe<bool> Object::SetPrivate(Local<Context> context, Local<Private> key,
 
 Maybe<bool> Object::DeletePrivate(Local<Context> context, Local<Private> key) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   JS::RootedObject table(cx, GetHiddenValuesTable(cx, thisObj));
   if (!table) {
@@ -652,7 +653,7 @@ Maybe<bool> Object::DeletePrivate(Local<Context> context, Local<Private> key) {
 MaybeLocal<Value> Object::GetPrivate(Local<Context> context,
                                      Local<Private> key) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   JS::RootedObject table(cx, GetHiddenValuesTable(cx, thisObj));
   if (!table) {
@@ -670,7 +671,7 @@ MaybeLocal<Value> Object::GetPrivate(Local<Context> context,
 Local<String> Object::GetConstructorName() {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   JS::RootedObject prototype(cx);
   JS::RootedValue constructorVal(cx);
@@ -697,9 +698,9 @@ MaybeLocal<Value> Object::CallAsConstructor(Local<Context> context, int argc,
                                             Local<Value> argv[]) {
   Isolate* isolate = context->GetIsolate();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   jsAPI.MarkScriptCall();
-  JS::AutoValueVector args(cx);
+  JS::RootedValueVector args(cx);
   if (!args.reserve(argc)) {
     return Local<Value>();
   }
@@ -831,8 +832,8 @@ Local<Context> Object::CreationContext() {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
   JSObject* thisObj = UnwrapProxyIfNeeded(GetObject(this));
-  AutoJSAPI jsAPI(cx, thisObj);
-  if (JS_ObjectIsFunction(cx, thisObj)) {
+  AAutoJSAPI jsAPI(cx, thisObj);
+  if (js::IsFunctionObject(thisObj)) {
     JS::RootedValue thisVal(cx, JS::ObjectValue(*thisObj));
     JSFunction* fun = JS_ValueToFunction(cx, thisVal);
     assert(fun);
@@ -843,7 +844,7 @@ Local<Context> Object::CreationContext() {
       return target->CreationContext();
     }
   }
-  JSObject* global = JS_GetGlobalForObject(cx, thisObj);
+  JSObject* global = JS::GetNonCCWObjectGlobal(thisObj);
   if (!global) {
     return Local<Context>();
   }
@@ -901,7 +902,7 @@ Maybe<bool> Object::SetAccessorInternal(JSContext* cx,
                                         Handle<Value> data,
                                         AccessControl settings,
                                         PropertyAttribute attribute) {
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
 
   if (!internal::SetAccessor(cx, obj, name, getter, setter, data,
@@ -916,7 +917,7 @@ void Object::SetAccessorProperty(Local<Name> name, Local<Function> getter,
                                  AccessControl settings) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
 
   JS::RootedObject getterObj(cx, GetObject(getter));

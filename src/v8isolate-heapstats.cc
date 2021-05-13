@@ -21,6 +21,7 @@
 #include "v8.h"
 #include "js/MemoryMetrics.h"
 #include "mozilla/mozalloc.h"
+#include <jsapi.h>
 
 // DO NOT ADD ANYTHING TO THIS FILE.
 // mozalloc.h overrides operator new/delete to make them use jemalloc, which
@@ -39,8 +40,8 @@ class SimpleJSRuntimeStats : public JS::RuntimeStats {
         override
     {}
 
-    virtual void initExtraCompartmentStats(
-        JSCompartment* c, JS::CompartmentStats* cStats) override
+    virtual void initExtraRealmStats(
+        JS::Handle<JS::Realm*> c, JS::RealmStats* cStats) override
     {}
 };
 }
@@ -69,7 +70,7 @@ size_t Isolate::NumberOfTrackedHeapObjectTypes() {
   }
   // The number of object types is 1 (for non-notable classes) +
   // the number of notable classes.
-  return 1 + rtStats.cTotals.notableClasses.length();
+  return 1 + rtStats.realmTotals.notableClasses.length();
 }
 
 bool Isolate::GetHeapObjectStatisticsAtLastGC(HeapObjectStatistics* object_statistics,
@@ -78,7 +79,7 @@ bool Isolate::GetHeapObjectStatisticsAtLastGC(HeapObjectStatistics* object_stati
   if (!JS::CollectRuntimeStats(RuntimeContext(), &rtStats, nullptr, false)) {
     return false;
   }
-  size_t max_length = (1 + rtStats.cTotals.notableClasses.length());
+  size_t max_length = (1 + rtStats.realmTotals.notableClasses.length());
   if (type_index >= max_length) {
     return false;
   }
@@ -87,10 +88,10 @@ bool Isolate::GetHeapObjectStatisticsAtLastGC(HeapObjectStatistics* object_stati
     object_statistics->object_type_ = "non-notable classes";
     object_statistics->object_sub_type_ = "";
     object_statistics->object_count_ = 1;
-    object_statistics->object_size_ = rtStats.cTotals.classInfo.sizeOfLiveGCThings();
+    object_statistics->object_size_ = rtStats.realmTotals.classInfo.sizeOfLiveGCThings();
   } else {
-    const JS::NotableClassInfo& classInfo = rtStats.cTotals.notableClasses[type_index];
-    object_statistics->object_type_ = classInfo.className_;
+    const JS::NotableClassInfo& classInfo = rtStats.realmTotals.notableClasses[type_index];
+    object_statistics->object_type_ = classInfo.className_.get();
     object_statistics->object_sub_type_ = "";
     object_statistics->object_count_ = 1;
     object_statistics->object_size_ = classInfo.sizeOfLiveGCThings();

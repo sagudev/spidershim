@@ -43,7 +43,7 @@ namespace v8 {
 
 Local<External> External::New(Isolate* isolate, void* value) {
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JSObject* obj = CreateExternal(cx);
   assert(::IsExternal(obj));
   JS_SetPrivate(obj, value);
@@ -66,7 +66,7 @@ void* External::Unwrap(Handle<class Value> obj) {
     return nullptr;
   }
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
-  AutoJSAPI jsAPI(cx, obj);
+  AAutoJSAPI jsAPI(cx, obj);
   return JS_GetPrivate(GetObject(obj));
 }
 
@@ -77,7 +77,7 @@ External* External::Cast(class Value* obj) {
 
 void* External::Value() const {
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   return JS_GetPrivate(GetObject(this));
 }
 }

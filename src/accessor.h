@@ -116,7 +116,7 @@ struct SignatureChecker {
                              v8::Local<Object>& holder) {
     Isolate* isolate = Isolate::GetCurrent();
     JSContext* cx = JSContextFromIsolate(isolate);
-    AutoJSAPI jsAPI(cx, GetObject(thisObj));
+    AAutoJSAPI jsAPI(cx, GetObject(thisObj));
     assert(JS_GetClass(accessorData) == &accessorDataClass);
     JS::Value signatureVal = js::GetReservedSlot(accessorData,
                                                  size_t(AccessorSlots::SignatureSlot));
@@ -152,7 +152,7 @@ bool NativeAccessorCallback(JSContext* cx, unsigned argc, JS::Value* vp) {
 
   // TODO: Verify that computeThis() here is the right thing to do!
   v8::Local<Object> thisObject =
-    internal::Local<Object>::New(isolate, args.computeThis(cx));
+    internal::Local<Object>::New(isolate, args.thisv());
 
   JS::RootedObject accessorData(cx,
     &js::GetFunctionNativeReserved(callee, 0).toObject());
@@ -269,14 +269,13 @@ bool SetAccessor(JSContext* cx,
   }
 
   unsigned attrs = internal::AttrsToFlags(attribute) |
-                   JSPROP_SHARED | JSPROP_GETTER;
+                   JSPROP_GETTER;
   if (setter) {
     attrs |= JSPROP_SETTER;
   }
 
-  if (!JS_DefinePropertyById(cx, obj, id, JS::UndefinedHandleValue, attrs,
-                             JS_DATA_TO_FUNC_PTR(JSNative, getter.get()),
-                             JS_DATA_TO_FUNC_PTR(JSNative, setter.get()))) {
+  if (!JS_DefinePropertyById(cx, obj, id, JS_DATA_TO_FUNC_PTR(JSNative, getter.get()),
+                             JS_DATA_TO_FUNC_PTR(JSNative, setter.get()), attrs)) {
     return false;
   }
 

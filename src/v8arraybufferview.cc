@@ -23,13 +23,14 @@
 #include "v8local.h"
 #include "autojsapi.h"
 #include "jsfriendapi.h"
+#include "js/Array.h"
 
 namespace v8 {
 
 Local<ArrayBuffer> ArrayBufferView::Buffer() {
   Isolate* isolate = GetIsolate();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject view(cx, GetObject(this));
   bool shared;
   JSObject* buf = JS_GetArrayBufferViewBuffer(cx, view, &shared);
@@ -43,23 +44,26 @@ Local<ArrayBuffer> ArrayBufferView::Buffer() {
 }
 
 size_t ArrayBufferView::ByteOffset() {
-  AutoJSAPI jsAPI(this);
+  AAutoJSAPI jsAPI(this);
   JSObject* view = GetObject(this);
+  // SMTODO is needed? as in fanal it tries both
   if (JS_IsTypedArrayObject(view)) {
     return JS_GetTypedArrayByteOffset(view);
   }
 
-  return JS_GetDataViewByteOffset(view);
+  return JS_GetArrayBufferViewByteOffset(view);
 }
 
 size_t ArrayBufferView::ByteLength() {
-  AutoJSAPI jsAPI(this);
+  AAutoJSAPI jsAPI(this);
   JSObject* view = GetObject(this);
+  JSContext* cx = JSContextFromIsolate(v8::Isolate::GetCurrent());
+  // SMTODO is needed?
   if (JS_IsTypedArrayObject(view)) {
     return JS_GetTypedArrayByteLength(view);
   }
 
-  return JS_GetDataViewByteLength(view);
+  return JS_GetArrayBufferViewByteLength(view);
 }
 
 ArrayBufferView* ArrayBufferView::Cast(Value* val) {

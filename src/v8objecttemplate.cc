@@ -169,9 +169,8 @@ void ObjectTemplateFinalize(JSFreeOp* fop, JSObject* obj) {
 const JSClassOps objectTemplateClassOps = {
   nullptr, // addProperty
   nullptr, // delProperty
-  nullptr, // getProperty
-  nullptr, // setProperty
   nullptr, // enumerate
+  nullptr, // newEnumerate
   nullptr, // resolve
   nullptr, // mayResolve
   ObjectTemplateFinalize,
@@ -961,7 +960,7 @@ namespace v8 {
 Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate,
                                           Local<FunctionTemplate> constructor) {
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   if (!constructor.IsEmpty() &&
       js::GetContextCompartment(cx) !=
       js::GetObjectCompartment(GetObject(*constructor))) {
@@ -1022,7 +1021,7 @@ Local<Object> ObjectTemplate::NewInstance(Local<Object> prototype,
                                           ObjectType objectType) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);
@@ -1053,7 +1052,7 @@ Local<Object> ObjectTemplate::NewInstance(Local<Object> prototype,
       return Local<Object>();
     }
 
-    JSAutoCompartment ac(cx, instanceObj);
+    JSAutoRealm ac(cx, instanceObj);
 
     if (!JS_InitStandardClasses(cx, instanceObj) ||
         !JS_WrapObject(cx, &protoObj) ||
@@ -1071,7 +1070,7 @@ Local<Object> ObjectTemplate::NewInstance(Local<Object> prototype,
   // a different compartment than all of the template information we have at
   // this point, so we need to enter the global's compartment and wrap
   // everything into that compartment before attaching them to the global.
-  mozilla::Maybe<JSAutoCompartment> maybeAC;
+  mozilla::Maybe<JSAutoRealm> maybeAC;
   if (objectType == GlobalObject) {
     maybeAC.emplace(cx, instanceObj);
   }
@@ -1162,7 +1161,7 @@ void ObjectTemplate::SetAccessorInternal(Handle<N> name,
                                          Handle<AccessorSignature> signature) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);
@@ -1180,7 +1179,7 @@ Handle<String> ObjectTemplate::GetClassName() {
 ObjectTemplate::InstanceClass* ObjectTemplate::GetInstanceClass(ObjectType objectType) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);
@@ -1282,7 +1281,7 @@ ObjectTemplate::InstanceClass* ObjectTemplate::GetInstanceClass(ObjectType objec
 int ObjectTemplate::InternalFieldCount() {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);
@@ -1299,7 +1298,7 @@ int ObjectTemplate::InternalFieldCount() {
 void ObjectTemplate::SetInternalFieldCount(int value) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);
@@ -1311,7 +1310,7 @@ void ObjectTemplate::SetInternalFieldCount(int value) {
 Local<FunctionTemplate> ObjectTemplate::GetConstructor() {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);
@@ -1339,7 +1338,7 @@ Local<FunctionTemplate> ObjectTemplate::GetObjectTemplateConstructor(Local<Objec
   assert(IsObjectFromTemplate(object));
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, object);
+  AAutoJSAPI jsAPI(cx, object);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(*object)));
   assert(obj);
 
@@ -1357,7 +1356,7 @@ void ObjectTemplate::SetNamedPropertyHandler(NamedPropertyGetterCallback getter,
                                              Local<Value> data) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);
@@ -1368,7 +1367,7 @@ void ObjectTemplate::SetNamedPropertyHandler(NamedPropertyGetterCallback getter,
 void ObjectTemplate::SetHandler(const NamedPropertyHandlerConfiguration& config) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);
@@ -1385,7 +1384,7 @@ void ObjectTemplate::SetIndexedPropertyHandler(IndexedPropertyGetterCallback get
                                                Handle<Value> data) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);
@@ -1418,7 +1417,7 @@ void ObjectTemplate::SetCallAsFunctionHandler(FunctionCallback callback,
   }
 
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
   assert(obj);
   assert(JS_GetClass(obj) == &objectTemplateClass);

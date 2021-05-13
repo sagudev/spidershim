@@ -34,6 +34,10 @@
 #include "v8-profiler.h"
 #include "v8isolate.h"
 #include "v8local.h"
+#include <js/Warnings.h>
+#include <js/LocaleSensitive.h>
+#include <jsapi.h>
+#include "jsfriendapi.h"
 #include "instanceslots.h"
 #include "autojsapi.h"
 #include "mozilla/TimeStamp.h"
@@ -134,7 +138,7 @@ Isolate::Isolate() : pimpl_(new Impl()) {
   JS_SetGCParameter(pimpl_->cx, JSGC_MODE, JSGC_MODE_INCREMENTAL);
   JS_SetGCParameter(pimpl_->cx, JSGC_MAX_BYTES, 0xffffffff);
   JS_SetNativeStackQuota(pimpl_->cx, sStackSize);
-  JS_SetDefaultLocale(pimpl_->cx, "UTF-8");
+  JS_SetDefaultLocale(pimpl_->cx->runtime(), "UTF-8");
   js::SetStackFormat(pimpl_->cx, js::StackFormat::V8);
 
 #ifndef DEBUG
@@ -145,8 +149,8 @@ Isolate::Isolate() : pimpl_(new Impl()) {
       .setNativeRegExp(true);
 #endif
 
-  JS::SetEnqueuePromiseJobCallback(pimpl_->cx, Isolate::Impl::EnqueuePromiseJobCallback);
-  JS::SetGetIncumbentGlobalCallback(pimpl_->cx, GetIncumbentGlobalCallback);
+  //JS::SetEnqueuePromiseJobCallback(pimpl_->cx, Isolate::Impl::EnqueuePromiseJobCallback);
+  //JS::SetGetIncumbentGlobalCallback(pimpl_->cx, GetIncumbentGlobalCallback);
   JS_AddInterruptCallback(pimpl_->cx, Isolate::Impl::OnInterrupt);
   JS_SetGCCallback(pimpl_->cx, Isolate::Impl::OnGC, NULL);
   if (!JS::InitSelfHostedCode(pimpl_->cx)) {
@@ -324,7 +328,7 @@ void Isolate::RunMicrotasks() {
 
 void Isolate::EnqueueMicrotask(Local<Function> microtask) {
   auto context = JSContextFromIsolate(this);
-  AutoJSAPI jsAPI(context);
+  AAutoJSAPI jsAPI(context);
   JSContext* cx = pimpl_->cx;
   JS::RootedObject fun(cx, GetObject(microtask));
   pimpl_->EnqueuePromiseJobCallback(cx, fun, nullptr, nullptr, nullptr);
@@ -353,7 +357,7 @@ void Isolate::CancelTerminateExecution() {
 
 Local<Value> Isolate::ThrowException(Local<Value> exception) {
   auto context = JSContextFromIsolate(this);
-  AutoJSAPI jsAPI(context);
+  AAutoJSAPI jsAPI(context);
   JS::RootedValue rval(context, *GetValue(exception));
   JS_SetPendingException(context, rval);
   jsAPI.BleedThroughExceptions();
@@ -490,6 +494,7 @@ int64_t Isolate::AdjustAmountOfExternalAllocatedMemory(
   if (change_in_bytes > 0) {
     auto context = JSContextFromIsolate(this);
     JS_updateMallocCounter(context, change_in_bytes);
+    //JS::AddAssociatedMemory(aReflector, change_in_bytes, JS::MemoryUse::DOMBinding)
   }
   return pimpl_->amountOfExternallyAllocatedMemory += change_in_bytes;
 }
@@ -588,7 +593,7 @@ Local<Object> Isolate::GetHiddenGlobal() {
     // only used in those cases.
     static const JSClassOps cOps = {
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, JS_GlobalObjectTraceHook};
+        nullptr, nullptr, nullptr, nullptr, JS_GlobalObjectTraceHook};
     static const JSClass globalClass = {
       "HiddenGlobalObject",
       // SpiderMonkey allocates JSCLASS_GLOBAL_APPLICATION_SLOTS (5) reserved slots
@@ -602,14 +607,13 @@ Local<Object> Isolate::GetHiddenGlobal() {
     JSContext* cx = pimpl_->cx;
     JS::RootedObject newGlobal(cx);
     JS::RealmOptions options;
-    options.behaviors().setVersion(JSVERSION_LATEST);
     newGlobal = JS_NewGlobalObject(cx, &globalClass, nullptr,
                                    JS::FireOnNewGlobalHook, options);
     if (!newGlobal) {
       return Local<Object>();
     }
-    JSAutoCompartment ac(cx, newGlobal);
-    if (!JS_InitStandardClasses(cx, newGlobal)) {
+    JSAutoRealm ac(cx, newGlobal);
+    if (!JS::InitRealmStandardClasses(cx)) {
       return Local<Object>();
     }
     SetInstanceSlot(newGlobal, uint32_t(InstanceSlots::ContextSlot),

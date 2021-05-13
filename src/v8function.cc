@@ -146,7 +146,13 @@ class FunctionCallback {
         }
       }
     } else {
-      _this = internal::Local<Object>::New(isolate, args.computeThis(cx));
+      JS::RootedObject Mobj(cx);
+      if (!args.computeThis(cx, &Mobj)) {
+        return false;
+      }
+      JS::Value Mval;
+      Mval.setObject(*Mobj);
+      _this = internal::Local<Object>::New(isolate, Mval);
     }
 
     ::FunctionCallback callback = GetHiddenCallback(cx, callee);
@@ -218,10 +224,10 @@ MaybeLocal<Object> Function::NewInstance(Local<Context> context, int argc,
                                          Handle<Value> argv[]) const {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   jsAPI.MarkScriptCall();
   JS::RootedObject thisObj(cx, GetObject(this));
-  JS::AutoValueVector args(cx);
+  JS::RootedValueVector args(cx);
   if (!args.reserve(argc)) {
     return MaybeLocal<Object>();
   }
@@ -244,10 +250,10 @@ MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv,
                                  int argc, Local<Value> argv[]) {
   Isolate* isolate = context->GetIsolate();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   jsAPI.MarkScriptCall();
   JS::RootedValue val(cx, *GetValue(recv));
-  JS::AutoValueVector args(cx);
+  JS::RootedValueVector args(cx);
   if (!args.reserve(argc) || !JS_WrapValue(cx, &val)) {
     return Local<Value>();
   }
@@ -284,7 +290,7 @@ Function* Function::Cast(Value* v) {
 Local<Value> Function::GetName() const {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   JS::RootedValue nameVal(cx);
   if (!JS_GetProperty(cx, thisObj, "name", &nameVal)) {
@@ -298,7 +304,7 @@ Local<Value> Function::GetName() const {
 void Function::SetName(Local<String> name) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   JS::RootedString str(cx, GetString(name));
   // Ignore the return value since the V8 API returns void. :(
@@ -326,7 +332,7 @@ MaybeLocal<Function> Function::New(Local<Context> context,
                                    Local<FunctionTemplate> templ,
                                    Local<String> name) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JSFunction* func;
   auto NativeFunctionCallback =
     internal::FunctionCallback::NativeFunctionCallback;

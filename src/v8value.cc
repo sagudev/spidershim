@@ -43,7 +43,7 @@ namespace v8 {
       return false;                                              \
     }                                                            \
     JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent()); \
-    AutoJSAPI jsAPI(cx);                                         \
+    AAutoJSAPI jsAPI(cx);                                         \
     JS::RootedObject obj(cx, GetObject(this));                   \
     js::ESClass cls = js::ESClass::Other;                        \
     return js::GetBuiltinClass(cx, obj, &cls) &&                 \
@@ -77,7 +77,7 @@ bool Value::IsTypedArray() const {
   if (!IsObject()) {
     return false;
   }
-  AutoJSAPI jsAPI(this);
+  AAutoJSAPI jsAPI(this);
   return JS_IsTypedArrayObject(GetObject(this));
 }
 
@@ -85,7 +85,7 @@ bool Value::IsDataView() const {
   if (!IsObject()) {
     return false;
   }
-  AutoJSAPI jsAPI(this);
+  AAutoJSAPI jsAPI(this);
   return JS_IsDataViewObject(GetObject(this));
 }
 
@@ -97,13 +97,13 @@ bool Value::IsFunction() const {
   if (!IsObject()) {
     return false;
   }
-  AutoJSAPI jsAPI(this);
+  AAutoJSAPI jsAPI(this);
   return JS::IsCallable(GetObject(this));
 }
 
 MaybeLocal<Boolean> Value::ToBoolean(Local<Context> context) const {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   JS::Value boolVal;
   boolVal.setBoolean(JS::ToBoolean(thisVal));
@@ -132,7 +132,7 @@ bool Value::BooleanValue() const {
 
 MaybeLocal<Number> Value::ToNumber(Local<Context> context) const {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   double num = 0.0;
   if (!thisVal.isUndefined() && !JS::ToNumber(cx, thisVal, &num) || num != num) {
@@ -164,7 +164,7 @@ double Value::NumberValue() const {
 
 MaybeLocal<Integer> Value::ToInteger(Local<Context> context) const {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   double num = 0.0;
   if (!thisVal.isUndefined() && (!JS::ToNumber(cx, thisVal, &num) || num != num)) {
@@ -196,7 +196,7 @@ int64_t Value::IntegerValue() const {
 
 MaybeLocal<Int32> Value::ToInt32(Local<Context> context) const {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   int32_t num = 0;
   if (!JS::ToInt32(cx, thisVal, &num)) {
@@ -228,7 +228,7 @@ int32_t Value::Int32Value() const {
 
 MaybeLocal<Uint32> Value::ToUint32(Local<Context> context) const {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   uint32_t num = 0;
   if (!JS::ToUint32(cx, thisVal, &num)) {
@@ -260,7 +260,7 @@ uint32_t Value::Uint32Value() const {
 
 MaybeLocal<String> Value::ToString(Local<Context> context) const {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   JSString* str = JS::ToString(cx, thisVal);
   if (!str) {
@@ -280,7 +280,7 @@ Local<String> Value::ToString(Isolate* isolate) const {
 
 MaybeLocal<Object> Value::ToObject(Local<Context> context) const {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   JSObject* obj = JS::ToObject(cx, thisVal);
   if (!obj) {
@@ -300,7 +300,7 @@ Local<Object> Value::ToObject(Isolate* isolate) const {
 
 Maybe<bool> Value::Equals(Local<Context> context, Handle<Value> that) const {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   JS::RootedValue thatVal(cx, *GetValue(that));
   bool equal = false;
@@ -319,7 +319,7 @@ bool Value::Equals(Handle<Value> that) const {
 
 bool Value::StrictEquals(Handle<Value> that) const {
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   JS::RootedValue thatVal(cx, *GetValue(that));
   if (!JS_WrapValue(cx, &thatVal)) {
@@ -332,7 +332,7 @@ bool Value::StrictEquals(Handle<Value> that) const {
 
 bool Value::SameValue(Handle<Value> that) const {
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue thisVal(cx, *GetValue(this));
   JS::RootedValue thatVal(cx, *GetValue(that));
   if (!JS_WrapValue(cx, &thatVal)) {
@@ -347,7 +347,7 @@ bool Value::IsNativeError() const {
   if (!IsObject()) {
     return false;
   }
-  AutoJSAPI jsAPI(this);
+  AAutoJSAPI jsAPI(this);
   JSProtoKey key = JS::IdentifyStandardInstanceOrPrototype(GetObject(this));
   return key == JSProto_EvalError || key == JSProto_RangeError ||
          key == JSProto_ReferenceError || key == JSProto_SyntaxError ||

@@ -1,2 +1,4 @@
 mozjs.tar.*
 target
+
+*.pyc

@@ -15,8 +15,7 @@ CXXFLAGS += \
 	-isystem $(MOZ_OUT)/dist/include \
 	-I $(MOZ_OUT)/js/src \
 	-L $(MOZ_OUT)/js/src/build \
-	-DSTATIC_JS_API \
-	-std=c++17
+	-DSTATIC_JS_API
 
 # force color
 CXXFLAGS += -fcolor-diagnostics

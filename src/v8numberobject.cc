@@ -31,7 +31,7 @@ namespace v8 {
 
 Local<Value> NumberObject::New(Isolate* isolate, double value) {
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedValue numVal(cx, JS::NumberValue(value));
   JS::Value retVal;
   retVal.setObject(*JS::ToObject(cx, numVal));
@@ -47,7 +47,7 @@ double NumberObject::ValueOf() const {
   assert(IsNumberObject());
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject thisObj(cx, GetObject(this));
   JS::RootedValue unboxedVal(cx);
   if (!js::Unbox(cx, thisObj, &unboxedVal)) {

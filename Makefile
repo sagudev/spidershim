@@ -29,3 +29,7 @@ test: spidershim
 
 clean:
 	rm -rf $(OUT_DIR)
+
+%:
+	CCACHE=$(CCACHE) DEBUG=$(DEBUG) MOZ_OUT="$(MOZ_OUT)" OUT_DIR="$(OUT_DIR)/spidershim" \
+	$(MAKE) -C "$(OUT_DIR)/spidershim" -f $(SRC_DIR)/spidershim.mk $@.o

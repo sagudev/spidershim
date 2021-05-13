@@ -33,10 +33,11 @@ struct Message::Impl {
   Impl(Value* exception) : lineNumber_(0), columnNumber_(0) {
     Isolate* isolate = Isolate::GetCurrent();
     JSContext* cx = JSContextFromIsolate(isolate);
-    AutoJSAPI jsAPI(cx);
+    AAutoJSAPI jsAPI(cx);
     JS::RootedValue exc(cx, *GetValue(exception));
-    js::ErrorReport errorReport(cx);
-    if (errorReport.init(cx, exc, js::ErrorReport::WithSideEffects)) {
+    JS::ErrorReportBuilder errorReport(cx);
+    JS::ExceptionStack exnStack(cx, exc, nullptr);
+    if (errorReport.init(cx, exnStack, JS::ErrorReportBuilder::WithSideEffects)) {
       JSErrorReport* report = errorReport.report();
       assert(report);
 

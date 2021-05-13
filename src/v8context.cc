@@ -25,9 +25,11 @@
 #include "v8local.h"
 #include "autojsapi.h"
 #include "jsfriendapi.h"
+#include <js/CompilationAndEvaluation.h>
 #include "instanceslots.h"
-#include "spidershim_natives.h"
 #include "utils.h"
+
+#include <stdint.h>
 
 namespace spidershim {
 
@@ -35,8 +37,7 @@ bool InitLibraries(JSContext* cx) {
 #define V(id)                                                                 \
   do {                                                                        \
     JS::CompileOptions options(cx);                                           \
-    options.setVersion(JSVERSION_DEFAULT)                                     \
-        .setNoScriptRval(true)                                                \
+    options.setNoScriptRval(true)                                             \
         .setSourceIsLazy(false)                                               \
         .setFile(id##_name)                                                   \
         .setLine(1)                                                           \
@@ -49,7 +50,6 @@ bool InitLibraries(JSContext* cx) {
       return false;                                                           \
     }                                                                         \
   } while (0);
-  NODE_NATIVES_MAP(V)
 #undef V
   return true;
 }
@@ -109,7 +109,7 @@ bool Context::CreateGlobal(JSContext* cx, Isolate* isolate,
   }
 
   JS::RootedObject newGlobal(cx, UnwrapProxyIfNeeded(GetObject(global)));
-  AutoJSAPI jsAPI(cx, newGlobal);
+  AAutoJSAPI jsAPI(cx, newGlobal);
 
   SetInstanceSlot(newGlobal, uint32_t(InstanceSlots::ContextSlot),
                   JS::PrivateValue(this));
@@ -225,7 +225,7 @@ void* Context::GetAlignedPointerFromEmbedderData(int idx) {
 
 bool Context::Impl::RunMicrotasks() {
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   bool ranAny = false;
   // The following code was adapted from spidermonkey's shell.
   JS::RootedObject job(cx);
@@ -238,7 +238,7 @@ bool Context::Impl::RunMicrotasks() {
     ranAny = true;
     for (size_t i = 0; i < jobQueue.length(); i++) {
         job = jobQueue[i];
-        JSAutoCompartment ac(cx, job);
+        JSAutoRealm ac(cx, job);
         if (!JS::Call(cx, JS::UndefinedHandleValue, job, args, &rval))
             v8::ReportException(cx);
         jobQueue[i].set(nullptr);

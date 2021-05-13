@@ -27,7 +27,7 @@
 namespace v8 {
 
 size_t TypedArray::Length() {
-  AutoJSAPI jsAPI(this);
+  AAutoJSAPI jsAPI(this);
   JSObject* view = GetObject(this);
   assert(IsTypedArray());
   return JS_GetTypedArrayLength(view);
@@ -45,7 +45,7 @@ TypedArray* TypedArray::Cast(Value* obj) {
                                       size_t offset, size_t length) {         \
     Isolate* isolate = buffer->GetIsolate();                                  \
     JSContext* cx = JSContextFromIsolate(isolate);                            \
-    AutoJSAPI jsAPI(cx);                                                      \
+    AAutoJSAPI jsAPI(cx);                                                      \
     JS::RootedObject buf(cx, GetObject(buffer));                              \
     JSObject* array = JS_New##TYPE##ArrayWithBuffer(cx, buf, offset, length); \
     if (!array) {                                                             \

@@ -37,7 +37,7 @@ struct Context::Impl {
   }
   JS::PersistentRootedObject global;
   Persistent<Object> globalObj;
-  JSCompartment* oldCompartment;
+  JS::Realm* oldCompartment;
   JS::PersistentRooted<JS::ValueVector> embedderData;
   JS::PersistentRooted<JobQueue> jobQueue;
   JobQueueNative jobQueueNative;

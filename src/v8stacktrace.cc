@@ -59,7 +59,7 @@ struct StackTrace::Impl {
     JSContext* cx = JSContextFromIsolate(isolate);
     std::vector<FrameInfo> frames;
     JS::RootedObject current(cx, GetObject(stack_));
-    AutoJSAPI jsAPI(cx, current);
+    AAutoJSAPI jsAPI(cx, current);
 
     do {
       FrameInfo info;
@@ -204,7 +204,7 @@ Local<StackTrace> StackTrace::CurrentStackTrace(Isolate* isolate,
                                                 int frame_limit,
                                                 StackTraceOptions options) {
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedObject stack(cx);
   frame_limit = std::max(frame_limit, 0);  // no negative values
   if (!JS::CaptureCurrentStack(cx, &stack,
@@ -217,7 +217,7 @@ Local<StackTrace> StackTrace::CurrentStackTrace(Isolate* isolate,
 Local<StackTrace> StackTrace::ExceptionStackTrace(Isolate* isolate,
                                                   JSObject* exception) {
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   JS::RootedObject exc(cx, exception);
   JS::RootedObject stack(cx, ExceptionStackOrNull(exc));
   if (!stack) {

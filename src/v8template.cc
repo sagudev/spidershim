@@ -57,7 +57,7 @@ void Template::SetAccessorProperty(Local<Name> name,
                                    AccessControl settings) {
   Isolate* isolate = Isolate::GetCurrent();
   JSContext* cx = JSContextFromIsolate(isolate);
-  AutoJSAPI jsAPI(cx, this);
+  AAutoJSAPI jsAPI(cx, this);
   JS::RootedObject obj(cx, UnwrapProxyIfNeeded(GetObject(this)));
 
   JS::RootedObject getterObj(cx, GetObject(getter->GetFunction()));

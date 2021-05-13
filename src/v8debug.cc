@@ -38,7 +38,7 @@ void MakeMirror(const FunctionCallbackInfo<Value>& info) {
   JS::RootedObject thisObj(cx, GetObject(info.This()));
   JS::RootedValue result(cx);
   {
-    JSAutoCompartment ac(cx, thisObj);
+    JSAutoRealm ac(cx, thisObj);
     Local<Object> mirror = Object::New(isolate);
     mirror->Set(String::NewFromUtf8(isolate, "type"),
                 String::NewFromUtf8(isolate, "undefined"));

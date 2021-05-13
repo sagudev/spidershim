@@ -31,7 +31,7 @@ JS::UniqueTwoByteChars GetFlatString(JSContext* cx, v8::Local<String> source,
                                      size_t* length = nullptr);
 
 template <typename T>
-struct ExternalStringFinalizerBase : JSStringFinalizer {
+struct ExternalStringFinalizerBase : JSExternalStringCallbacks {
   ExternalStringFinalizerBase(String::ExternalStringResourceBase* resource);
   String::ExternalStringResourceBase* resource_;
   void dispose();
@@ -41,7 +41,7 @@ struct ExternalStringFinalizer
     : ExternalStringFinalizerBase<ExternalStringFinalizer> {
   ExternalStringFinalizer(String::ExternalStringResourceBase* resource);
   static void FinalizeExternalString(JS::Zone* zone,
-                                     const JSStringFinalizer* fin,
+                                     const JSExternalStringCallbacks* fin,
                                      char16_t* chars);
 };
 
@@ -49,7 +49,7 @@ struct ExternalOneByteStringFinalizer
     : ExternalStringFinalizerBase<ExternalOneByteStringFinalizer> {
   ExternalOneByteStringFinalizer(String::ExternalStringResourceBase* resource);
   static void FinalizeExternalString(JS::Zone* zone,
-                                     const JSStringFinalizer* fin,
+                                     const JSExternalStringCallbacks* fin,
                                      char16_t* chars);
 };
 

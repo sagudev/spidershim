@@ -31,7 +31,7 @@ namespace v8 {
 MaybeLocal<Script> Script::Compile(Local<Context> context, Local<String> source,
                                    ScriptOrigin* origin) {
   JSContext* cx = JSContextFromContext(*context);
-  AutoJSAPI jsAPI(cx);
+  AAutoJSAPI jsAPI(cx);
   Isolate* isolate = context->GetIsolate();
   size_t length = 0;
   JS::UniqueTwoByteChars buffer;
@@ -104,7 +104,7 @@ MaybeLocal<Value> Script::Run(Local<Context> context) {
   JSContext* cx = JSContextFromContext(*context_);
   JS::RootedValue result(cx);
   JS::RootedObject global(cx, GetObject(context_->Global()));
-  AutoJSAPI jsAPI(cx, global);
+  AAutoJSAPI jsAPI(cx, global);
   jsAPI.MarkScriptCall();
   internal::TryCatch tryCatch(context_->GetIsolate());
   if (!JS::CloneAndExecuteScript(cx, JS::Handle<JSScript*>::fromMarkedLocation(&script_),
