@@ -21,6 +21,8 @@
 #include "v8.h"
 #include "autojsapi.h"
 #include "js/CharacterEncoding.h"
+#include <js/CompilationAndEvaluation.h>
+#include <js/SourceText.h>
 #include "v8local.h"
 #include "v8string.h"
 #include "v8trycatch.h"
@@ -51,16 +53,15 @@ MaybeLocal<Script> Script::Compile(Local<Context> context, Local<String> source,
   if (!buffer) {
     return MaybeLocal<Script>();
   }
-  JS::SourceBufferHolder sbh(buffer.release(), length,
-                             JS::SourceBufferHolder::GiveOwnership);
+  JS::SourceText<char16_t> srcBuf;
+  srcBuf.init(cx, buffer.release(), length, JS::SourceOwnership::TakeOwnership);
+    
   JS::CompileOptions options(cx);
   mozilla::UniquePtr<String::Utf8Value> utf8;
-  options.setVersion(JSVERSION_DEFAULT)
-      .setNoScriptRval(false)
-      .setUTF8(true)
+  options.setNoScriptRval(false)
       .setSourceIsLazy(false)
       .setLine(1)
-      .setColumn(0, 0)
+      .setColumn(0)
       .forceAsync = true;
   ;
   if (origin) {
@@ -80,11 +81,11 @@ MaybeLocal<Script> Script::Compile(Local<Context> context, Local<String> source,
       options.setLine(origin->ResourceLineOffset()->Value() + 1);
     }
     if (!origin->ResourceColumnOffset().IsEmpty()) {
-      options.setColumn(origin->ResourceColumnOffset()->Value(), 0);
+      options.setColumn(origin->ResourceColumnOffset()->Value());
     }
   }
-  JS::RootedScript jsScript(cx);
-  if (!JS::Compile(cx, options, sbh, &jsScript)) {
+  JS::RootedScript jsScript(cx, JS::Compile(cx, options, srcBuf));
+  if (!jsScript) {
     return MaybeLocal<Script>();
   }
   return internal::Local<Script>::New(isolate, jsScript, context);

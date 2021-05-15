@@ -26,6 +26,8 @@
 #include "jsfriendapi.h"
 #include "js/Conversions.h"
 #include "js/Proxy.h"
+#include "js/Equality.h"
+#include "js/SharedArrayBuffer.h"
 
 static_assert(sizeof(v8::Value) == sizeof(JS::Value),
               "v8::Value and JS::Value must be binary compatible");
@@ -73,6 +75,7 @@ bool Value::IsUint32() const {
          value == internal::FastUI2D(internal::FastD2UI(value));
 }
 
+// inside dataview
 bool Value::IsTypedArray() const {
   if (!IsObject()) {
     return false;
@@ -86,7 +89,7 @@ bool Value::IsDataView() const {
     return false;
   }
   AAutoJSAPI jsAPI(this);
-  return JS_IsDataViewObject(GetObject(this));
+  return JS_IsArrayBufferViewObject(GetObject(this));
 }
 
 bool Value::IsArrayBufferView() const {
@@ -306,7 +309,7 @@ Maybe<bool> Value::Equals(Local<Context> context, Handle<Value> that) const {
   bool equal = false;
   if (!JS_WrapValue(cx, &thisVal) ||
       !JS_WrapValue(cx, &thatVal) ||
-      !JS_LooselyEqual(cx, thisVal, thatVal, &equal)) {
+      !JS::LooselyEqual(cx, thisVal, thatVal, &equal)) {
     return Nothing<bool>();
   }
   return Just(equal);
@@ -326,7 +329,7 @@ bool Value::StrictEquals(Handle<Value> that) const {
     return false;
   }
   bool equal = false;
-  JS_StrictlyEqual(cx, thisVal, thatVal, &equal);
+  JS::StrictlyEqual(cx, thisVal, thatVal, &equal);
   return equal;
 }
 
@@ -339,7 +342,7 @@ bool Value::SameValue(Handle<Value> that) const {
     return false;
   }
   bool same = false;
-  JS_SameValue(cx, thisVal, thatVal, &same);
+  JS::SameValue(cx, thisVal, thatVal, &same);
   return same;
 }
 
@@ -375,7 +378,7 @@ Value::IsSharedArrayBuffer() const
     return false;
   }
 
-  return JS_IsSharedArrayBufferObject(obj);
+  return JS::IsSharedArrayBufferObject(obj);
 }
 
 bool

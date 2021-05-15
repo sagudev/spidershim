@@ -233,8 +233,10 @@ MaybeLocal<Value> TryCatch::StackTrace(Local<Context> context) const {
   if (!stack) {
     return MaybeLocal<Value>();
   }
+  JSPrincipals* principals =
+      JS::GetRealmPrincipals(js::GetContextRealm(cx));
   JS::RootedString stackString(cx);
-  if (!JS::BuildStackString(cx, stack, &stackString)) {
+  if (!JS::BuildStackString(cx, principals, stack, &stackString)) {
     return MaybeLocal<Value>();
   }
   JS::Value retVal;

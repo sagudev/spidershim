@@ -44,11 +44,9 @@ public:
     flags = 0;
     memset(&instanceClassOps, 0, sizeof(JSClassOps));
     cOps = &instanceClassOps;
-    reserved[0] = nullptr;
-    reserved[1] = nullptr;
-    reserved[2] = nullptr;
+
     memset(&instanceObjectOps, 0, sizeof(js::ObjectOps));
-    reinterpret_cast<js::Class*>(this)->oOps = &instanceObjectOps;
+    oOps = &instanceObjectOps;
   }
   void AddRef() {
     ++mRefCnt;
@@ -373,7 +371,7 @@ struct PropCallbackTraits<typename PropXerTraits<N>::PropSetter, N> :
                      typename PropXerTraits<N>::PropSetter callback,
                      JS::HandleId id,
                      PropertyCallbackInfo& info,
-                     JS::MutableHandleValue vp) {
+                     JS::HandleValue vp) {
     auto name = PropXerTraits<N>::MakeName(isolate, id);
     Local<Value> value = internal::Local<Value>::New(isolate, vp);
 
@@ -559,7 +557,7 @@ static bool GetterOpImpl(JSContext* cx, JS::HandleObject obj,
 }
 
 static bool GetterOp(JSContext* cx, JS::HandleObject obj,
-                     JS::HandleId id, JS::MutableHandleValue vp) {
+                     JS::HandleValue receiver, JS::HandleId id, JS::MutableHandleValue vp) {
   JSGetterOp impl = nullptr;
   if (JSID_IS_INT(id)) {
     impl = GetterOpImpl<IndexedPropertyGetterCallback, uint32_t>;
@@ -642,14 +640,14 @@ static bool ResolveOp_Getter(JSContext* cx, JS::HandleObject obj,
 
 template<typename CallbackType, typename N>
 static bool SetterOpImpl(JSContext* cx, JS::HandleObject obj,
-                         JS::HandleId id, JS::MutableHandleValue vp,
+                         JS::HandleId id, JS::HandleValue v,
                          JS::ObjectOpResult& result) {
   PREPARE_CALLBACK(Setter)
 
   if (callback) {
     PropertyCallbackInfo info(data, thisObj, thisObj);
     PropCallbackTraits<CallbackType, N>::doCall(isolate, callback, id,
-                                                info, vp);
+                                                info, v);
     if (!info.GetReturnValue().Get()) {
       result.failCantSetInterposed();
     } else {
@@ -663,7 +661,8 @@ static bool SetterOpImpl(JSContext* cx, JS::HandleObject obj,
 }
 
 static bool SetterOp(JSContext* cx, JS::HandleObject obj,
-                     JS::HandleId id, JS::MutableHandleValue vp,
+                     JS::HandleId id, JS::HandleValue v,
+                     JS::HandleValue receiver,
                      JS::ObjectOpResult& result) {
   JSSetterOp impl = nullptr;
   if (JSID_IS_INT(id)) {
@@ -685,7 +684,7 @@ static bool SetterOp(JSContext* cx, JS::HandleObject obj,
     }
   }
   assert(impl);
-  return impl(cx, obj, id, vp, result);
+  return impl(cx, obj, id, v, result);
 }
 
 template<typename CallbackType, typename N>
@@ -861,7 +860,7 @@ static bool DeleterOp(JSContext* cx, JS::HandleObject obj,
 
 template<typename CallbackType, typename N>
 static bool EnumeratorOpImpl(JSContext* cx, JS::HandleObject obj,
-                             JS::AutoIdVector& properties, bool enumerableOnly) {
+                             JS::MutableHandleIdVector properties, bool enumerableOnly) {
   PREPARE_CALLBACK(Enumerator)
 
   if (callback) {
@@ -884,7 +883,7 @@ static bool EnumeratorOpImpl(JSContext* cx, JS::HandleObject obj,
             // TODO: Maybe we should do something better than just skipping...
             continue;
           }
-          properties.append(INTERNED_STRING_TO_JSID(cx, str));
+          properties.append(JS::PropertyKey::fromPinnedString(str));
         }
         // TODO: Handle symbols here when we implement v8::Symbol
       }
@@ -895,7 +894,7 @@ static bool EnumeratorOpImpl(JSContext* cx, JS::HandleObject obj,
 }
 
 static bool EnumeratorOp(JSContext* cx, JS::HandleObject obj,
-                         JS::AutoIdVector& properties, bool enumerableOnly) {
+                         JS::MutableHandleIdVector properties, bool enumerableOnly) {
   JS::Value indexedPropEnumeratorCallback =
     GetInstanceSlot(obj,
       SlotTraits<InstanceSlots, uint32_t>::PropEnumeratorCallback1);
@@ -948,7 +947,7 @@ static bool CallOp(JSContext* cx, unsigned argc, JS::Value* vp) {
     }
     return result;
   } else {
-    JS::RootedValue thisv(cx, args.computeThis(cx));
+    JS::RootedValue thisv(cx, args.thisv());
     return JS::Call(cx, thisv, callAsFunctionHandler,
                     JS::HandleValueArray(args), args.rval());
   }
@@ -1045,7 +1044,7 @@ Local<Object> ObjectTemplate::NewInstance(Local<Object> prototype,
     instanceObj = JS_NewObjectWithGivenProto(cx, instanceClass, protoObj);
   } else if (objectType == GlobalObject) {
     JS::RealmOptions options;
-    options.behaviors().setVersion(JSVERSION_LATEST);
+    options.behaviors();
     instanceObj = JS_NewGlobalObject(cx, instanceClass, nullptr,
                                      JS::FireOnNewGlobalHook, options);
     if (!instanceObj) {
@@ -1054,7 +1053,7 @@ Local<Object> ObjectTemplate::NewInstance(Local<Object> prototype,
 
     JSAutoRealm ac(cx, instanceObj);
 
-    if (!JS_InitStandardClasses(cx, instanceObj) ||
+    if (!JS::InitRealmStandardClasses(cx) ||
         !JS_WrapObject(cx, &protoObj) ||
         !JS_SplicePrototype(cx, instanceObj, protoObj)) {
       return Local<Object>();
@@ -1203,14 +1202,14 @@ ObjectTemplate::InstanceClass* ObjectTemplate::GetInstanceClass(ObjectType objec
     instanceClass->name = (objectType == GlobalObject) ? "GlobalObject" : "Object";
   } else {
     JS::RootedString str(cx, GetValue(name)->toString());
-    instanceClass->name = JS_EncodeStringToUTF8(cx, str);
+    instanceClass->name = JS_EncodeStringToUTF8(cx, str).get();
     flags |= InstanceClass::nameAllocated;
   }
 
   if (HasGetterProp<Name>(obj) ||
       HasGetterProp<String>(obj) ||
       HasGetterProp<uint32_t>(obj)) {
-    instanceClass->ModifyClassOps().getProperty = GetterOp;
+    instanceClass->ModifyObjectOps().getProperty = GetterOp;
     // A getProperty hook doesn't cover things such as HasOwnProperty, so we need
     // to set this additional hook too.  This is technically not correct since the
     // way the resolve hook works is by defining the properties that it resolves on
@@ -1221,7 +1220,7 @@ ObjectTemplate::InstanceClass* ObjectTemplate::GetInstanceClass(ObjectType objec
   if (HasSetterProp<Name>(obj) ||
       HasSetterProp<String>(obj) ||
       HasSetterProp<uint32_t>(obj)) {
-    instanceClass->ModifyClassOps().setProperty = SetterOp;
+    instanceClass->ModifyObjectOps().setProperty = SetterOp;
   }
 
   if (HasQueryProp<Name>(obj) ||
@@ -1241,7 +1240,7 @@ ObjectTemplate::InstanceClass* ObjectTemplate::GetInstanceClass(ObjectType objec
   if (HasEnumeratorProp<Name>(obj) ||
       HasEnumeratorProp<String>(obj) ||
       HasEnumeratorProp<uint32_t>(obj)) {
-    instanceClass->ModifyObjectOps().enumerate = EnumeratorOp;
+    instanceClass->ModifyClassOps().newEnumerate = EnumeratorOp;
   }
 
   JS::Value callAsFunctionHandler =

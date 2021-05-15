@@ -29,6 +29,7 @@
 #include "v8isolate.h"
 #include "v8local.h"
 #include "v8string.h"
+#include <js/CharacterEncoding.h>
 
 namespace v8 {
 
@@ -42,12 +43,12 @@ String::Utf8Value::Utf8Value(Handle<v8::Value> obj)
   if (str) {
     JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
     AAutoJSAPI jsAPI(cx);
-    JSFlatString* flat = JS_FlattenString(cx, str);
+    JSLinearString* flat = JS_EnsureLinearString(cx, str);
     if (flat) {
       length_ = JS::GetDeflatedUTF8StringLength(flat);
       str_ = new char[length_ + 1];
       JS::DeflateStringToUTF8Buffer(flat,
-                                    mozilla::RangedPtr<char>(str_, length_));
+                                    mozilla::Span<char>(str_, length_));
       str_[length_] = '\0';
     }
   }
@@ -87,6 +88,8 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, const char* data,
     length = strlen(data);
   }
 
+  size_t len = length;
+
   if (!isolate) {
     isolate = Isolate::GetCurrent();
   }
@@ -94,20 +97,19 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, const char* data,
   JSContext* cx = JSContextFromIsolate(isolate);
   AAutoJSAPI jsAPI(cx);
 
-  size_t twoByteLen;
   JS::UniqueTwoByteChars twoByteChars(
-      JS::LossyUTF8CharsToNewTwoByteCharsZ(cx, JS::UTF8Chars(data, length),
-                                           &twoByteLen)
+      JS::LossyUTF8CharsToNewTwoByteCharsZ(cx, JS::UTF8Chars(data, length), &len,
+                                           js::MallocArena)
           .get());
   if (!twoByteChars) {
     return MaybeLocal<String>();
   }
 
   JSString* str =
-      type == v8::NewStringType::kInternalized
+      type != v8::NewStringType::kInternalized
           ? JS_AtomizeAndPinUCStringN(
-                cx, reinterpret_cast<const char16_t*>(twoByteChars.get()), twoByteLen)
-          : JS_NewUCString(cx, twoByteChars.get(), twoByteLen);
+                cx, reinterpret_cast<const char16_t*>(twoByteChars.get()), len)
+          : JS_NewUCStringCopyN(cx, twoByteChars.get(), len);
 
   if (!str) {
     return MaybeLocal<String>();
@@ -296,7 +298,7 @@ int String::Utf8Length() const {
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
   AAutoJSAPI jsAPI(cx);
   JSString* thisStr = GetString(this);
-  JSFlatString* flat = JS_FlattenString(cx, thisStr);
+  JSLinearString* flat = JS_EnsureLinearString(cx, thisStr);
   if (!flat) {
     return 0;
   }
@@ -344,7 +346,7 @@ int String::WriteUtf8(char* buffer, int length, int* nchars_ref, int options) co
   JSContext* cx = JSContextFromIsolate(Isolate::GetCurrent());
   AAutoJSAPI jsAPI(cx);
   JSString* thisStr = GetString(this);
-  JSFlatString* flatStr = JS_FlattenString(cx, thisStr);
+  JSLinearString* flatStr = JS_EnsureLinearString(cx, thisStr);
   if (!flatStr) {
     return 0;
   }
@@ -359,10 +361,7 @@ int String::WriteUtf8(char* buffer, int length, int* nchars_ref, int options) co
   // The number of Unicode characters written to the buffer. This could be
   // less than the length of the string, if the buffer isn't big enough to hold
   // the whole string.
-  size_t numChars = 0;
-
-  JS::DeflateStringToUTF8Buffer(flatStr, mozilla::RangedPtr<char>(buffer, numBytes),
-                                &numBytes, &numChars);
+  size_t numChars = JS::DeflateStringToUTF8Buffer(flatStr, mozilla::Span<char>(buffer, numBytes));
 
   if (numChars == (size_t)Length()) {
     // If the caller requested null termination, but the buffer doesn't have
@@ -440,7 +439,7 @@ ExternalStringFinalizer::ExternalStringFinalizer(
     : ExternalStringFinalizerBase(resource) {}
 
 void ExternalStringFinalizer::FinalizeExternalString(
-    JS::Zone* zone, const JSStringFinalizer* fin, char16_t* chars) {
+    JS::Zone* zone, const JSExternalStringCallbacks* fin, char16_t* chars) {
   const_cast<internal::ExternalStringFinalizer*>(
       static_cast<const internal::ExternalStringFinalizer*>(fin))
       ->dispose();
@@ -451,7 +450,7 @@ ExternalOneByteStringFinalizer::ExternalOneByteStringFinalizer(
     : ExternalStringFinalizerBase(resource) {}
 
 void ExternalOneByteStringFinalizer::FinalizeExternalString(
-    JS::Zone* zone, const JSStringFinalizer* fin, char16_t* chars) {
+    JS::Zone* zone, const JSExternalStringCallbacks* fin, char16_t* chars) {
   const_cast<internal::ExternalStringFinalizer*>(
       static_cast<const internal::ExternalStringFinalizer*>(fin))
       ->dispose();

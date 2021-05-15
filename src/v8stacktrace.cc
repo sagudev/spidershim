@@ -28,6 +28,7 @@
 #include "jsfriendapi.h"
 #include "v8.h"
 #include "v8local.h"
+#include "js/SavedFrameAPI.h"
 
 namespace v8 {
 
@@ -60,14 +61,15 @@ struct StackTrace::Impl {
     std::vector<FrameInfo> frames;
     JS::RootedObject current(cx, GetObject(stack_));
     AAutoJSAPI jsAPI(cx, current);
-
+    JSPrincipals* principals =
+      JS::GetRealmPrincipals(js::GetContextRealm(cx));
     do {
       FrameInfo info;
       if (options_ &
           (StackTrace::kScriptName | StackTrace::kScriptNameOrSourceURL)) {
         JS::RootedString source(cx);
         if (JS::SavedFrameResult::Ok ==
-            JS::GetSavedFrameSource(cx, current, &source,
+            JS::GetSavedFrameSource(cx, principals, current, &source,
                                     JS::SavedFrameSelfHosted::Exclude)) {
           JS::Value val;
           val.setString(source);
@@ -78,7 +80,7 @@ struct StackTrace::Impl {
         JS::RootedString name(cx);
         if (JS::SavedFrameResult::Ok ==
                 JS::GetSavedFrameFunctionDisplayName(
-                    cx, current, &name, JS::SavedFrameSelfHosted::Exclude) &&
+                    cx, principals, current, &name, JS::SavedFrameSelfHosted::Exclude) &&
             name) {
           JS::Value val;
           val.setString(name);
@@ -88,7 +90,7 @@ struct StackTrace::Impl {
       if (options_ & StackTrace::kLineNumber) {
         uint32_t line = 0;
         if (JS::SavedFrameResult::Ok ==
-            JS::GetSavedFrameLine(cx, current, &line,
+            JS::GetSavedFrameLine(cx, principals, current, &line,
                                   JS::SavedFrameSelfHosted::Exclude)) {
           info.line_ = line;
         }
@@ -96,14 +98,14 @@ struct StackTrace::Impl {
       if (options_ & StackTrace::kColumnOffset) {
         uint32_t column = 0;
         if (JS::SavedFrameResult::Ok ==
-            JS::GetSavedFrameColumn(cx, current, &column,
+            JS::GetSavedFrameColumn(cx, principals, current, &column,
                                     JS::SavedFrameSelfHosted::Exclude)) {
           info.column_ = column;
         }
       }
       frames.push_back(info);
     } while (JS::SavedFrameResult::Ok ==
-                 JS::GetSavedFrameParent(cx, current, &current,
+                 JS::GetSavedFrameParent(cx, principals, current, &current,
                                          JS::SavedFrameSelfHosted::Exclude) &&
              current);
 
