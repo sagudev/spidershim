@@ -34,6 +34,11 @@ template <typename T>
 struct ExternalStringFinalizerBase : JSExternalStringCallbacks {
   ExternalStringFinalizerBase(String::ExternalStringResourceBase* resource);
   String::ExternalStringResourceBase* resource_;
+  void finalize(char16_t* chars) const override { js_free(chars); }
+  size_t sizeOfBuffer(const char16_t* chars,
+                      mozilla::MallocSizeOf mallocSizeOf) const override {
+    return mallocSizeOf(chars);
+  }
   void dispose();
 };
 

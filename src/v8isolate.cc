@@ -68,7 +68,7 @@ namespace internal {
 bool InitializeIsolate() { return sIsolateStack.init(); }
 }
 
-void Isolate::Impl::OnGC(JSContext* cx, JSGCStatus status, void* data) {
+void Isolate::Impl::OnGC(JSContext* cx, JSGCStatus status, JS::GCReason reason, void* data) {
   auto isolate = Isolate::GetCurrent();
   switch (status) {
     case JSGC_BEGIN:
@@ -138,7 +138,7 @@ Isolate::Isolate() : pimpl_(new Impl()) {
   JS_SetGCParameter(pimpl_->cx, JSGC_MODE, JSGC_MODE_INCREMENTAL);
   JS_SetGCParameter(pimpl_->cx, JSGC_MAX_BYTES, 0xffffffff);
   JS_SetNativeStackQuota(pimpl_->cx, sStackSize);
-  JS_SetDefaultLocale(pimpl_->cx->runtime(), "UTF-8");
+  JS_SetDefaultLocale(JS_GetRuntime(pimpl_->cx), "UTF-8");
   js::SetStackFormat(pimpl_->cx, js::StackFormat::V8);
 
 #ifndef DEBUG
@@ -493,8 +493,8 @@ int64_t Isolate::AdjustAmountOfExternalAllocatedMemory(
   // the persistent value in case an embedder relies on it.
   if (change_in_bytes > 0) {
     auto context = JSContextFromIsolate(this);
-    JS_updateMallocCounter(context, change_in_bytes);
-    //JS::AddAssociatedMemory(aReflector, change_in_bytes, JS::MemoryUse::DOMBinding)
+    //JS_updateMallocCounter(context, change_in_bytes);
+    //JS::AddAssociatedMemory(GetObject(this), change_in_bytes, JS::MemoryUse::DOMBinding);
   }
   return pimpl_->amountOfExternallyAllocatedMemory += change_in_bytes;
 }

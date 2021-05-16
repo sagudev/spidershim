@@ -416,7 +416,7 @@ template <typename T>
 ExternalStringFinalizerBase<T>::ExternalStringFinalizerBase(
     String::ExternalStringResourceBase* resource)
     : resource_(resource) {
-  static_cast<T*>(this)->finalize = T::FinalizeExternalString;
+  //static_cast<T*>(this)->finalize = T::FinalizeExternalString;
 }
 
 template <typename T>

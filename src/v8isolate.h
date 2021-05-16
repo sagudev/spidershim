@@ -100,7 +100,7 @@ struct Isolate::Impl {
   }
 
   static bool OnInterrupt(JSContext* cx);
-  static void OnGC(JSContext* cx, JSGCStatus status, void *data);
+  static void OnGC(JSContext* cx, JSGCStatus status, JS::GCReason reason, void *data);
   static bool EnqueuePromiseJobCallback(JSContext* cx, JS::HandleObject job,
                                         JS::HandleObject allocationSite,
                                         JS::HandleObject incumbentGlobal, void* data);
