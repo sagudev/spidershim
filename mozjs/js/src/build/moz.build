@@ -36,6 +36,7 @@ else:
     Library('js')
 
 USE_LIBS += [
+    'jsrust',
     'mozglue',
 ]
 

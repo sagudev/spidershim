@@ -24,8 +24,7 @@ if CONFIG['JS_ENABLE_SMOOSH']:
 
 RustLibrary('jsrust', features)
 
-if CONFIG['JS_SHARED_LIBRARY']:
-    FINAL_LIBRARY = 'js'
+FINAL_LIBRARY = 'js'
 
 if CONFIG['OS_ARCH'] == 'Darwin':
     # The Rust standard library references libresolv on macOS, so we need to
