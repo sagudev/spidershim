@@ -20,7 +20,7 @@ CXXFLAGS += \
 # force color
 CXXFLAGS += -fcolor-diagnostics
 
-LDFLAGS = -fuse-ld=lld -ljs_static -lstdc++
+LDFLAGS = -fuse-ld=lld -ljs_static -lstdc++ -lm -ldl
 
 ifeq ($(DEBUG),1)
 	CXXFLAGS += -DDEBUG

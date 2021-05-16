@@ -2,7 +2,7 @@
 SRC_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 CXX ?= c++
 
-VVFLAGS := -std=c++17 -pthread -Wall -Wextra -Wno-unused-parameter -fPIC -m64 -O3 -fno-omit-frame-pointer -fno-rtti -fno-exceptions
+VVFLAGS := -std=gnu++17 -pthread -Wall -Wextra -Wno-unused-parameter -fPIC -m64 -O3 -fno-omit-frame-pointer -fno-rtti -fno-exceptions
 
 # load spidershim headers
 CXXFLAGS := \
@@ -18,7 +18,7 @@ CXXFLAGS += \
 # force color
 CXXFLAGS += -fcolor-diagnostics
 
-LDFLAGS = -fuse-ld=lld -ljs_static -lstdc++ -lv8 -lgtest
+LDFLAGS = -fuse-ld=lld -ljs_static -lstdc++ -lv8 -lgtest -lm -ldl
 
 ifeq ($(DEBUG),1)
 	CXXFLAGS += -DDEBUG
