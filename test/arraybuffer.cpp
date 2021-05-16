@@ -10,7 +10,7 @@
 #include "v8engine.h"
 
 #include "gtest/gtest.h"
-#include "jsapi.h"
+// #include "jsapi.h"
 
 template <typename T, int N = T::kInternalFieldCount>
 static void CheckInternalFieldsAreZero(Local<T> value) {

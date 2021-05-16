@@ -41,7 +41,7 @@ all: v8
 
 v8: $(OBJS)
 	$(info done)
-	$(AR) crsT $@ $(OBJS)
+	$(AR) crsT lib$@.a $(OBJS)
 
 %.o: $(SRC)/%.cc
 	$(info $< | $@)
