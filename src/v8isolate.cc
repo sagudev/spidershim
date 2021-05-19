@@ -152,7 +152,7 @@ Isolate::Isolate() : pimpl_(new Impl()) {
   //JS::SetEnqueuePromiseJobCallback(pimpl_->cx, Isolate::Impl::EnqueuePromiseJobCallback);
   //JS::SetGetIncumbentGlobalCallback(pimpl_->cx, GetIncumbentGlobalCallback);
   JS_AddInterruptCallback(pimpl_->cx, Isolate::Impl::OnInterrupt);
-  JS_SetGCCallback(pimpl_->cx, Isolate::Impl::OnGC, NULL);
+  //JS_SetGCCallback(pimpl_->cx, Isolate::Impl::OnGC, NULL);
   if (!JS::InitSelfHostedCode(pimpl_->cx)) {
     MOZ_CRASH("InitSelfHostedCode failed");
   }
