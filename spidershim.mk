@@ -15,12 +15,13 @@ CXXFLAGS += \
 	-isystem $(MOZ_OUT)/dist/include \
 	-I $(MOZ_OUT)/js/src \
 	-L $(MOZ_OUT)/js/src/build \
+	-L $(MOZ_OUT)/x86_64-unknown-linux-gnu/debug \
 	-DSTATIC_JS_API
 
 # force color
 CXXFLAGS += -fcolor-diagnostics
 
-LDFLAGS = -fuse-ld=lld -ljs_static -lstdc++ -lm -ldl
+LDFLAGS = -fuse-ld=lld -ljs_static -lstdc++ -lm -ldl -ljsrust
 
 ifeq ($(DEBUG),1)
 	CXXFLAGS += -DDEBUG

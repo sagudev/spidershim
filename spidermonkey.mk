@@ -5,12 +5,12 @@ SHELL := /usr/bin/env bash
 SRC_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))mozjs
 
 # Default flags
-# 	--disable-export-js
 CONFIGURE_FLAGS := \
 	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
 	--disable-shared-js \
+	--disable-export-js \
 	--build-backends=RecursiveMake
 
 ifeq ($(DEBUG),0)

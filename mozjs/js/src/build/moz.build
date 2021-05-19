@@ -36,9 +36,10 @@ else:
     Library('js')
 
 USE_LIBS += [
-    'jsrust',
     'mozglue',
 ]
+
+include('../js-standalone.mozbuild')
 
 FORCE_STATIC_LIB = True
 STATIC_LIBRARY_NAME = 'js_static'

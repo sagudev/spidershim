@@ -13,12 +13,13 @@ CXXFLAGS := \
 CXXFLAGS += \
 	-L $(MOZ_OUT)/js/src/build \
 	-L $(OUT)/gtest \
+	-L $(MOZ_OUT)/x86_64-unknown-linux-gnu/debug \
 	-L $(OUT)/spidershim
 
 # force color
 CXXFLAGS += -fcolor-diagnostics
 
-LDFLAGS = -fuse-ld=lld -ljs_static -lstdc++ -lv8 -lgtest -lm -ldl
+LDFLAGS = -fuse-ld=lld -ljsrust -ljs_static -lstdc++ -lv8 -lgtest -lm -ldl -lz
 
 ifeq ($(DEBUG),1)
 	CXXFLAGS += -DDEBUG
