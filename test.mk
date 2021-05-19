@@ -34,8 +34,9 @@ SOURCES := $(patsubst $(SRC)/%.cc, %, $(SS))
 
 all: test
 
-test: $(SOURCES)
-	$(info done)
+test: hello-world #$(SOURCES)
+	$(info running hello-world)
+	./hello-world
 
 %: $(SRC)/%.cc
 	$(info $< | $@)
