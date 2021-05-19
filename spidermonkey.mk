@@ -3,6 +3,7 @@
 SHELL := /usr/bin/env bash
 
 SRC_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))mozjs
+DEBUG ?= 1
 
 # Default flags
 CONFIGURE_FLAGS := \

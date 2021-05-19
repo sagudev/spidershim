@@ -4,11 +4,13 @@ MOZ_OUT ?= $(OUT_DIR)/mozjs
 DEBUG ?= 1
 CCACHE ?= ccache
 
-$(shell  mkdir $(OUT_DIR))
+.PHONY: clean
 
-.PHONY : all mozjs spidershim test clean gtest
+.PHONY: all mozjs spidershim test clean gtest
 
 all: spidershim test
+
+$(shell  mkdir $(OUT_DIR))
 
 mozjs:
 	$(info Building MOZJS)
