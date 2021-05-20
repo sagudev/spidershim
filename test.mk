@@ -36,7 +36,7 @@ all: test
 
 test: hello-world #$(SOURCES)
 	$(info running hello-world)
-	./hello-world
+	echo "r \n bt" | gdb ./hello-world
 
 %: $(SRC)/%.cc
 	$(info $< | $@)
