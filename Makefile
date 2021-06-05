@@ -6,7 +6,7 @@ CCACHE ?= ccache
 
 .PHONY: clean
 
-.PHONY: all mozjs spidershim test clean gtest
+.PHONY: all mozjs spidershim test clean gtest run
 
 all: spidershim test
 
@@ -26,9 +26,17 @@ spidershim: mozjs
 
 test: spidershim gtest
 	$(info Testing SPIDERSHIM)
+	$(shell rm -rf $(OUT_DIR)/test)
 	$(shell mkdir $(OUT_DIR)/test)
 	CCACHE=$(CCACHE) DEBUG=$(DEBUG) OUT="$(OUT_DIR)" MOZ_OUT="$(MOZ_OUT)" OUT_DIR="$(OUT_DIR)/test" \
 	$(MAKE) -C "$(OUT_DIR)/test" -f $(SRC_DIR)/test.mk
+
+gg: spidershim gtest
+	$(info Testing SPIDERSHIM)
+	$(shell rm -rf $(OUT_DIR)/test)
+	$(shell mkdir $(OUT_DIR)/test)
+	CCACHE=$(CCACHE) DEBUG=$(DEBUG) OUT="$(OUT_DIR)" MOZ_OUT="$(MOZ_OUT)" OUT_DIR="$(OUT_DIR)/test" \
+	$(MAKE) -C "$(OUT_DIR)/test" -f $(SRC_DIR)/test.mk run
 
 gtest:
 	$(info GTEST)

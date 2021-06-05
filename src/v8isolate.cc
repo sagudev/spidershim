@@ -69,7 +69,10 @@ bool InitializeIsolate() { return sIsolateStack.init(); }
 }
 
 void Isolate::Impl::OnGC(JSContext* cx, JSGCStatus status, JS::GCReason reason, void* data) {
+  auto iso = Isolate::New();
+  iso->Enter();
   auto isolate = Isolate::GetCurrent();
+  
   switch (status) {
     case JSGC_BEGIN:
       for (auto callback : isolate->pimpl_->gcProlougeCallbacks) {

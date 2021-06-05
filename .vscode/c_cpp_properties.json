@@ -6,7 +6,8 @@
                 "${workspaceFolder}/include",
                 "${workspaceFolder}/src",
                 "${workspaceFolder}/target/mozjs/dist/include",
-                "${workspaceFolder}/target/mozjs/js/src"
+                "${workspaceFolder}/target/mozjs/js/src",
+                "${workspaceFolder}/gtest/include"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/clang",

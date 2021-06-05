@@ -22,10 +22,14 @@ CXXFLAGS += -fcolor-diagnostics
 LDFLAGS = -fuse-ld=lld -ljsrust -ljs_static -lstdc++ -lv8 -lgtest -lm -ldl -lz
 
 ifeq ($(DEBUG),1)
-	CXXFLAGS += -DDEBUG
+	CXXFLAGS += -DDEBUG -g -Og
+else
+	CXXFLAGS += -O3
 endif
 
 .PHONY : all
+
+.PHONY : run
 
 SRC := $(SRC_DIR)/test
 
@@ -35,8 +39,10 @@ SOURCES := $(patsubst $(SRC)/%.cc, %, $(SS))
 all: test
 
 test: hello-world #$(SOURCES)
-	$(info running hello-world)
-	echo "r \n bt" | gdb ./hello-world
+
+run: test
+	$(info debugging hello-world)
+	lldb ./hello-world --batch -o 'r' --one-line-on-crash 'bt' --one-line-on-crash 'quit'
 
 %: $(SRC)/%.cc
 	$(info $< | $@)

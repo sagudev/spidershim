@@ -57,7 +57,7 @@ private:
   Platform* platform_;
 };
 
-static std::auto_ptr<V8Initializer> v8Initializer;
+static std::unique_ptr<V8Initializer> v8Initializer;
 
 static inline Local<String> v8_str(const char* str) {
   return String::NewFromUtf8(Isolate::GetCurrent(), str);
